@@ -72,8 +72,15 @@ func (s *Store) ListMaps(ctx context.Context, username string, bypassVisibility 
 	}, username, bypassVisibility)
 }
 
-// GetMap fetches a single map by id. It returns ErrMapNotFound if it doesn't exist.
+// GetMap fetches a single map by id. It returns ErrMapNotFound if it doesn't
+// exist. Results are cached for cacheTTL: this is called on every tile
+// request (to check visibility/anonymousAllowed) and every map-scoped
+// route, but map rows change rarely.
 func (s *Store) GetMap(ctx context.Context, id uuid.UUID) (MapRecord, error) {
+	if m, ok := s.mapCache.get(id); ok {
+		return m, nil
+	}
+
 	var m MapRecord
 	err := s.pool.QueryRow(ctx, `
 		SELECT uuid, name, current_version, visible_to_all, anonymous_allowed, created_at, updated_at, created_by, updated_by
@@ -85,6 +92,7 @@ func (s *Store) GetMap(ctx context.Context, id uuid.UUID) (MapRecord, error) {
 	if err != nil {
 		return MapRecord{}, fmt.Errorf("get map: %w", err)
 	}
+	s.mapCache.set(id, m)
 	return m, nil
 }
 
@@ -104,6 +112,7 @@ func (s *Store) UpdateMap(ctx context.Context, id uuid.UUID, name, currentVersio
 	if err != nil {
 		return MapRecord{}, fmt.Errorf("update map: %w", err)
 	}
+	s.mapCache.invalidate(id)
 	return m, nil
 }
 
@@ -164,6 +173,7 @@ func (s *Store) IncrementMapVersion(ctx context.Context, id uuid.UUID, updatedBy
 	if err := tx.Commit(ctx); err != nil {
 		return MapRecord{}, fmt.Errorf("commit: %w", err)
 	}
+	s.mapCache.invalidate(id)
 	return m, nil
 }
 
@@ -202,5 +212,6 @@ func (s *Store) DeleteMap(ctx context.Context, id uuid.UUID) error {
 	if tag.RowsAffected() == 0 {
 		return ErrMapNotFound
 	}
+	s.mapCache.invalidate(id)
 	return nil
 }

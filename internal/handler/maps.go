@@ -308,6 +308,12 @@ func MapsItemHandler(st *store.Store, dataRoot string) http.HandlerFunc {
 			version := segments[2]
 			versionDir := mapVersionDir(dataRoot, id, version)
 			prefix := "/maps/" + strings.Join(segments[:3], "/") + "/"
+			// A map version's directory is never modified in place after
+			// upload (uploadMapVersionHandler extracts into a staging dir
+			// and atomically renames it into place), so its contents can be
+			// cached indefinitely by clients and any CDN in front of this
+			// server.
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			http.StripPrefix(prefix, http.FileServer(http.Dir(versionDir))).ServeHTTP(w, r)
 			return
 		}
