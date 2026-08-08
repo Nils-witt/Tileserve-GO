@@ -20,4 +20,6 @@ ENV PORT=80
 VOLUME ["/data"]
 COPY --from=builder /out/tileserve-go /tileserve-go
 EXPOSE 80
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["curl", "-f", "http://localhost:80/healthz"]
 ENTRYPOINT ["/tileserve-go"]
