@@ -70,6 +70,8 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// GET /version: build metadata (commit, and tag/version if tagged), public.
+	mux.HandleFunc("/version", handler.VersionHandler())
 	// GET /login: serves the login HTML page. POST /login: exchanges
 	// username/password for a JWT and a refresh token.
 	mux.HandleFunc("/login", handler.LoginHandler(secret, st))
