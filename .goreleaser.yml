@@ -13,6 +13,8 @@ builds:
       - arm64
     ldflags:
       - -s -w
+      - -X nilswitt.dev/tileserve-go/internal/version.Version={{.Tag}}
+      - -X nilswitt.dev/tileserve-go/internal/version.Commit={{.ShortCommit}}
 
 archives:
   - formats: [tar.gz]

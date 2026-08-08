@@ -4,12 +4,15 @@ FROM golang:1.26-alpine AS builder
 LABEL org.opencontainers.image.source="https://github.com/Nils-witt/Tileserve-GO"
 WORKDIR /src
 
+ARG VERSION=dev
+ARG COMMIT=unknown
+
 COPY go.mod go.sum ./
 RUN go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
-RUN CGO_ENABLED=0 GOOS=linux go build -o /out/tileserve-go ./cmd/tileserve-go
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w -X nilswitt.dev/tileserve-go/internal/version.Version=${VERSION} -X nilswitt.dev/tileserve-go/internal/version.Commit=${COMMIT}" -o /out/tileserve-go ./cmd/tileserve-go
 
 FROM gcr.io/distroless/static-debian12:nonroot
 ENV DATA_ROOT=/data

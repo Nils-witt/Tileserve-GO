@@ -245,7 +245,7 @@
     </div>
 
     <footer>
-      &copy; 2026 Witt, Nils &middot; tileserve-go &middot; <a href="https://github.com/Nils-witt/Tile-Srv-Go" target="_blank" rel="noopener noreferrer">GitHub</a>
+      &copy; 2026 Witt, Nils &middot; tileserve-go &middot; <a href="https://github.com/Nils-witt/Tile-Srv-Go" target="_blank" rel="noopener noreferrer">GitHub</a><span id="build-info"></span>
     </footer>
   </div>
 
@@ -1305,6 +1305,11 @@
     } else {
       showLogin();
     }
+
+    fetch('/version').then((res) => res.json()).then((info) => {
+      document.getElementById('build-info').textContent =
+        ' · ' + (info.version ? info.version + ' · ' : '') + info.commit;
+    }).catch(() => {});
   </script>
 </body>
 </html>
