@@ -34,18 +34,26 @@ type MapPermissionRecord struct {
 }
 
 // GetMapPermission returns username's per-map grant for mapID, or the zero
-// value (no view/edit/delete) if none exists.
+// value (no view/edit/delete) if none exists. Results are cached for
+// cacheTTL, since this is on the tile-serving/map-view hot path.
 func (s *Store) GetMapPermission(ctx context.Context, mapID uuid.UUID, username string) (MapPermission, error) {
+	key := mapPermKey{mapID: mapID, username: username}
+	if mp, ok := s.mapPermCache.get(key); ok {
+		return mp, nil
+	}
+
 	var mp MapPermission
 	err := s.pool.QueryRow(ctx, `
 		SELECT can_view, can_edit, can_delete FROM map_permissions WHERE map_uuid = $1 AND username = $2
 	`, mapID, username).Scan(&mp.CanView, &mp.CanEdit, &mp.CanDelete)
 	if errors.Is(err, pgx.ErrNoRows) {
+		s.mapPermCache.set(key, MapPermission{})
 		return MapPermission{}, nil
 	}
 	if err != nil {
 		return MapPermission{}, fmt.Errorf("get map permission: %w", err)
 	}
+	s.mapPermCache.set(key, mp)
 	return mp, nil
 }
 
@@ -80,6 +88,7 @@ func (s *Store) SetMapPermission(ctx context.Context, mapID uuid.UUID, username 
 		}
 		return MapPermissionRecord{}, fmt.Errorf("set map permission: %w", err)
 	}
+	s.mapPermCache.invalidate(mapPermKey{mapID: mapID, username: username})
 	return p, nil
 }
 
@@ -89,5 +98,6 @@ func (s *Store) DeleteMapPermission(ctx context.Context, mapID uuid.UUID, userna
 	if err != nil {
 		return fmt.Errorf("delete map permission: %w", err)
 	}
+	s.mapPermCache.invalidate(mapPermKey{mapID: mapID, username: username})
 	return nil
 }

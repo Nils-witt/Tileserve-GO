@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/google/uuid"
 )
@@ -43,8 +44,7 @@ func mapVersionBoundsHandler(dataRoot string, id uuid.UUID, version string) http
 			return
 		}
 
-		versionDir := mapVersionDir(dataRoot, id, version)
-		bounds, err := computeTileBounds(versionDir)
+		bounds, err := cachedTileBounds(dataRoot, id, version)
 		if err != nil {
 			writeStoreError(w, err, errNoTiles, http.StatusNotFound, "no tiles found for this version", "failed to compute bounds")
 			return
@@ -54,6 +54,44 @@ func mapVersionBoundsHandler(dataRoot string, id uuid.UUID, version string) http
 }
 
 var errNoTiles = errors.New("no tiles found")
+
+type boundsCacheKey struct {
+	mapID   uuid.UUID
+	version string
+}
+
+var (
+	boundsCacheMu sync.RWMutex
+	boundsCache   = map[boundsCacheKey]*tileBounds{}
+)
+
+// cachedTileBounds returns computeTileBounds for (id, version), caching a
+// successful result for the lifetime of the process: a map version's
+// extracted tile directory is immutable once uploaded (uploadMapVersionHandler
+// extracts into a staging directory and only atomically renames it into
+// place once extraction fully succeeds), so a computed bounds value can
+// never go stale. A "no tiles yet" result is deliberately not cached, since
+// that version number may still be uploaded later.
+func cachedTileBounds(dataRoot string, id uuid.UUID, version string) (*tileBounds, error) {
+	key := boundsCacheKey{mapID: id, version: version}
+
+	boundsCacheMu.RLock()
+	b, ok := boundsCache[key]
+	boundsCacheMu.RUnlock()
+	if ok {
+		return b, nil
+	}
+
+	b, err := computeTileBounds(mapVersionDir(dataRoot, id, version))
+	if err != nil {
+		return nil, err
+	}
+
+	boundsCacheMu.Lock()
+	boundsCache[key] = b
+	boundsCacheMu.Unlock()
+	return b, nil
+}
 
 // computeTileBounds scans versionDir's zoom directories (top-level, numeric)
 // to find the min and max zoom present, then unions the x/y extent of every

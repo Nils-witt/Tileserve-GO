@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,14 +15,40 @@ import (
 
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
+// cacheTTL bounds how stale a cached map/permission lookup may be. It's the
+// window between a permission or visibility change in postgres and that
+// change taking effect for cached reads (e.g. on the tile-serving hot path).
+const cacheTTL = 15 * time.Second
+
+type mapPermKey struct {
+	mapID    uuid.UUID
+	username string
+}
+
 type Store struct {
 	pool *pgxpool.Pool
+
+	mapCache     *ttlCache[uuid.UUID, MapRecord]
+	permsCache   *ttlCache[string, Permissions]
+	mapPermCache *ttlCache[mapPermKey, MapPermission]
 }
 
 // NewStore opens a connection pool to the postgres database at dsn and
 // verifies it is reachable with a ping.
 func NewStore(ctx context.Context, dsn string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres dsn: %w", err)
+	}
+	// Explicit bounds rather than the library defaults: enough headroom for
+	// concurrent request handling without letting a traffic spike open an
+	// unbounded number of postgres connections.
+	cfg.MaxConns = 20
+	cfg.MinConns = 2
+	cfg.MaxConnLifetime = time.Hour
+	cfg.MaxConnIdleTime = 30 * time.Minute
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}
@@ -28,7 +56,12 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	return &Store{pool: pool}, nil
+	return &Store{
+		pool:         pool,
+		mapCache:     newTTLCache[uuid.UUID, MapRecord](cacheTTL),
+		permsCache:   newTTLCache[string, Permissions](cacheTTL),
+		mapPermCache: newTTLCache[mapPermKey, MapPermission](cacheTTL),
+	}, nil
 }
 
 // Close releases the underlying database connection pool.
@@ -192,8 +225,15 @@ type Permissions struct {
 	IsAdmin   bool
 }
 
-// GetPermissions returns the global create/edit/delete/admin permissions for username.
+// GetPermissions returns the global create/edit/delete/admin permissions for
+// username. Results are cached for cacheTTL, since this is looked up on
+// every authenticated request (see requirePermission/canViewMap in
+// internal/handler) but changes rarely.
 func (s *Store) GetPermissions(ctx context.Context, username string) (Permissions, error) {
+	if p, ok := s.permsCache.get(username); ok {
+		return p, nil
+	}
+
 	var p Permissions
 	err := s.pool.QueryRow(ctx, `
 		SELECT can_create, can_edit, can_delete, is_admin FROM users WHERE username = $1
@@ -201,6 +241,7 @@ func (s *Store) GetPermissions(ctx context.Context, username string) (Permission
 	if err != nil {
 		return Permissions{}, fmt.Errorf("get permissions for %q: %w", username, err)
 	}
+	s.permsCache.set(username, p)
 	return p, nil
 }
 

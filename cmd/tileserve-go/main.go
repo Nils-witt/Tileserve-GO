@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
 	"nilswitt.dev/tileserve-go/internal/handler"
 	"nilswitt.dev/tileserve-go/internal/store"
@@ -54,9 +55,14 @@ func main() {
 		}
 	}
 
-	if err := handler.EnsureTileIndexes(*dataRoot); err != nil {
-		log.Fatalf("backfill tile indexes: %v", err)
-	}
+	// Backfilling missing index.json files is best-effort and independent of
+	// serving traffic (see EnsureTileIndexes) — run it in the background
+	// rather than delaying server startup on a full data-root filesystem walk.
+	go func() {
+		if err := handler.EnsureTileIndexes(*dataRoot); err != nil {
+			log.Printf("backfill tile indexes: %v", err)
+		}
+	}()
 
 	mux := http.NewServeMux()
 	// GET /healthz: liveness probe, always returns 200 "ok".
@@ -89,8 +95,20 @@ func main() {
 	mux.Handle("/users/", handler.RequireAuth(secret, handler.UserItemHandler(st)))
 
 	addr := ":" + *port
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: mux,
+		// ReadHeaderTimeout guards against slow-loris style connections that
+		// trickle in headers without ever completing a request. The other
+		// timeouts are deliberately generous: tile archive uploads and large
+		// tile pyramid downloads are legitimate long-running transfers.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       5 * time.Minute,
+		WriteTimeout:      5 * time.Minute,
+		IdleTimeout:       2 * time.Minute,
+	}
 	log.Printf("tileserve-go listening on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := srv.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }

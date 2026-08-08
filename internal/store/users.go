@@ -101,6 +101,7 @@ func (s *Store) UpdateUser(ctx context.Context, username, cn string, perms Permi
 	if err != nil {
 		return UserRecord{}, fmt.Errorf("update user: %w", err)
 	}
+	s.permsCache.invalidate(username)
 	return u, nil
 }
 
@@ -113,5 +114,6 @@ func (s *Store) DeleteUser(ctx context.Context, username string) error {
 	if tag.RowsAffected() == 0 {
 		return ErrUserNotFound
 	}
+	s.permsCache.invalidate(username)
 	return nil
 }

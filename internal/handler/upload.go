@@ -19,9 +19,15 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 
 	"nilswitt.dev/tileserve-go/internal/store"
 )
+
+// tileIndexBackfillConcurrency bounds how many overlay directories
+// EnsureTileIndexes walks at once, so a data root with many maps doesn't
+// open unbounded numbers of file descriptors concurrently.
+const tileIndexBackfillConcurrency = 8
 
 // maxUploadSize caps the size of an uploaded map version archive.
 const maxUploadSize = 1 << 30 // 1 GiB
@@ -382,7 +388,9 @@ func writeTileIndex(destDir string) error {
 // index.json for any version that doesn't already have one. It's meant to be
 // run once at startup so versions extracted before index.json existed (or a
 // version where a prior index write failed) get backfilled without
-// requiring a re-upload.
+// requiring a re-upload. Overlays are processed concurrently (bounded by
+// tileIndexBackfillConcurrency), since each overlay's backfill is
+// independent I/O.
 func EnsureTileIndexes(dataRoot string) error {
 	overlays, err := os.ReadDir(dataRoot)
 	if errors.Is(err, os.ErrNotExist) {
@@ -392,39 +400,51 @@ func EnsureTileIndexes(dataRoot string) error {
 		return fmt.Errorf("read data root: %w", err)
 	}
 
+	g := new(errgroup.Group)
+	g.SetLimit(tileIndexBackfillConcurrency)
 	for _, overlay := range overlays {
 		if !overlay.IsDir() {
 			continue
 		}
-		overlayDir := filepath.Join(dataRoot, overlay.Name())
+		overlayName := overlay.Name()
+		g.Go(func() error {
+			return ensureOverlayTileIndexes(dataRoot, overlayName)
+		})
+	}
+	return g.Wait()
+}
 
-		versions, err := os.ReadDir(overlayDir)
-		if err != nil {
-			return fmt.Errorf("read overlay dir %s: %w", overlay.Name(), err)
+// ensureOverlayTileIndexes backfills index.json for every numeric version
+// subdirectory of a single overlay ("map") directory. See EnsureTileIndexes.
+func ensureOverlayTileIndexes(dataRoot, overlayName string) error {
+	overlayDir := filepath.Join(dataRoot, overlayName)
+
+	versions, err := os.ReadDir(overlayDir)
+	if err != nil {
+		return fmt.Errorf("read overlay dir %s: %w", overlayName, err)
+	}
+	for _, version := range versions {
+		// Non-numeric entries are skipped rather than treated as an
+		// error: in-progress uploads stage extraction in a
+		// ".upload-*" directory right next to finished versions (see
+		// uploadMapVersionHandler), and that directory is renamed away
+		// or removed once the upload finishes or fails.
+		if !version.IsDir() || !numericSegmentRE.MatchString(version.Name()) {
+			continue
 		}
-		for _, version := range versions {
-			// Non-numeric entries are skipped rather than treated as an
-			// error: in-progress uploads stage extraction in a
-			// ".upload-*" directory right next to finished versions (see
-			// uploadMapVersionHandler), and that directory is renamed away
-			// or removed once the upload finishes or fails.
-			if !version.IsDir() || !numericSegmentRE.MatchString(version.Name()) {
-				continue
-			}
-			versionDir := filepath.Join(overlayDir, version.Name())
+		versionDir := filepath.Join(overlayDir, version.Name())
 
-			_, err := os.Stat(filepath.Join(versionDir, "index.json"))
-			if err == nil {
-				continue
-			}
-			if !errors.Is(err, os.ErrNotExist) {
-				return fmt.Errorf("stat index.json for %s/%s: %w", overlay.Name(), version.Name(), err)
-			}
+		_, err := os.Stat(filepath.Join(versionDir, "index.json"))
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("stat index.json for %s/%s: %w", overlayName, version.Name(), err)
+		}
 
-			log.Printf("backfilling missing tile index for overlay %s version %s", overlay.Name(), version.Name())
-			if err := writeTileIndex(versionDir); err != nil {
-				return fmt.Errorf("write tile index for %s/%s: %w", overlay.Name(), version.Name(), err)
-			}
+		log.Printf("backfilling missing tile index for overlay %s version %s", overlayName, version.Name())
+		if err := writeTileIndex(versionDir); err != nil {
+			return fmt.Errorf("write tile index for %s/%s: %w", overlayName, version.Name(), err)
 		}
 	}
 	return nil
