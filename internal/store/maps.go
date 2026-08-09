@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -47,29 +48,68 @@ func (s *Store) CreateMap(ctx context.Context, name, currentVersion string, visi
 	return m, nil
 }
 
+// MapFilter holds optional filters for ListMaps. A zero value matches every
+// map the caller may otherwise see.
+type MapFilter struct {
+	Name             string // substring, case-insensitive
+	CreatedBy        string // exact match
+	VisibleToAll     *bool
+	AnonymousAllowed *bool
+}
+
+// clauses returns the "column = $N"-style fragments for the filters set on
+// f, binding their values through qb. Pure and DB-free so it's directly
+// unit-testable.
+func (f MapFilter) clauses(qb *queryBuilder) []string {
+	var clauses []string
+	if f.Name != "" {
+		clauses = append(clauses, "name ILIKE "+qb.bind("%"+f.Name+"%"))
+	}
+	if f.CreatedBy != "" {
+		clauses = append(clauses, "created_by = "+qb.bind(f.CreatedBy))
+	}
+	if f.VisibleToAll != nil {
+		clauses = append(clauses, "visible_to_all = "+qb.bind(*f.VisibleToAll))
+	}
+	if f.AnonymousAllowed != nil {
+		clauses = append(clauses, "anonymous_allowed = "+qb.bind(*f.AnonymousAllowed))
+	}
+	return clauses
+}
+
 // ListMaps returns every map visible to username: maps marked visible to
 // all, maps username created, maps username holds a per-map view/edit/delete
 // grant on, and (since they can already act on any map regardless of
 // visibility) every map if bypassVisibility is true — meant to be passed as
-// the acting user's is_admin || can_edit || can_delete.
-func (s *Store) ListMaps(ctx context.Context, username string, bypassVisibility bool) ([]MapRecord, error) {
-	return collectRows(ctx, s.pool, "list maps", `
-		SELECT uuid, name, current_version, visible_to_all, anonymous_allowed, created_at, updated_at, created_by, updated_by
-		FROM maps
-		WHERE $2
+// the acting user's is_admin || can_edit || can_delete. filter narrows the
+// result further; its zero value matches everything.
+func (s *Store) ListMaps(ctx context.Context, username string, bypassVisibility bool, filter MapFilter) ([]MapRecord, error) {
+	qb := &queryBuilder{}
+	bypassArg := qb.bind(bypassVisibility)
+	userArg := qb.bind(username)
+
+	clauses := append([]string{fmt.Sprintf(`(%s
 		   OR visible_to_all
-		   OR created_by = $1
+		   OR created_by = %s
 		   OR EXISTS (
 		        SELECT 1 FROM map_permissions mp
-		        WHERE mp.map_uuid = maps.uuid AND mp.username = $1
+		        WHERE mp.map_uuid = maps.uuid AND mp.username = %s
 		          AND (mp.can_view OR mp.can_edit OR mp.can_delete)
-		      )
+		      ))`, bypassArg, userArg, userArg)}, filter.clauses(qb)...)
+	where := strings.Join(clauses, " AND ")
+
+	query := fmt.Sprintf(`
+		SELECT uuid, name, current_version, visible_to_all, anonymous_allowed, created_at, updated_at, created_by, updated_by
+		FROM maps
+		WHERE %s
 		ORDER BY created_at DESC
-	`, func(rows pgx.Rows) (MapRecord, error) {
+	`, where)
+
+	return collectRows(ctx, s.pool, "list maps", query, func(rows pgx.Rows) (MapRecord, error) {
 		var m MapRecord
 		err := rows.Scan(&m.UUID, &m.Name, &m.CurrentVersion, &m.VisibleToAll, &m.AnonymousAllowed, &m.CreatedAt, &m.UpdatedAt, &m.CreatedBy, &m.UpdatedBy)
 		return m, err
-	}, username, bypassVisibility)
+	}, qb.args...)
 }
 
 // GetMap fetches a single map by id. It returns ErrMapNotFound if it doesn't

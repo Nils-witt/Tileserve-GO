@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,18 +63,70 @@ func (s *Store) CreateGeoObject(ctx context.Context, mapID uuid.UUID, version, n
 	return g, nil
 }
 
-// ListGeoObjects returns every geo object tied to mapID's version, oldest first.
-func (s *Store) ListGeoObjects(ctx context.Context, mapID uuid.UUID, version string) ([]GeoObjectRecord, error) {
-	return collectRows(ctx, s.pool, "list geo objects", `
+// GeoObjectFilter holds optional filters for ListGeoObjects. MinLat/MaxLat/
+// MinLon/MaxLon (a bounding box) must be set together or not at all; that's
+// enforced by the caller (see the handler), not here — clauses only checks
+// MinLat to decide whether to emit the bbox condition.
+type GeoObjectFilter struct {
+	Name       string // substring, case-insensitive
+	ExternalID string // exact match
+	Street     string // substring, case-insensitive
+	Postcode   string // exact match
+	CreatedBy  string // exact match
+
+	MinLat, MaxLat, MinLon, MaxLon *float64
+}
+
+// clauses returns the "column = $N"-style fragments for the filters set on
+// f, binding their values through qb. Pure and DB-free so it's directly
+// unit-testable.
+func (f GeoObjectFilter) clauses(qb *queryBuilder) []string {
+	var clauses []string
+	if f.Name != "" {
+		clauses = append(clauses, "name ILIKE "+qb.bind("%"+f.Name+"%"))
+	}
+	if f.ExternalID != "" {
+		clauses = append(clauses, "external_id = "+qb.bind(f.ExternalID))
+	}
+	if f.Street != "" {
+		clauses = append(clauses, "street ILIKE "+qb.bind("%"+f.Street+"%"))
+	}
+	if f.Postcode != "" {
+		clauses = append(clauses, "postcode = "+qb.bind(f.Postcode))
+	}
+	if f.CreatedBy != "" {
+		clauses = append(clauses, "created_by = "+qb.bind(f.CreatedBy))
+	}
+	if f.MinLat != nil {
+		clauses = append(clauses, fmt.Sprintf("latitude BETWEEN %s AND %s AND longitude BETWEEN %s AND %s",
+			qb.bind(*f.MinLat), qb.bind(*f.MaxLat), qb.bind(*f.MinLon), qb.bind(*f.MaxLon)))
+	}
+	return clauses
+}
+
+// ListGeoObjects returns every geo object tied to mapID's version, oldest
+// first. filter narrows the result further; its zero value matches
+// everything.
+func (s *Store) ListGeoObjects(ctx context.Context, mapID uuid.UUID, version string, filter GeoObjectFilter) ([]GeoObjectRecord, error) {
+	qb := &queryBuilder{}
+	mapArg := qb.bind(mapID)
+	versionArg := qb.bind(version)
+
+	clauses := append([]string{fmt.Sprintf("map_uuid = %s AND version = %s", mapArg, versionArg)}, filter.clauses(qb)...)
+	where := strings.Join(clauses, " AND ")
+
+	query := fmt.Sprintf(`
 		SELECT uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, created_at, updated_at, created_by, updated_by
 		FROM geo_objects
-		WHERE map_uuid = $1 AND version = $2
+		WHERE %s
 		ORDER BY created_at ASC
-	`, func(rows pgx.Rows) (GeoObjectRecord, error) {
+	`, where)
+
+	return collectRows(ctx, s.pool, "list geo objects", query, func(rows pgx.Rows) (GeoObjectRecord, error) {
 		var g GeoObjectRecord
 		err := rows.Scan(&g.UUID, &g.MapUUID, &g.Version, &g.Name, &g.ExternalID, &g.Latitude, &g.Longitude, &g.Street, &g.HouseNumber, &g.Postcode, &g.CreatedAt, &g.UpdatedAt, &g.CreatedBy, &g.UpdatedBy)
 		return g, err
-	}, mapID, version)
+	}, qb.args...)
 }
 
 // GetGeoObject fetches a single geo object by id. It returns

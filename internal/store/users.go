@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -24,17 +25,61 @@ type UserRecord struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// ListUsers returns every user, oldest first.
-func (s *Store) ListUsers(ctx context.Context) ([]UserRecord, error) {
-	return collectRows(ctx, s.pool, "list users", `
+// UserFilter holds optional filters for ListUsers. A zero value matches
+// every user.
+type UserFilter struct {
+	Search    string // substring match against username OR cn, case-insensitive
+	IsAdmin   *bool
+	CanCreate *bool
+	CanEdit   *bool
+	CanDelete *bool
+}
+
+// clauses returns the "column = $N"-style fragments for the filters set on
+// f, binding their values through qb. Pure and DB-free so it's directly
+// unit-testable.
+func (f UserFilter) clauses(qb *queryBuilder) []string {
+	var clauses []string
+	if f.Search != "" {
+		search := qb.bind("%" + f.Search + "%")
+		clauses = append(clauses, fmt.Sprintf("(username ILIKE %s OR cn ILIKE %s)", search, search))
+	}
+	if f.IsAdmin != nil {
+		clauses = append(clauses, "is_admin = "+qb.bind(*f.IsAdmin))
+	}
+	if f.CanCreate != nil {
+		clauses = append(clauses, "can_create = "+qb.bind(*f.CanCreate))
+	}
+	if f.CanEdit != nil {
+		clauses = append(clauses, "can_edit = "+qb.bind(*f.CanEdit))
+	}
+	if f.CanDelete != nil {
+		clauses = append(clauses, "can_delete = "+qb.bind(*f.CanDelete))
+	}
+	return clauses
+}
+
+// ListUsers returns every user matching filter, oldest first. filter's zero
+// value matches everyone.
+func (s *Store) ListUsers(ctx context.Context, filter UserFilter) ([]UserRecord, error) {
+	qb := &queryBuilder{}
+	where := ""
+	if clauses := filter.clauses(qb); len(clauses) > 0 {
+		where = "WHERE " + strings.Join(clauses, " AND ")
+	}
+
+	query := fmt.Sprintf(`
 		SELECT username, cn, can_create, can_edit, can_delete, is_admin, created_at
 		FROM users
+		%s
 		ORDER BY created_at ASC
-	`, func(rows pgx.Rows) (UserRecord, error) {
+	`, where)
+
+	return collectRows(ctx, s.pool, "list users", query, func(rows pgx.Rows) (UserRecord, error) {
 		var u UserRecord
 		err := rows.Scan(&u.Username, &u.CN, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.IsAdmin, &u.CreatedAt)
 		return u, err
-	})
+	}, qb.args...)
 }
 
 // CreateUser creates a new user. It returns ErrUserExists if username is

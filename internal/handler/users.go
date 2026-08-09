@@ -42,7 +42,31 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 
 		switch r.Method {
 		case http.MethodGet:
-			users, err := st.ListUsers(r.Context())
+			isAdmin, ok := queryBoolParam(w, r, "isAdmin")
+			if !ok {
+				return
+			}
+			canCreate, ok := queryBoolParam(w, r, "canCreate")
+			if !ok {
+				return
+			}
+			canEdit, ok := queryBoolParam(w, r, "canEdit")
+			if !ok {
+				return
+			}
+			canDelete, ok := queryBoolParam(w, r, "canDelete")
+			if !ok {
+				return
+			}
+			filter := store.UserFilter{
+				Search:    r.URL.Query().Get("search"),
+				IsAdmin:   isAdmin,
+				CanCreate: canCreate,
+				CanEdit:   canEdit,
+				CanDelete: canDelete,
+			}
+
+			users, err := st.ListUsers(r.Context(), filter)
 			if err != nil {
 				http.Error(w, "failed to list users", http.StatusInternalServerError)
 				return
