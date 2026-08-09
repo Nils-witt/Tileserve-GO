@@ -36,6 +36,21 @@ const (
 //go:embed login.html
 var loginPage []byte
 
+//go:embed login.js
+var loginScript []byte
+
+// LoginScriptHandler serves the login page's script at /login.js.
+func LoginScriptHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = w.Write(loginScript)
+	}
+}
+
 type loginRequest struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
