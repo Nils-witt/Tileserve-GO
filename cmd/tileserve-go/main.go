@@ -75,6 +75,8 @@ func main() {
 	// GET /login: serves the login HTML page. POST /login: exchanges
 	// username/password for a JWT and a refresh token.
 	mux.HandleFunc("/login", handler.LoginHandler(secret, st))
+	// GET /login.js: serves the login page's script.
+	mux.HandleFunc("/login.js", handler.LoginScriptHandler())
 	// POST /refresh: exchanges a refresh token for a new JWT and refresh token.
 	mux.HandleFunc("/refresh", handler.RefreshHandler(secret, st))
 	// GET /ui/: serves the self-contained management UI (public, unauthenticated).
