@@ -151,6 +151,25 @@ paths:
         `visibleToAll`, maps they created, maps they hold a per-map
         view/edit/delete grant on, admins, and users whose global `can_edit`
         or `can_delete` permission already lets them act on every map.
+      parameters:
+        - name: name
+          in: query
+          description: Case-insensitive substring match on the map name.
+          schema:
+            type: string
+        - name: createdBy
+          in: query
+          description: Exact match on the username that created the map.
+          schema:
+            type: string
+        - name: visibleToAll
+          in: query
+          schema:
+            type: boolean
+        - name: anonymousAllowed
+          in: query
+          schema:
+            type: boolean
       responses:
         "200":
           description: Array of visible maps
@@ -421,6 +440,28 @@ paths:
       tags: [users]
       summary: List users
       description: Requires the acting user's `is_admin` permission. Responses never include the password hash.
+      parameters:
+        - name: search
+          in: query
+          description: Case-insensitive substring match against username OR cn.
+          schema:
+            type: string
+        - name: isAdmin
+          in: query
+          schema:
+            type: boolean
+        - name: canCreate
+          in: query
+          schema:
+            type: boolean
+        - name: canEdit
+          in: query
+          schema:
+            type: boolean
+        - name: canDelete
+          in: query
+          schema:
+            type: boolean
       responses:
         "200":
           description: Array of users
@@ -580,6 +621,52 @@ paths:
       tags: [geo-objects]
       summary: List a map version's geo objects
       description: Requires view access to this map (see `GET /maps`).
+      parameters:
+        - name: name
+          in: query
+          description: Case-insensitive substring match on the geo object name.
+          schema:
+            type: string
+        - name: externalId
+          in: query
+          description: Exact match on externalId.
+          schema:
+            type: string
+        - name: street
+          in: query
+          description: Case-insensitive substring match on street.
+          schema:
+            type: string
+        - name: postcode
+          in: query
+          description: Exact match on postcode.
+          schema:
+            type: string
+        - name: createdBy
+          in: query
+          description: Exact match on the username that created the geo object.
+          schema:
+            type: string
+        - name: minLat
+          in: query
+          description: Bounding box filter. Must be given together with maxLat, minLon, and maxLon.
+          schema:
+            type: number
+        - name: maxLat
+          in: query
+          description: Bounding box filter. Must be given together with minLat, minLon, and maxLon.
+          schema:
+            type: number
+        - name: minLon
+          in: query
+          description: Bounding box filter. Must be given together with minLat, maxLat, and maxLon.
+          schema:
+            type: number
+        - name: maxLon
+          in: query
+          description: Bounding box filter. Must be given together with minLat, maxLat, and minLon.
+          schema:
+            type: number
       responses:
         "200":
           description: Array of geo objects

@@ -277,6 +277,22 @@ func isPgErrCode(err error, code string) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == code
 }
 
+// queryBuilder accumulates positional query arguments for a dynamically
+// built SQL query, handing back the correct $N placeholder for each one.
+// The SQL clause text surrounding that placeholder must always be a static
+// Go string literal chosen by the caller — only argument values ever flow
+// through bind — so a query built this way carries the same injection
+// safety as one written with fixed placeholders throughout.
+type queryBuilder struct {
+	args []any
+}
+
+// bind appends value to the argument list and returns its $N placeholder.
+func (q *queryBuilder) bind(value any) string {
+	q.args = append(q.args, value)
+	return fmt.Sprintf("$%d", len(q.args))
+}
+
 // collectRows runs query against pool and scans every returned row with
 // scan, wrapping any error (including a scan failure) with label for
 // context. It's shared by every Store List* method.

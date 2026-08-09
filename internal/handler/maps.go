@@ -225,7 +225,22 @@ func MapsCollectionHandler(st *store.Store) http.HandlerFunc {
 			}
 			bypassVisibility := perms.IsAdmin || perms.CanEdit || perms.CanDelete
 
-			maps, err := st.ListMaps(r.Context(), username, bypassVisibility)
+			visibleToAll, ok := queryBoolParam(w, r, "visibleToAll")
+			if !ok {
+				return
+			}
+			anonymousAllowed, ok := queryBoolParam(w, r, "anonymousAllowed")
+			if !ok {
+				return
+			}
+			filter := store.MapFilter{
+				Name:             r.URL.Query().Get("name"),
+				CreatedBy:        r.URL.Query().Get("createdBy"),
+				VisibleToAll:     visibleToAll,
+				AnonymousAllowed: anonymousAllowed,
+			}
+
+			maps, err := st.ListMaps(r.Context(), username, bypassVisibility, filter)
 			if err != nil {
 				http.Error(w, "failed to list maps", http.StatusInternalServerError)
 				return

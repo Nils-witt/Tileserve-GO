@@ -37,6 +37,52 @@ func decodeGeoObjectRequest(w http.ResponseWriter, r *http.Request) (req geoObje
 	return req, true
 }
 
+// geoObjectFilterFromQuery builds a store.GeoObjectFilter from r's query
+// parameters, writing a 400 response and returning ok=false if a numeric
+// bbox parameter is malformed, or if only some of minLat/maxLat/minLon/
+// maxLon are given (they scope one bounding box and must be given together).
+func geoObjectFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter store.GeoObjectFilter, ok bool) {
+	minLat, ok := queryFloatParam(w, r, "minLat")
+	if !ok {
+		return store.GeoObjectFilter{}, false
+	}
+	maxLat, ok := queryFloatParam(w, r, "maxLat")
+	if !ok {
+		return store.GeoObjectFilter{}, false
+	}
+	minLon, ok := queryFloatParam(w, r, "minLon")
+	if !ok {
+		return store.GeoObjectFilter{}, false
+	}
+	maxLon, ok := queryFloatParam(w, r, "maxLon")
+	if !ok {
+		return store.GeoObjectFilter{}, false
+	}
+
+	given := 0
+	for _, v := range []*float64{minLat, maxLat, minLon, maxLon} {
+		if v != nil {
+			given++
+		}
+	}
+	if given != 0 && given != 4 {
+		http.Error(w, "minLat, maxLat, minLon, and maxLon must be given together", http.StatusBadRequest)
+		return store.GeoObjectFilter{}, false
+	}
+
+	return store.GeoObjectFilter{
+		Name:       r.URL.Query().Get("name"),
+		ExternalID: r.URL.Query().Get("externalId"),
+		Street:     r.URL.Query().Get("street"),
+		Postcode:   r.URL.Query().Get("postcode"),
+		CreatedBy:  r.URL.Query().Get("createdBy"),
+		MinLat:     minLat,
+		MaxLat:     maxLat,
+		MinLon:     minLon,
+		MaxLon:     maxLon,
+	}, true
+}
+
 // geoObjectsCollectionHandler serves the /maps/{id}/version/{version}/geo-objects
 // collection route: GET lists the geo objects tied to this map version
 // (requires view access to the map), POST creates a new one (requires the
@@ -50,7 +96,12 @@ func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version strin
 				return
 			}
 
-			objs, err := st.ListGeoObjects(r.Context(), mapID, version)
+			filter, ok := geoObjectFilterFromQuery(w, r)
+			if !ok {
+				return
+			}
+
+			objs, err := st.ListGeoObjects(r.Context(), mapID, version, filter)
 			if err != nil {
 				http.Error(w, "failed to list geo objects", http.StatusInternalServerError)
 				return
