@@ -1,0 +1,15 @@
+if ! command -v golangci-lint >/dev/null 2>&1; then
+	echo "error: golangci-lint not found in PATH (https://golangci-lint.run/welcome/install/)" >&2
+	exit 1
+fi
+
+if ! command -v govulncheck >/dev/null 2>&1; then
+	echo "error: govulncheck not found in PATH (go install golang.org/x/vuln/cmd/govulncheck@latest)" >&2
+	exit 1
+fi
+
+echo "pre-commit: golangci-lint run ./..."
+make lint
+
+echo "pre-commit: govulncheck ./..."
+make vulncheck
