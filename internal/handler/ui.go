@@ -26,6 +26,7 @@ func UIHandler() http.HandlerFunc {
 		if r.URL.Path == "/ui/app.js" {
 			w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 			_, _ = w.Write(uiScript)
+
 			return
 		}
 

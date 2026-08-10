@@ -1,3 +1,6 @@
+// Package handler implements the HTTP handlers for tileserve-go: JWT
+// authentication, the maps/versions/geo-objects API, tile archive uploads,
+// and the bundled management UI.
 package handler
 
 import (
@@ -46,6 +49,7 @@ func LoginScriptHandler() http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 		_, _ = w.Write(loginScript)
 	}
@@ -73,6 +77,7 @@ func LoginHandler(secret []byte, st *store.Store) http.HandlerFunc {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write(loginPage)
+
 			return
 		}
 
@@ -93,10 +98,7 @@ func LoginHandler(secret []byte, st *store.Store) http.HandlerFunc {
 
 		ttl := defaultTokenTTL
 		if req.TTLSeconds > 0 {
-			ttl = time.Duration(req.TTLSeconds) * time.Second
-			if ttl > maxTokenTTL {
-				ttl = maxTokenTTL
-			}
+			ttl = min(time.Duration(req.TTLSeconds)*time.Second, maxTokenTTL)
 		}
 
 		claims := jwt.RegisteredClaims{
@@ -104,6 +106,7 @@ func LoginHandler(secret []byte, st *store.Store) http.HandlerFunc {
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		}
+
 		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
 		if err != nil {
 			http.Error(w, "failed to issue token", http.StatusInternalServerError)
@@ -117,6 +120,7 @@ func LoginHandler(secret []byte, st *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		//nolint:gosec // this endpoint's purpose is to hand the refresh token to the client
 		_ = json.NewEncoder(w).Encode(loginResponse{Token: token, RefreshToken: refreshToken})
 	}
 }
@@ -141,6 +145,7 @@ func RefreshHandler(secret []byte, st *store.Store) http.HandlerFunc {
 		if !decodeJSON(w, r, &req) {
 			return
 		}
+
 		if req.RefreshToken == "" {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
 			return
@@ -157,6 +162,7 @@ func RefreshHandler(secret []byte, st *store.Store) http.HandlerFunc {
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(defaultTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 		}
+
 		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
 		if err != nil {
 			http.Error(w, "failed to issue token", http.StatusInternalServerError)
@@ -164,6 +170,7 @@ func RefreshHandler(secret []byte, st *store.Store) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
+		//nolint:gosec // this endpoint's purpose is to hand the refresh token to the client
 		_ = json.NewEncoder(w).Encode(loginResponse{Token: token, RefreshToken: newRefreshToken})
 	}
 }
@@ -172,25 +179,29 @@ func RefreshHandler(secret []byte, st *store.Store) http.HandlerFunc {
 // Authorization header or ?token= query parameter. hadToken is false if the
 // request supplied no token at all (distinct from supplying an invalid one),
 // so callers can tell "anonymous" apart from "bad credentials".
-func parseBearerToken(secret []byte, r *http.Request) (username string, hadToken bool, valid bool) {
+func parseBearerToken(secret []byte, r *http.Request) (username string, hadToken, valid bool) {
 	tokenString, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || tokenString == "" {
 		tokenString = r.URL.Query().Get("token")
 	}
+
 	if tokenString == "" {
 		return "", false, false
 	}
 
 	claims := &jwt.RegisteredClaims{}
-	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (interface{}, error) {
+
+	token, err := jwt.ParseWithClaims(tokenString, claims, func(t *jwt.Token) (any, error) {
 		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, jwt.ErrTokenSignatureInvalid
 		}
+
 		return secret, nil
 	})
 	if err != nil || !token.Valid {
 		return "", true, false
 	}
+
 	return claims.Subject, true, true
 }
 
@@ -206,6 +217,7 @@ func authMiddleware(secret []byte, next http.Handler, requireToken bool) http.Ha
 			http.Error(w, "missing bearer token", http.StatusUnauthorized)
 			return
 		}
+
 		if hadToken && !valid {
 			http.Error(w, "invalid or expired token", http.StatusUnauthorized)
 			return

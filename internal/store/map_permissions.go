@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ErrMapPermissionInvalid is returned when granting a permission references a map or username that does not exist.
 var ErrMapPermissionInvalid = errors.New("map or username does not exist")
 
 // MapPermission is a user's per-map view/edit/delete grant. It only adds
@@ -24,6 +25,7 @@ type MapPermission struct {
 	CanDelete bool
 }
 
+// MapPermissionRecord is the persisted form of a per-map permission grant.
 type MapPermissionRecord struct {
 	Username  string    `json:"username"`
 	CanView   bool      `json:"canView"`
@@ -43,6 +45,7 @@ func (s *Store) GetMapPermission(ctx context.Context, mapID uuid.UUID, username 
 	}
 
 	var mp MapPermission
+
 	err := s.pool.QueryRow(ctx, `
 		SELECT can_view, can_edit, can_delete FROM map_permissions WHERE map_uuid = $1 AND username = $2
 	`, mapID, username).Scan(&mp.CanView, &mp.CanEdit, &mp.CanDelete)
@@ -50,10 +53,13 @@ func (s *Store) GetMapPermission(ctx context.Context, mapID uuid.UUID, username 
 		s.mapPermCache.set(key, MapPermission{})
 		return MapPermission{}, nil
 	}
+
 	if err != nil {
 		return MapPermission{}, fmt.Errorf("get map permission: %w", err)
 	}
+
 	s.mapPermCache.set(key, mp)
+
 	return mp, nil
 }
 
@@ -66,7 +72,9 @@ func (s *Store) ListMapPermissions(ctx context.Context, mapID uuid.UUID) ([]MapP
 		ORDER BY granted_at ASC
 	`, func(rows pgx.Rows) (MapPermissionRecord, error) {
 		var p MapPermissionRecord
+
 		err := rows.Scan(&p.Username, &p.CanView, &p.CanEdit, &p.CanDelete, &p.GrantedAt, &p.GrantedBy)
+
 		return p, err
 	}, mapID)
 }
@@ -75,6 +83,7 @@ func (s *Store) ListMapPermissions(ctx context.Context, mapID uuid.UUID) ([]MapP
 // It returns ErrMapPermissionInvalid if mapID or username don't exist.
 func (s *Store) SetMapPermission(ctx context.Context, mapID uuid.UUID, username string, canView, canEdit, canDelete bool, grantedBy string) (MapPermissionRecord, error) {
 	p := MapPermissionRecord{Username: username, CanView: canView, CanEdit: canEdit, CanDelete: canDelete, GrantedBy: grantedBy}
+
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO map_permissions (map_uuid, username, can_view, can_edit, can_delete, granted_by)
 		VALUES ($1, $2, $3, $4, $5, $6)
@@ -86,9 +95,12 @@ func (s *Store) SetMapPermission(ctx context.Context, mapID uuid.UUID, username 
 		if isPgErrCode(err, "23503") {
 			return MapPermissionRecord{}, ErrMapPermissionInvalid
 		}
+
 		return MapPermissionRecord{}, fmt.Errorf("set map permission: %w", err)
 	}
+
 	s.mapPermCache.invalidate(mapPermKey{mapID: mapID, username: username})
+
 	return p, nil
 }
 
@@ -98,6 +110,8 @@ func (s *Store) DeleteMapPermission(ctx context.Context, mapID uuid.UUID, userna
 	if err != nil {
 		return fmt.Errorf("delete map permission: %w", err)
 	}
+
 	s.mapPermCache.invalidate(mapPermKey{mapID: mapID, username: username})
+
 	return nil
 }

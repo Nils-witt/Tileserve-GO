@@ -11,9 +11,14 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var ErrGeoObjectNotFound = errors.New("geo object not found")
-var ErrGeoObjectInvalid = errors.New("map or version does not exist")
+var (
+	// ErrGeoObjectNotFound is returned when a geo object lookup finds no matching row.
+	ErrGeoObjectNotFound = errors.New("geo object not found")
+	// ErrGeoObjectInvalid is returned when creating a geo object references a map or version that does not exist.
+	ErrGeoObjectInvalid = errors.New("map or version does not exist")
+)
 
+// GeoObjectRecord is a point of interest attached to a specific map version.
 type GeoObjectRecord struct {
 	UUID        uuid.UUID `json:"uuid"`
 	MapUUID     uuid.UUID `json:"mapUuid"`
@@ -49,6 +54,7 @@ func (s *Store) CreateGeoObject(ctx context.Context, mapID uuid.UUID, version, n
 		CreatedBy:   createdBy,
 		UpdatedBy:   createdBy,
 	}
+
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO geo_objects (uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, created_by, updated_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
@@ -58,8 +64,10 @@ func (s *Store) CreateGeoObject(ctx context.Context, mapID uuid.UUID, version, n
 		if isPgErrCode(err, "23503") {
 			return GeoObjectRecord{}, ErrGeoObjectInvalid
 		}
+
 		return GeoObjectRecord{}, fmt.Errorf("create geo object: %w", err)
 	}
+
 	return g, nil
 }
 
@@ -85,22 +93,28 @@ func (f GeoObjectFilter) clauses(qb *queryBuilder) []string {
 	if f.Name != "" {
 		clauses = append(clauses, "name ILIKE "+qb.bind("%"+f.Name+"%"))
 	}
+
 	if f.ExternalID != "" {
 		clauses = append(clauses, "external_id = "+qb.bind(f.ExternalID))
 	}
+
 	if f.Street != "" {
 		clauses = append(clauses, "street ILIKE "+qb.bind("%"+f.Street+"%"))
 	}
+
 	if f.Postcode != "" {
 		clauses = append(clauses, "postcode = "+qb.bind(f.Postcode))
 	}
+
 	if f.CreatedBy != "" {
 		clauses = append(clauses, "created_by = "+qb.bind(f.CreatedBy))
 	}
+
 	if f.MinLat != nil {
 		clauses = append(clauses, fmt.Sprintf("latitude BETWEEN %s AND %s AND longitude BETWEEN %s AND %s",
 			qb.bind(*f.MinLat), qb.bind(*f.MaxLat), qb.bind(*f.MinLon), qb.bind(*f.MaxLon)))
 	}
+
 	return clauses
 }
 
@@ -124,7 +138,9 @@ func (s *Store) ListGeoObjects(ctx context.Context, mapID uuid.UUID, version str
 
 	return collectRows(ctx, s.pool, "list geo objects", query, func(rows pgx.Rows) (GeoObjectRecord, error) {
 		var g GeoObjectRecord
+
 		err := rows.Scan(&g.UUID, &g.MapUUID, &g.Version, &g.Name, &g.ExternalID, &g.Latitude, &g.Longitude, &g.Street, &g.HouseNumber, &g.Postcode, &g.CreatedAt, &g.UpdatedAt, &g.CreatedBy, &g.UpdatedBy)
+
 		return g, err
 	}, qb.args...)
 }
@@ -133,6 +149,7 @@ func (s *Store) ListGeoObjects(ctx context.Context, mapID uuid.UUID, version str
 // ErrGeoObjectNotFound if it doesn't exist.
 func (s *Store) GetGeoObject(ctx context.Context, id uuid.UUID) (GeoObjectRecord, error) {
 	var g GeoObjectRecord
+
 	err := s.pool.QueryRow(ctx, `
 		SELECT uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, created_at, updated_at, created_by, updated_by
 		FROM geo_objects WHERE uuid = $1
@@ -140,9 +157,11 @@ func (s *Store) GetGeoObject(ctx context.Context, id uuid.UUID) (GeoObjectRecord
 	if errors.Is(err, pgx.ErrNoRows) {
 		return GeoObjectRecord{}, ErrGeoObjectNotFound
 	}
+
 	if err != nil {
 		return GeoObjectRecord{}, fmt.Errorf("get geo object: %w", err)
 	}
+
 	return g, nil
 }
 
@@ -153,6 +172,7 @@ func (s *Store) GetGeoObject(ctx context.Context, id uuid.UUID) (GeoObjectRecord
 // first.
 func (s *Store) UpdateGeoObject(ctx context.Context, mapID uuid.UUID, version string, id uuid.UUID, name, externalID string, latitude, longitude float64, street, houseNumber, postcode, updatedBy string) (GeoObjectRecord, error) {
 	var g GeoObjectRecord
+
 	err := s.pool.QueryRow(ctx, `
 		UPDATE geo_objects
 		SET name = $4, external_id = $5, latitude = $6, longitude = $7, street = $8, housenumber = $9, postcode = $10, updated_by = $11, updated_at = now()
@@ -162,9 +182,11 @@ func (s *Store) UpdateGeoObject(ctx context.Context, mapID uuid.UUID, version st
 	if errors.Is(err, pgx.ErrNoRows) {
 		return GeoObjectRecord{}, ErrGeoObjectNotFound
 	}
+
 	if err != nil {
 		return GeoObjectRecord{}, fmt.Errorf("update geo object: %w", err)
 	}
+
 	return g, nil
 }
 
@@ -175,8 +197,10 @@ func (s *Store) DeleteGeoObject(ctx context.Context, mapID uuid.UUID, version st
 	if err != nil {
 		return fmt.Errorf("delete geo object: %w", err)
 	}
+
 	if tag.RowsAffected() == 0 {
 		return ErrGeoObjectNotFound
 	}
+
 	return nil
 }

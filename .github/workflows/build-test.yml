@@ -33,3 +33,14 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+          only-new-issues: true
+
+      - name: Vulnerability check
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-file: go.mod

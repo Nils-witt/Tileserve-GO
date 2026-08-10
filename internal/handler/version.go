@@ -20,6 +20,7 @@ func VersionHandler() http.HandlerFunc {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+
 		writeJSON(w, http.StatusOK, versionResponse{
 			Commit:  version.Commit,
 			Version: version.Version,

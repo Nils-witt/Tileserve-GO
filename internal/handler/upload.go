@@ -56,67 +56,19 @@ func uploadMapVersionHandler(st *store.Store, dataRoot string, id uuid.UUID) htt
 			return
 		}
 
-		r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
-
-		tmpFile, err := os.CreateTemp("", "tileserve-upload-*")
-		if err != nil {
-			http.Error(w, "failed to buffer upload", http.StatusInternalServerError)
+		tmpPath, ok := receiveUpload(w, r)
+		if !ok {
 			return
 		}
-		defer func() { _ = os.Remove(tmpFile.Name()) }()
-		defer func() { _ = tmpFile.Close() }()
-
-		if _, err := io.Copy(tmpFile, r.Body); err != nil {
-			var maxBytesErr *http.MaxBytesError
-			if errors.As(err, &maxBytesErr) {
-				http.Error(w, "upload too large", http.StatusRequestEntityTooLarge)
-				return
-			}
-			http.Error(w, "failed to read upload", http.StatusBadRequest)
-			return
-		}
-		if err := tmpFile.Close(); err != nil {
-			http.Error(w, "failed to buffer upload", http.StatusInternalServerError)
-			return
-		}
-
-		format, err := sniffArchiveFormat(tmpFile.Name())
-		if err != nil {
-			http.Error(w, "failed to inspect upload", http.StatusInternalServerError)
-			return
-		}
-		if format == archiveUnknown {
-			http.Error(w, "unsupported archive format: must be zip or tar", http.StatusBadRequest)
-			return
-		}
+		defer func() { _ = os.Remove(tmpPath) }()
 
 		dir := mapDir(dataRoot, id)
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			http.Error(w, "failed to prepare storage", http.StatusInternalServerError)
-			return
-		}
 
-		// Staged inside dir (not os.TempDir) so the final rename below is
-		// guaranteed to be same-filesystem and therefore atomic.
-		stagingDir, err := os.MkdirTemp(dir, ".upload-*")
-		if err != nil {
-			http.Error(w, "failed to prepare extraction", http.StatusInternalServerError)
+		stagingDir, ok := extractUploadedArchive(w, tmpPath, dir)
+		if !ok {
 			return
 		}
 		defer func() { _ = os.RemoveAll(stagingDir) }()
-
-		switch format {
-		case archiveZip:
-			err = extractZip(tmpFile.Name(), stagingDir)
-		case archiveTarGz:
-			err = extractTar(tmpFile.Name(), stagingDir, true)
-		case archiveTar:
-			err = extractTar(tmpFile.Name(), stagingDir, false)
-		}
-		if err != nil {
-			http.Error(w, "invalid archive file: "+err.Error(), http.StatusBadRequest)
-			return
-		}
 
 		if err := writeTileIndex(stagingDir); err != nil {
 			http.Error(w, "failed to build tile index", http.StatusInternalServerError)
@@ -137,6 +89,99 @@ func uploadMapVersionHandler(st *store.Store, dataRoot string, id uuid.UUID) htt
 
 		writeJSON(w, http.StatusCreated, m)
 	}
+}
+
+// receiveUpload buffers r's body (capped at maxUploadSize) into a closed
+// temp file and returns its path. On success the caller is responsible for
+// removing it; on failure receiveUpload has already written the appropriate
+// error response and cleaned up.
+func receiveUpload(w http.ResponseWriter, r *http.Request) (string, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+
+	tmpFile, err := os.CreateTemp("", "tileserve-upload-*")
+	if err != nil {
+		http.Error(w, "failed to buffer upload", http.StatusInternalServerError)
+		return "", false
+	}
+	defer func() { _ = tmpFile.Close() }()
+
+	if _, err := io.Copy(tmpFile, r.Body); err != nil {
+		_ = os.Remove(tmpFile.Name())
+
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "upload too large", http.StatusRequestEntityTooLarge)
+			return "", false
+		}
+
+		http.Error(w, "failed to read upload", http.StatusBadRequest)
+
+		return "", false
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpFile.Name())
+
+		http.Error(w, "failed to buffer upload", http.StatusInternalServerError)
+
+		return "", false
+	}
+
+	return tmpFile.Name(), true
+}
+
+// extractUploadedArchive sniffs tmpPath's archive format and extracts it
+// into a fresh staging directory under dir, returning that directory's path.
+// On success the caller is responsible for removing it; on failure
+// extractUploadedArchive has already written the appropriate error response
+// and cleaned up.
+func extractUploadedArchive(w http.ResponseWriter, tmpPath, dir string) (string, bool) {
+	format, err := sniffArchiveFormat(tmpPath)
+	if err != nil {
+		http.Error(w, "failed to inspect upload", http.StatusInternalServerError)
+		return "", false
+	}
+
+	if format == archiveUnknown {
+		http.Error(w, "unsupported archive format: must be zip or tar", http.StatusBadRequest)
+		return "", false
+	}
+
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		http.Error(w, "failed to prepare storage", http.StatusInternalServerError)
+		return "", false
+	}
+
+	// Staged inside dir (not os.TempDir) so the final rename in
+	// uploadMapVersionHandler is guaranteed to be same-filesystem and
+	// therefore atomic.
+	stagingDir, err := os.MkdirTemp(dir, ".upload-*")
+	if err != nil {
+		http.Error(w, "failed to prepare extraction", http.StatusInternalServerError)
+		return "", false
+	}
+
+	switch format {
+	case archiveZip:
+		err = extractZip(tmpPath, stagingDir)
+	case archiveTarGz:
+		err = extractTar(tmpPath, stagingDir, true)
+	case archiveTar:
+		err = extractTar(tmpPath, stagingDir, false)
+	case archiveUnknown:
+		// Unreachable: the archiveUnknown check above already returned.
+		err = errors.New("unsupported archive format")
+	}
+
+	if err != nil {
+		_ = os.RemoveAll(stagingDir)
+
+		http.Error(w, "invalid archive file: "+err.Error(), http.StatusBadRequest)
+
+		return "", false
+	}
+
+	return stagingDir, true
 }
 
 // archiveFormat identifies which extractor an uploaded archive needs.
@@ -163,17 +208,19 @@ var (
 // tar has no magic at offset 0, but the ustar format's magic string at byte
 // offset 257 is a reliable-enough signal in practice.
 func sniffArchiveFormat(path string) (archiveFormat, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // path is a server-generated os.CreateTemp name, not user input
 	if err != nil {
 		return archiveUnknown, fmt.Errorf("open upload: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
 	header := make([]byte, 262)
+
 	n, err := io.ReadFull(f, header)
 	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
 		return archiveUnknown, fmt.Errorf("read upload: %w", err)
 	}
+
 	header = header[:n]
 
 	switch {
@@ -194,7 +241,7 @@ func sniffArchiveFormat(path string) (archiveFormat, error) {
 // returns an error for an unreadable archive or an actual filesystem
 // failure while writing — invalid entries are skipped, not fatal.
 func extractTar(tarPath, destDir string, gzipped bool) error {
-	f, err := os.Open(tarPath)
+	f, err := os.Open(tarPath) //nolint:gosec // tarPath is a server-generated os.CreateTemp name, not user input
 	if err != nil {
 		return fmt.Errorf("open tar: %w", err)
 	}
@@ -207,58 +254,77 @@ func extractTar(tarPath, destDir string, gzipped bool) error {
 			return fmt.Errorf("open gzip: %w", err)
 		}
 		defer func() { _ = gr.Close() }()
+
 		r = gr
 	}
 
 	cleanDest := filepath.Clean(destDir)
+
 	tr := tar.NewReader(r)
 	for {
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
+
 		if err != nil {
 			return fmt.Errorf("read tar: %w", err)
 		}
 
-		if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
-			log.Printf("upload: skipping symlink entry %q", hdr.Name)
-			continue
-		}
-
-		isDir := hdr.Typeflag == tar.TypeDir
-		name := hdr.Name
-		if strings.Contains(name, "..") {
-			log.Printf("upload: skipping tar entry with parent traversal %q", name)
-			continue
-		}
-		if isDir && !strings.HasSuffix(name, "/") {
-			name += "/"
-		}
-		targetPath, ok := resolveExtractTarget(cleanDest, name)
-		if !ok {
-			continue
-		}
-
-		if isDir {
-			if err := os.MkdirAll(targetPath, 0o755); err != nil {
-				return fmt.Errorf("create dir %s: %w", targetPath, err)
-			}
-			continue
-		}
-		if hdr.Typeflag != tar.TypeReg {
-			log.Printf("upload: skipping non-regular entry %q", hdr.Name)
-			continue
-		}
-
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
-			return fmt.Errorf("create dir for %s: %w", targetPath, err)
-		}
-		if err := writeExtractedFile(tr, targetPath); err != nil {
+		if err := extractTarEntry(tr, hdr, cleanDest); err != nil {
 			return err
 		}
 	}
+
 	return nil
+}
+
+// extractTarEntry extracts a single tar entry into cleanDest, applying the
+// same zip-slip, symlink, and entry-name validation as extractZip's
+// per-entry handling. It returns nil for a skipped entry (symlink,
+// non-regular file, or invalid name) and only errors on an actual
+// filesystem failure.
+func extractTarEntry(tr *tar.Reader, hdr *tar.Header, cleanDest string) error {
+	if hdr.Typeflag == tar.TypeSymlink || hdr.Typeflag == tar.TypeLink {
+		log.Printf("upload: skipping symlink entry %q", hdr.Name)
+		return nil
+	}
+
+	isDir := hdr.Typeflag == tar.TypeDir
+
+	name := hdr.Name
+	if strings.Contains(name, "..") {
+		log.Printf("upload: skipping tar entry with parent traversal %q", name)
+		return nil
+	}
+
+	if isDir && !strings.HasSuffix(name, "/") {
+		name += "/"
+	}
+
+	targetPath, ok := resolveExtractTarget(cleanDest, name)
+	if !ok {
+		return nil
+	}
+
+	if isDir {
+		if err := os.MkdirAll(targetPath, 0o750); err != nil {
+			return fmt.Errorf("create dir %s: %w", targetPath, err)
+		}
+
+		return nil
+	}
+
+	if hdr.Typeflag != tar.TypeReg {
+		log.Printf("upload: skipping non-regular entry %q", hdr.Name)
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o750); err != nil {
+		return fmt.Errorf("create dir for %s: %w", targetPath, err)
+	}
+
+	return writeExtractedFile(tr, targetPath)
 }
 
 // extractZip extracts the zip file at zipPath into destDir. Entries that
@@ -274,34 +340,40 @@ func extractZip(zipPath, destDir string) error {
 	defer func() { _ = zr.Close() }()
 
 	cleanDest := filepath.Clean(destDir)
+
 	for _, f := range zr.File {
 		if f.Mode()&os.ModeSymlink != 0 {
 			log.Printf("upload: skipping symlink entry %q", f.Name)
 			continue
 		}
+
 		if strings.Contains(f.Name, "..") {
 			log.Printf("upload: skipping zip entry with parent traversal %q", f.Name)
 			continue
 		}
+
 		targetPath, ok := resolveExtractTarget(cleanDest, f.Name)
 		if !ok {
 			continue
 		}
 
 		if f.FileInfo().IsDir() {
-			if err := os.MkdirAll(targetPath, 0o755); err != nil {
+			if err := os.MkdirAll(targetPath, 0o750); err != nil {
 				return fmt.Errorf("create dir %s: %w", targetPath, err)
 			}
+
 			continue
 		}
 
-		if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0o750); err != nil {
 			return fmt.Errorf("create dir for %s: %w", targetPath, err)
 		}
+
 		if err := extractZipFile(f, targetPath); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 
@@ -321,55 +393,20 @@ type tileCoord struct {
 // writeTileIndex scans destDir's extracted z/x/y.png tile pyramid and writes
 // an index.json listing every tile found (sorted by z, then x, then y).
 func writeTileIndex(destDir string) error {
-	zEntries, err := os.ReadDir(destDir)
+	tiles, err := scanTileCoords(destDir)
 	if err != nil {
-		return fmt.Errorf("read version dir: %w", err)
-	}
-
-	var tiles []tileCoord
-	for _, ze := range zEntries {
-		if !ze.IsDir() {
-			continue
-		}
-		z, err := strconv.Atoi(ze.Name())
-		if err != nil {
-			continue
-		}
-
-		xEntries, err := os.ReadDir(filepath.Join(destDir, ze.Name()))
-		if err != nil {
-			return fmt.Errorf("read zoom dir %s: %w", ze.Name(), err)
-		}
-		for _, xe := range xEntries {
-			if !xe.IsDir() {
-				continue
-			}
-			x, err := strconv.Atoi(xe.Name())
-			if err != nil {
-				continue
-			}
-
-			yEntries, err := os.ReadDir(filepath.Join(destDir, ze.Name(), xe.Name()))
-			if err != nil {
-				return fmt.Errorf("read x dir %s/%s: %w", ze.Name(), xe.Name(), err)
-			}
-			for _, ye := range yEntries {
-				y, err := strconv.Atoi(strings.TrimSuffix(ye.Name(), ".png"))
-				if err != nil || !numericPNGRE.MatchString(ye.Name()) {
-					continue
-				}
-				tiles = append(tiles, tileCoord{Z: z, X: x, Y: y})
-			}
-		}
+		return err
 	}
 
 	sort.Slice(tiles, func(i, j int) bool {
 		if tiles[i].Z != tiles[j].Z {
 			return tiles[i].Z < tiles[j].Z
 		}
+
 		if tiles[i].X != tiles[j].X {
 			return tiles[i].X < tiles[j].X
 		}
+
 		return tiles[i].Y < tiles[j].Y
 	})
 
@@ -377,10 +414,81 @@ func writeTileIndex(destDir string) error {
 	if err != nil {
 		return fmt.Errorf("marshal tile index: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(destDir, "index.json"), data, 0o644); err != nil {
+
+	if err := os.WriteFile(filepath.Join(destDir, "index.json"), data, 0o600); err != nil {
 		return fmt.Errorf("write tile index: %w", err)
 	}
+
 	return nil
+}
+
+// scanTileCoords walks destDir's extracted z/x/y.png tile pyramid and
+// returns every tile coordinate found, in arbitrary order.
+func scanTileCoords(destDir string) ([]tileCoord, error) {
+	zEntries, err := os.ReadDir(destDir)
+	if err != nil {
+		return nil, fmt.Errorf("read version dir: %w", err)
+	}
+
+	var tiles []tileCoord
+
+	for _, ze := range zEntries {
+		if !ze.IsDir() {
+			continue
+		}
+
+		z, err := strconv.Atoi(ze.Name())
+		if err != nil {
+			continue
+		}
+
+		zTiles, err := scanZoomTiles(destDir, ze.Name(), z)
+		if err != nil {
+			return nil, err
+		}
+
+		tiles = append(tiles, zTiles...)
+	}
+
+	return tiles, nil
+}
+
+// scanZoomTiles walks a single zoom level directory (destDir/zName) for its
+// x/y.png tiles.
+func scanZoomTiles(destDir, zName string, z int) ([]tileCoord, error) {
+	xEntries, err := os.ReadDir(filepath.Join(destDir, zName))
+	if err != nil {
+		return nil, fmt.Errorf("read zoom dir %s: %w", zName, err)
+	}
+
+	var tiles []tileCoord
+
+	for _, xe := range xEntries {
+		if !xe.IsDir() {
+			continue
+		}
+
+		x, err := strconv.Atoi(xe.Name())
+		if err != nil {
+			continue
+		}
+
+		yEntries, err := os.ReadDir(filepath.Join(destDir, zName, xe.Name()))
+		if err != nil {
+			return nil, fmt.Errorf("read x dir %s/%s: %w", zName, xe.Name(), err)
+		}
+
+		for _, ye := range yEntries {
+			y, err := strconv.Atoi(strings.TrimSuffix(ye.Name(), ".png"))
+			if err != nil || !numericPNGRE.MatchString(ye.Name()) {
+				continue
+			}
+
+			tiles = append(tiles, tileCoord{Z: z, X: x, Y: y})
+		}
+	}
+
+	return tiles, nil
 }
 
 // EnsureTileIndexes walks dataRoot for every map ("overlay") directory and
@@ -396,21 +504,26 @@ func EnsureTileIndexes(dataRoot string) error {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
+
 	if err != nil {
 		return fmt.Errorf("read data root: %w", err)
 	}
 
 	g := new(errgroup.Group)
 	g.SetLimit(tileIndexBackfillConcurrency)
+
 	for _, overlay := range overlays {
 		if !overlay.IsDir() {
 			continue
 		}
+
 		overlayName := overlay.Name()
+
 		g.Go(func() error {
 			return ensureOverlayTileIndexes(dataRoot, overlayName)
 		})
 	}
+
 	return g.Wait()
 }
 
@@ -423,6 +536,7 @@ func ensureOverlayTileIndexes(dataRoot, overlayName string) error {
 	if err != nil {
 		return fmt.Errorf("read overlay dir %s: %w", overlayName, err)
 	}
+
 	for _, version := range versions {
 		// Non-numeric entries are skipped rather than treated as an
 		// error: in-progress uploads stage extraction in a
@@ -432,21 +546,25 @@ func ensureOverlayTileIndexes(dataRoot, overlayName string) error {
 		if !version.IsDir() || !numericSegmentRE.MatchString(version.Name()) {
 			continue
 		}
+
 		versionDir := filepath.Join(overlayDir, version.Name())
 
 		_, err := os.Stat(filepath.Join(versionDir, "index.json"))
 		if err == nil {
 			continue
 		}
+
 		if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("stat index.json for %s/%s: %w", overlayName, version.Name(), err)
 		}
 
 		log.Printf("backfilling missing tile index for overlay %s version %s", overlayName, version.Name())
+
 		if err := writeTileIndex(versionDir); err != nil {
 			return fmt.Errorf("write tile index for %s/%s: %w", overlayName, version.Name(), err)
 		}
 	}
+
 	return nil
 }
 
@@ -468,6 +586,7 @@ func resolveExtractTarget(cleanDest, name string) (targetPath string, ok bool) {
 		log.Printf("upload: skipping entry with illegal path %q", name)
 		return "", false
 	}
+
 	return targetPath, true
 }
 
@@ -477,6 +596,7 @@ func resolveExtractTarget(cleanDest, name string) (targetPath string, ok bool) {
 // which uses "/" separators and a trailing "/" to mark directories.
 func validateExtractedEntryName(name string) error {
 	isDir := strings.HasSuffix(name, "/")
+
 	segments := strings.Split(strings.Trim(name, "/"), "/")
 	if len(segments) == 0 || segments[0] == "" {
 		return fmt.Errorf("invalid entry name: %q", name)
@@ -486,6 +606,7 @@ func validateExtractedEntryName(name string) error {
 	if !isDir {
 		dirSegments = segments[:len(segments)-1]
 	}
+
 	for _, seg := range dirSegments {
 		if !numericSegmentRE.MatchString(seg) {
 			return fmt.Errorf("invalid directory %q in %q: directory names must contain only digits", seg, name)
@@ -498,6 +619,7 @@ func validateExtractedEntryName(name string) error {
 			return fmt.Errorf("invalid file %q in %q: files must be named <number>.png", last, name)
 		}
 	}
+
 	return nil
 }
 
@@ -509,13 +631,15 @@ func extractZipFile(f *zip.File, targetPath string) error {
 		return fmt.Errorf("open zip entry %s: %w", f.Name, err)
 	}
 	defer func() { _ = rc.Close() }()
+
 	return writeExtractedFile(rc, targetPath)
 }
 
 // writeExtractedFile copies r's contents to targetPath, overwriting it if it
 // already exists. Shared by the zip and tar extractors.
 func writeExtractedFile(r io.Reader, targetPath string) error {
-	out, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	//nolint:gosec // targetPath is confined to destDir by resolveExtractTarget's zip-slip/symlink checks
+	out, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("create file %s: %w", targetPath, err)
 	}
@@ -524,8 +648,10 @@ func writeExtractedFile(r io.Reader, targetPath string) error {
 	if _, err := io.Copy(out, r); err != nil {
 		return fmt.Errorf("write file %s: %w", targetPath, err)
 	}
+
 	if err := out.Close(); err != nil {
 		return fmt.Errorf("close file %s: %w", targetPath, err)
 	}
+
 	return nil
 }

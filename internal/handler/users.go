@@ -46,18 +46,22 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 			if !ok {
 				return
 			}
+
 			canCreate, ok := queryBoolParam(w, r, "canCreate")
 			if !ok {
 				return
 			}
+
 			canEdit, ok := queryBoolParam(w, r, "canEdit")
 			if !ok {
 				return
 			}
+
 			canDelete, ok := queryBoolParam(w, r, "canDelete")
 			if !ok {
 				return
 			}
+
 			filter := store.UserFilter{
 				Search:    r.URL.Query().Get("search"),
 				IsAdmin:   isAdmin,
@@ -71,6 +75,7 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 				http.Error(w, "failed to list users", http.StatusInternalServerError)
 				return
 			}
+
 			writeJSON(w, http.StatusOK, users)
 
 		case http.MethodPost:
@@ -78,6 +83,7 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 			if !decodeJSON(w, r, &req) {
 				return
 			}
+
 			if req.Username == "" || req.Password == "" {
 				http.Error(w, "username and password are required", http.StatusBadRequest)
 				return
@@ -88,6 +94,7 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 				writeStoreError(w, err, store.ErrUserExists, http.StatusConflict, "user already exists", "failed to create user")
 				return
 			}
+
 			writeJSON(w, http.StatusCreated, u)
 
 		default:
@@ -123,6 +130,7 @@ func UserItemHandler(st *store.Store) http.HandlerFunc {
 				writeStoreError(w, err, store.ErrUserNotFound, http.StatusNotFound, "user not found", "failed to update user")
 				return
 			}
+
 			writeJSON(w, http.StatusOK, u)
 
 		case http.MethodDelete:
@@ -135,6 +143,7 @@ func UserItemHandler(st *store.Store) http.HandlerFunc {
 				writeStoreError(w, err, store.ErrUserNotFound, http.StatusNotFound, "user not found", "failed to delete user")
 				return
 			}
+
 			w.WriteHeader(http.StatusNoContent)
 
 		default:
