@@ -271,8 +271,10 @@ func extractTar(tarPath, destDir string, gzipped bool) error {
 			return fmt.Errorf("read tar: %w", err)
 		}
 
-		if err := extractTarEntry(tr, hdr, cleanDest); err != nil {
-			return err
+		if !strings.Contains(hdr.Name, "..") {
+			if err := extractTarEntry(tr, hdr, cleanDest); err != nil {
+				return err
+			}
 		}
 	}
 

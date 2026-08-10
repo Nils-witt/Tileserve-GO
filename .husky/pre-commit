@@ -9,7 +9,7 @@ if ! command -v govulncheck >/dev/null 2>&1; then
 fi
 
 echo "pre-commit: golangci-lint run ./..."
-make lint
+golangci-lint  run
 
 echo "pre-commit: govulncheck ./..."
-make vulncheck
+govulncheck ./...
