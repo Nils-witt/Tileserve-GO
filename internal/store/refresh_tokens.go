@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ErrInvalidRefreshToken is returned when a refresh token is unknown, expired, or revoked.
 var ErrInvalidRefreshToken = errors.New("invalid refresh token")
 
 // refreshTokenBytes is how much crypto/rand entropy backs each issued
@@ -25,6 +26,7 @@ func newRefreshTokenValue() (string, error) {
 	if _, err := rand.Read(buf); err != nil {
 		return "", fmt.Errorf("generate refresh token: %w", err)
 	}
+
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
@@ -44,6 +46,7 @@ func (s *Store) CreateRefreshToken(ctx context.Context, username string, ttl tim
 	if err != nil {
 		return "", time.Time{}, err
 	}
+
 	expiresAt = time.Now().Add(ttl)
 
 	_, err = s.pool.Exec(ctx, `
@@ -53,6 +56,7 @@ func (s *Store) CreateRefreshToken(ctx context.Context, username string, ttl tim
 	if err != nil {
 		return "", time.Time{}, fmt.Errorf("create refresh token: %w", err)
 	}
+
 	return token, expiresAt, nil
 }
 
@@ -72,6 +76,7 @@ func (s *Store) RotateRefreshToken(ctx context.Context, oldToken string, ttl tim
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var oldExpiresAt time.Time
+
 	err = tx.QueryRow(ctx, `
 		SELECT username, expires_at FROM refresh_tokens
 		WHERE token_hash = $1 AND revoked_at IS NULL
@@ -80,9 +85,11 @@ func (s *Store) RotateRefreshToken(ctx context.Context, oldToken string, ttl tim
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", time.Time{}, ErrInvalidRefreshToken
 	}
+
 	if err != nil {
 		return "", "", time.Time{}, fmt.Errorf("look up refresh token: %w", err)
 	}
+
 	if time.Now().After(oldExpiresAt) {
 		return "", "", time.Time{}, ErrInvalidRefreshToken
 	}
@@ -95,6 +102,7 @@ func (s *Store) RotateRefreshToken(ctx context.Context, oldToken string, ttl tim
 	if err != nil {
 		return "", "", time.Time{}, err
 	}
+
 	expiresAt = time.Now().Add(ttl)
 	if _, err = tx.Exec(ctx, `
 		INSERT INTO refresh_tokens (token_hash, username, expires_at)
@@ -106,5 +114,6 @@ func (s *Store) RotateRefreshToken(ctx context.Context, oldToken string, ttl tim
 	if err := tx.Commit(ctx); err != nil {
 		return "", "", time.Time{}, fmt.Errorf("commit refresh transaction: %w", err)
 	}
+
 	return username, newToken, expiresAt, nil
 }

@@ -1,0 +1,11 @@
+{
+  "name": "tileserve-go",
+  "private": true,
+  "description": "Node toolchain for Husky git hooks (lint + govulncheck). No JS runtime code lives here.",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.7"
+  }
+}

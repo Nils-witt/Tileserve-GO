@@ -26,14 +26,17 @@ func decodeGeoObjectRequest(w http.ResponseWriter, r *http.Request) (req geoObje
 	if !decodeJSON(w, r, &req) {
 		return geoObjectRequest{}, false
 	}
+
 	if req.Name == "" {
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return geoObjectRequest{}, false
 	}
+
 	if req.Latitude == nil || req.Longitude == nil {
 		http.Error(w, "latitude and longitude are required", http.StatusBadRequest)
 		return geoObjectRequest{}, false
 	}
+
 	return req, true
 }
 
@@ -46,25 +49,30 @@ func geoObjectFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter st
 	if !ok {
 		return store.GeoObjectFilter{}, false
 	}
+
 	maxLat, ok := queryFloatParam(w, r, "maxLat")
 	if !ok {
 		return store.GeoObjectFilter{}, false
 	}
+
 	minLon, ok := queryFloatParam(w, r, "minLon")
 	if !ok {
 		return store.GeoObjectFilter{}, false
 	}
+
 	maxLon, ok := queryFloatParam(w, r, "maxLon")
 	if !ok {
 		return store.GeoObjectFilter{}, false
 	}
 
 	given := 0
+
 	for _, v := range []*float64{minLat, maxLat, minLon, maxLon} {
 		if v != nil {
 			given++
 		}
 	}
+
 	if given != 0 && given != 4 {
 		http.Error(w, "minLat, maxLat, minLon, and maxLon must be given together", http.StatusBadRequest)
 		return store.GeoObjectFilter{}, false
@@ -106,6 +114,7 @@ func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version strin
 				http.Error(w, "failed to list geo objects", http.StatusInternalServerError)
 				return
 			}
+
 			writeJSON(w, http.StatusOK, objs)
 
 		case http.MethodPost:
@@ -126,6 +135,7 @@ func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version strin
 				writeStoreError(w, err, store.ErrGeoObjectInvalid, http.StatusBadRequest, "map or version does not exist", "failed to create geo object")
 				return
 			}
+
 			writeJSON(w, http.StatusCreated, g)
 
 		default:
@@ -146,10 +156,12 @@ func getScopedGeoObject(w http.ResponseWriter, r *http.Request, st *store.Store,
 		writeStoreError(w, err, store.ErrGeoObjectNotFound, http.StatusNotFound, "geo object not found", "failed to get geo object")
 		return store.GeoObjectRecord{}, false
 	}
+
 	if g.MapUUID != mapID || g.Version != version {
 		http.Error(w, "geo object not found", http.StatusNotFound)
 		return store.GeoObjectRecord{}, false
 	}
+
 	return g, true
 }
 
@@ -190,6 +202,7 @@ func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id u
 				writeStoreError(w, err, store.ErrGeoObjectNotFound, http.StatusNotFound, "geo object not found", "failed to update geo object")
 				return
 			}
+
 			writeJSON(w, http.StatusOK, g)
 
 		case http.MethodDelete:
@@ -204,6 +217,7 @@ func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id u
 				writeStoreError(w, err, store.ErrGeoObjectNotFound, http.StatusNotFound, "geo object not found", "failed to delete geo object")
 				return
 			}
+
 			w.WriteHeader(http.StatusNoContent)
 
 		default:

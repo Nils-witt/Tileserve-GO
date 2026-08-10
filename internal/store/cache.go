@@ -1,3 +1,5 @@
+// Package store implements PostgreSQL-backed persistence for tileserve-go:
+// users, maps, map versions, permissions, geo objects, and refresh tokens.
 package store
 
 import (
@@ -29,10 +31,12 @@ func (c *ttlCache[K, V]) get(key K) (V, bool) {
 	c.mu.RLock()
 	e, ok := c.m[key]
 	c.mu.RUnlock()
+
 	if !ok || time.Now().After(e.expires) {
 		var zero V
 		return zero, false
 	}
+
 	return e.value, true
 }
 

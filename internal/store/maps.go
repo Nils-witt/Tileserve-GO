@@ -12,8 +12,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ErrMapNotFound is returned when a map lookup finds no matching row.
 var ErrMapNotFound = errors.New("map not found")
 
+// MapRecord is the persisted form of a map.
 type MapRecord struct {
 	UUID             uuid.UUID `json:"uuid"`
 	Name             string    `json:"name"`
@@ -37,6 +39,7 @@ func (s *Store) CreateMap(ctx context.Context, name, currentVersion string, visi
 		CreatedBy:        createdBy,
 		UpdatedBy:        createdBy,
 	}
+
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO maps (uuid, name, current_version, visible_to_all, anonymous_allowed, created_by, updated_by)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -45,6 +48,7 @@ func (s *Store) CreateMap(ctx context.Context, name, currentVersion string, visi
 	if err != nil {
 		return MapRecord{}, fmt.Errorf("create map: %w", err)
 	}
+
 	return m, nil
 }
 
@@ -65,15 +69,19 @@ func (f MapFilter) clauses(qb *queryBuilder) []string {
 	if f.Name != "" {
 		clauses = append(clauses, "name ILIKE "+qb.bind("%"+f.Name+"%"))
 	}
+
 	if f.CreatedBy != "" {
 		clauses = append(clauses, "created_by = "+qb.bind(f.CreatedBy))
 	}
+
 	if f.VisibleToAll != nil {
 		clauses = append(clauses, "visible_to_all = "+qb.bind(*f.VisibleToAll))
 	}
+
 	if f.AnonymousAllowed != nil {
 		clauses = append(clauses, "anonymous_allowed = "+qb.bind(*f.AnonymousAllowed))
 	}
+
 	return clauses
 }
 
@@ -107,7 +115,9 @@ func (s *Store) ListMaps(ctx context.Context, username string, bypassVisibility 
 
 	return collectRows(ctx, s.pool, "list maps", query, func(rows pgx.Rows) (MapRecord, error) {
 		var m MapRecord
+
 		err := rows.Scan(&m.UUID, &m.Name, &m.CurrentVersion, &m.VisibleToAll, &m.AnonymousAllowed, &m.CreatedAt, &m.UpdatedAt, &m.CreatedBy, &m.UpdatedBy)
+
 		return m, err
 	}, qb.args...)
 }
@@ -122,6 +132,7 @@ func (s *Store) GetMap(ctx context.Context, id uuid.UUID) (MapRecord, error) {
 	}
 
 	var m MapRecord
+
 	err := s.pool.QueryRow(ctx, `
 		SELECT uuid, name, current_version, visible_to_all, anonymous_allowed, created_at, updated_at, created_by, updated_by
 		FROM maps WHERE uuid = $1
@@ -129,10 +140,13 @@ func (s *Store) GetMap(ctx context.Context, id uuid.UUID) (MapRecord, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MapRecord{}, ErrMapNotFound
 	}
+
 	if err != nil {
 		return MapRecord{}, fmt.Errorf("get map: %w", err)
 	}
+
 	s.mapCache.set(id, m)
+
 	return m, nil
 }
 
@@ -140,6 +154,7 @@ func (s *Store) GetMap(ctx context.Context, id uuid.UUID) (MapRecord, error) {
 // It returns ErrMapNotFound if id doesn't exist.
 func (s *Store) UpdateMap(ctx context.Context, id uuid.UUID, name, currentVersion string, visibleToAll, anonymousAllowed bool, updatedBy string) (MapRecord, error) {
 	var m MapRecord
+
 	err := s.pool.QueryRow(ctx, `
 		UPDATE maps
 		SET name = $2, current_version = $3, visible_to_all = $4, anonymous_allowed = $5, updated_by = $6, updated_at = now()
@@ -149,10 +164,13 @@ func (s *Store) UpdateMap(ctx context.Context, id uuid.UUID, name, currentVersio
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MapRecord{}, ErrMapNotFound
 	}
+
 	if err != nil {
 		return MapRecord{}, fmt.Errorf("update map: %w", err)
 	}
+
 	s.mapCache.invalidate(id)
+
 	return m, nil
 }
 
@@ -174,15 +192,18 @@ func (s *Store) IncrementMapVersion(ctx context.Context, id uuid.UUID, updatedBy
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	var exists bool
+
 	err = tx.QueryRow(ctx, `SELECT true FROM maps WHERE uuid = $1 FOR UPDATE`, id).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MapRecord{}, ErrMapNotFound
 	}
+
 	if err != nil {
 		return MapRecord{}, fmt.Errorf("lock map: %w", err)
 	}
 
 	var lastVersion int
+
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(MAX(version::int), 0) FROM map_versions WHERE map_uuid = $1
 	`, id).Scan(&lastVersion)
@@ -193,6 +214,7 @@ func (s *Store) IncrementMapVersion(ctx context.Context, id uuid.UUID, updatedBy
 	nextVersion := strconv.Itoa(lastVersion + 1)
 
 	var m MapRecord
+
 	err = tx.QueryRow(ctx, `
 		UPDATE maps
 		SET current_version = $2, updated_by = $3, updated_at = now()
@@ -213,10 +235,13 @@ func (s *Store) IncrementMapVersion(ctx context.Context, id uuid.UUID, updatedBy
 	if err := tx.Commit(ctx); err != nil {
 		return MapRecord{}, fmt.Errorf("commit: %w", err)
 	}
+
 	s.mapCache.invalidate(id)
+
 	return m, nil
 }
 
+// MapVersionRecord is one uploaded version in a map's history.
 type MapVersionRecord struct {
 	Version   string    `json:"version"`
 	CreatedAt time.Time `json:"createdAt"`
@@ -237,7 +262,9 @@ func (s *Store) ListMapVersions(ctx context.Context, id uuid.UUID) ([]MapVersion
 		ORDER BY created_at DESC
 	`, func(rows pgx.Rows) (MapVersionRecord, error) {
 		var v MapVersionRecord
+
 		err := rows.Scan(&v.Version, &v.CreatedAt, &v.CreatedBy)
+
 		return v, err
 	}, id)
 }
@@ -249,9 +276,12 @@ func (s *Store) DeleteMap(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return fmt.Errorf("delete map: %w", err)
 	}
+
 	if tag.RowsAffected() == 0 {
 		return ErrMapNotFound
 	}
+
 	s.mapCache.invalidate(id)
+
 	return nil
 }

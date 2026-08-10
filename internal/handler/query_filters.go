@@ -14,11 +14,13 @@ func queryBoolParam(w http.ResponseWriter, r *http.Request, name string) (value 
 	if raw == "" {
 		return nil, true
 	}
+
 	b, err := strconv.ParseBool(raw)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("invalid %s: must be true or false", name), http.StatusBadRequest)
 		return nil, false
 	}
+
 	return &b, true
 }
 
@@ -28,10 +30,12 @@ func queryFloatParam(w http.ResponseWriter, r *http.Request, name string) (value
 	if raw == "" {
 		return nil, true
 	}
+
 	f, err := strconv.ParseFloat(raw, 64)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("invalid %s: must be a number", name), http.StatusBadRequest)
 		return nil, false
 	}
+
 	return &f, true
 }

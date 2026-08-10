@@ -10,16 +10,21 @@ import (
 )
 
 func TestHashPassword(t *testing.T) {
+	t.Parallel()
+
 	hash, err := hashPassword("s3cret")
 	if err != nil {
 		t.Fatalf("hashPassword: %v", err)
 	}
+
 	if hash == "s3cret" {
 		t.Fatal("hashPassword returned the plaintext password unchanged")
 	}
+
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte("s3cret")); err != nil {
 		t.Fatalf("hash does not verify against the original password: %v", err)
 	}
+
 	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte("wrong")); err == nil {
 		t.Fatal("hash verified against the wrong password")
 	}
@@ -30,12 +35,15 @@ func TestHashPassword(t *testing.T) {
 	if err != nil {
 		t.Fatalf("hashPassword: %v", err)
 	}
+
 	if hash == hash2 {
 		t.Fatal("hashPassword produced identical hashes for two calls with the same password")
 	}
 }
 
 func TestIsPgErrCode(t *testing.T) {
+	t.Parallel()
+
 	uniqueViolation := &pgconn.PgError{Code: "23505"}
 
 	tests := []struct {
@@ -53,6 +61,8 @@ func TestIsPgErrCode(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			if got := isPgErrCode(tc.err, tc.code); got != tc.want {
 				t.Errorf("isPgErrCode() = %v, want %v", got, tc.want)
 			}

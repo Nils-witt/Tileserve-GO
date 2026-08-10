@@ -14,6 +14,8 @@ func approxEqual(a, b, epsilon float64) bool {
 }
 
 func TestTileToLonLat(t *testing.T) {
+	t.Parallel()
+
 	const epsilon = 1e-9
 
 	tests := []struct {
@@ -29,6 +31,8 @@ func TestTileToLonLat(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
 			lon, lat := tileToLonLat(tc.x, tc.y, tc.z)
 			if !approxEqual(lon, tc.wantLon, epsilon) || !approxEqual(lat, tc.wantLat, epsilon) {
 				t.Fatalf("tileToLonLat(%d, %d, %d) = (%v, %v), want (%v, %v)",
@@ -41,16 +45,20 @@ func TestTileToLonLat(t *testing.T) {
 // writeTileFile creates an empty file at versionDir/z/x/y.png.
 func writeTileFile(t *testing.T, versionDir string, z, x, y int) {
 	t.Helper()
+
 	dir := filepath.Join(versionDir, strconv.Itoa(z), strconv.Itoa(x))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(y)+".png"), []byte("tile"), 0o644); err != nil {
+
+	if err := os.WriteFile(filepath.Join(dir, strconv.Itoa(y)+".png"), []byte("tile"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }
 
 func TestTileExtentAtZoom(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	writeTileFile(t, dir, 2, 3, 4)
 	writeTileFile(t, dir, 2, 3, 5)
@@ -58,10 +66,11 @@ func TestTileExtentAtZoom(t *testing.T) {
 
 	// Junk that must be skipped: a non-numeric x directory, and a
 	// non-numeric / non-".png" file inside a valid x directory.
-	if err := os.MkdirAll(filepath.Join(dir, "2", "notanumber"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "2", "notanumber"), 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "2", "3", "notes.txt"), []byte("x"), 0o644); err != nil {
+
+	if err := os.WriteFile(filepath.Join(dir, "2", "3", "notes.txt"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -69,14 +78,17 @@ func TestTileExtentAtZoom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tileExtentAtZoom: %v", err)
 	}
+
 	if minX != 3 || maxX != 5 || minY != 4 || maxY != 5 {
 		t.Fatalf("extent = (minX=%d, minY=%d, maxX=%d, maxY=%d), want (3, 4, 5, 5)", minX, minY, maxX, maxY)
 	}
 }
 
 func TestTileExtentAtZoomNoTiles(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "2"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "2"), 0o750); err != nil {
 		t.Fatal(err)
 	}
 
@@ -86,6 +98,8 @@ func TestTileExtentAtZoomNoTiles(t *testing.T) {
 }
 
 func TestComputeTileBounds(t *testing.T) {
+	t.Parallel()
+
 	dir := t.TempDir()
 	// Two tiles at zoom 1 covering the whole world (x=0..1, y=0..1), plus a
 	// higher zoom that must not affect the computed extent (only MaxZoom).
@@ -97,26 +111,35 @@ func TestComputeTileBounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("computeTileBounds: %v", err)
 	}
+
 	if bounds.MinZoom != 1 {
 		t.Errorf("MinZoom = %d, want 1", bounds.MinZoom)
 	}
+
 	if bounds.MaxZoom != 3 {
 		t.Errorf("MaxZoom = %d, want 3", bounds.MaxZoom)
 	}
+
 	const epsilon = 1e-9
 	if !approxEqual(bounds.West, -180, epsilon) || !approxEqual(bounds.East, 180, epsilon) {
 		t.Errorf("West/East = %v/%v, want -180/180", bounds.West, bounds.East)
 	}
+
 	if !approxEqual(bounds.North, 85.0511287798066, epsilon) || !approxEqual(bounds.South, -85.0511287798066, epsilon) {
 		t.Errorf("North/South = %v/%v, want ~85.05/~-85.05", bounds.North, bounds.South)
 	}
+
 	if !approxEqual(bounds.CenterLng, 0, epsilon) || !approxEqual(bounds.CenterLat, 0, epsilon) {
 		t.Errorf("CenterLng/CenterLat = %v/%v, want 0/0", bounds.CenterLng, bounds.CenterLat)
 	}
 }
 
 func TestComputeTileBoundsNoTiles(t *testing.T) {
+	t.Parallel()
+
 	t.Run("missing directory", func(t *testing.T) {
+		t.Parallel()
+
 		dir := filepath.Join(t.TempDir(), "does-not-exist")
 		if _, err := computeTileBounds(dir); !errors.Is(err, errNoTiles) {
 			t.Fatalf("err = %v, want errNoTiles", err)
@@ -124,6 +147,8 @@ func TestComputeTileBoundsNoTiles(t *testing.T) {
 	})
 
 	t.Run("empty directory", func(t *testing.T) {
+		t.Parallel()
+
 		dir := t.TempDir()
 		if _, err := computeTileBounds(dir); !errors.Is(err, errNoTiles) {
 			t.Fatalf("err = %v, want errNoTiles", err)

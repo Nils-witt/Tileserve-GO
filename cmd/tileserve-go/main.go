@@ -1,8 +1,12 @@
+// Command tileserve-go serves versioned map tile pyramids and geo objects
+// over HTTP, backed by PostgreSQL and protected by JWT-based authentication.
 package main
 
 import (
 	"context"
+	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -18,6 +22,7 @@ func envOrDefault(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
+
 	return fallback
 }
 
@@ -31,27 +36,39 @@ func main() {
 	seedUsername := flag.String("seed-username", envOrDefault("SEED_USERNAME", "admin"), "username to create on startup if it doesn't already exist (env SEED_USERNAME)")
 	seedPassword := flag.String("seed-password", envOrDefault("SEED_PASSWORD", "admin"), "password for -seed-username (env SEED_PASSWORD)")
 	port := flag.String("port", envOrDefault("PORT", "80"), "port to listen on (env PORT)")
+
 	flag.Parse()
 
-	if *jwtSecret == "" || *dbDSN == "" {
-		log.Fatal("jwt-secret and db-dsn are both required")
+	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port); err != nil {
+		log.Fatal(err)
 	}
-	secret := []byte(*jwtSecret)
+}
+
+// run wires up storage and the HTTP server and blocks until the server
+// exits. It returns an error instead of calling log.Fatal directly so that
+// deferred cleanup (closing the store) always runs.
+func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) error {
+	if jwtSecret == "" || dbDSN == "" {
+		return errors.New("jwt-secret and db-dsn are both required")
+	}
+
+	secret := []byte(jwtSecret)
 
 	ctx := context.Background()
-	st, err := store.NewStore(ctx, *dbDSN)
+
+	st, err := store.NewStore(ctx, dbDSN)
 	if err != nil {
-		log.Fatalf("connect to postgres: %v", err)
+		return fmt.Errorf("connect to postgres: %w", err)
 	}
 	defer st.Close()
 
 	if err := st.Migrate(ctx); err != nil {
-		log.Fatalf("migrate: %v", err)
+		return fmt.Errorf("migrate: %w", err)
 	}
 
-	if *seedUsername != "" && *seedPassword != "" {
-		if err := st.SeedUser(ctx, *seedUsername, *seedPassword); err != nil {
-			log.Fatalf("seed user: %v", err)
+	if seedUsername != "" && seedPassword != "" {
+		if err := st.SeedUser(ctx, seedUsername, seedPassword); err != nil {
+			return fmt.Errorf("seed user: %w", err)
 		}
 	}
 
@@ -59,14 +76,14 @@ func main() {
 	// serving traffic (see EnsureTileIndexes) — run it in the background
 	// rather than delaying server startup on a full data-root filesystem walk.
 	go func() {
-		if err := handler.EnsureTileIndexes(*dataRoot); err != nil {
+		if err := handler.EnsureTileIndexes(dataRoot); err != nil {
 			log.Printf("backfill tile indexes: %v", err)
 		}
 	}()
 
 	mux := http.NewServeMux()
 	// GET /healthz: liveness probe, always returns 200 "ok".
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
@@ -92,13 +109,13 @@ func main() {
 	// OptionalAuth, not RequireAuth: a map's version file serving route may
 	// be reachable without a token at all if that map has anonymousAllowed
 	// set — MapsItemHandler enforces auth itself on every other route.
-	mux.Handle("/maps/", handler.OptionalAuth(secret, handler.MapsItemHandler(st, *dataRoot)))
+	mux.Handle("/maps/", handler.OptionalAuth(secret, handler.MapsItemHandler(st, dataRoot)))
 	// GET /users, POST /users: list users / create a user (admin-only).
 	mux.Handle("/users", handler.RequireAuth(secret, handler.UsersCollectionHandler(st)))
 	// PUT /users/{username}, DELETE /users/{username}: update / delete a user (admin-only).
 	mux.Handle("/users/", handler.RequireAuth(secret, handler.UserItemHandler(st)))
 
-	addr := ":" + *port
+	addr := ":" + port
 	srv := &http.Server{
 		Addr:    addr,
 		Handler: mux,
@@ -112,7 +129,6 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 	log.Printf("tileserve-go listening on %s", addr)
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
-	}
+
+	return srv.ListenAndServe()
 }
