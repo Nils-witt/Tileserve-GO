@@ -435,6 +435,108 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /maps/{id}/aliases:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+    get:
+      tags: [maps]
+      summary: List a map's user-defined version aliases
+      description: >-
+        Requires view access to this map (see `GET /maps`). Aliases let a
+        `{version}` path segment elsewhere resolve to a specific uploaded
+        version by name, alongside the built-in `current` keyword.
+      responses:
+        "200":
+          description: Array of aliases
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MapVersionAlias"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /maps/{id}/aliases/{alias}:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - name: alias
+        in: path
+        required: true
+        schema:
+          type: string
+        description: >-
+          The alias name. May not be the literal keyword "current" or
+          purely numeric (both are reserved for the built-in version
+          resolution rules).
+    get:
+      tags: [maps]
+      summary: Fetch a single version alias
+      description: Requires view access to this map (see `GET /maps`).
+      responses:
+        "200":
+          description: The alias
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MapVersionAlias"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: No such alias for this map
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+    put:
+      tags: [maps]
+      summary: Create or replace a version alias
+      description: >-
+        Requires the acting user's `can_edit` permission (global or
+        per-map) — the same rule as editing a map's `currentVersion` via
+        `PUT /maps/{id}`. Unlike the permissions API, this is not
+        admin-only.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MapVersionAliasRequest"
+      responses:
+        "200":
+          description: Alias created or updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MapVersionAlias"
+        "400":
+          description: >-
+            Invalid request body, alias is "current" or purely numeric, or
+            the referenced version doesn't exist for this map
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [maps]
+      summary: Delete a version alias
+      description: Requires the acting user's `can_edit` permission. A no-op if no such alias exists.
+      responses:
+        "204":
+          description: Alias deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /users:
     get:
       tags: [users]
@@ -584,6 +686,10 @@ paths:
         required: true
         schema:
           type: string
+        description: >-
+          A real (numeric) version identifier, the literal keyword
+          "current" (resolves to the map's currentVersion), or a
+          user-defined alias created via `PUT /maps/{id}/aliases/{alias}`.
     get:
       tags: [files]
       summary: Compute the real-world extent of a map version's tile pyramid
@@ -617,6 +723,10 @@ paths:
         required: true
         schema:
           type: string
+        description: >-
+          A real (numeric) version identifier, the literal keyword
+          "current" (resolves to the map's currentVersion), or a
+          user-defined alias created via `PUT /maps/{id}/aliases/{alias}`.
     get:
       tags: [geo-objects]
       summary: List a map version's geo objects
@@ -720,6 +830,10 @@ paths:
         required: true
         schema:
           type: string
+        description: >-
+          A real (numeric) version identifier, the literal keyword
+          "current" (resolves to the map's currentVersion), or a
+          user-defined alias created via `PUT /maps/{id}/aliases/{alias}`.
       - name: geoObjectId
         in: path
         required: true
@@ -802,6 +916,10 @@ paths:
         required: true
         schema:
           type: string
+        description: >-
+          A real (numeric) version identifier, the literal keyword
+          "current" (resolves to the map's currentVersion), or a
+          user-defined alias created via `PUT /maps/{id}/aliases/{alias}`.
       - name: filePath
         in: path
         required: true
@@ -1128,4 +1246,30 @@ components:
           type: string
           format: date-time
         grantedBy:
+          type: string
+
+    MapVersionAliasRequest:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+          description: Must be an existing version in this map's upload history.
+
+    MapVersionAlias:
+      type: object
+      properties:
+        alias:
+          type: string
+        version:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        updatedBy:
           type: string

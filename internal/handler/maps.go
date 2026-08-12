@@ -25,6 +25,9 @@ const (
 	versionPathSegment    = "version"
 	boundsPathSegment     = "bounds"
 	geoObjectsPathSegment = "geo-objects"
+	// currentVersionKeyword, used in place of a literal version segment,
+	// resolves to the map's MapRecord.CurrentVersion.
+	currentVersionKeyword = "current"
 )
 
 // mapDir returns a map's storage directory under dataRoot.
@@ -315,10 +318,17 @@ func MapsCollectionHandler(st *store.Store) http.HandlerFunc {
 //   - /maps/{id}/versions         (GET):    mapVersionsHandler
 //   - /maps/{id}/permissions[/{username}]:  mapPermissionsCollectionHandler /
 //     mapPermissionItemHandler
+//   - /maps/{id}/aliases[/{alias}]:  mapAliasesCollectionHandler /
+//     mapAliasItemHandler
 //   - /maps/{id}/version/{version}/bounds (GET): mapVersionBoundsHandler
 //   - /maps/{id}/version/{version}/geo-objects[/{uuid}]:  geoObjectsCollectionHandler /
 //     geoObjectItemHandler
 //   - /maps/{id}                  (GET/PUT/DELETE): fetch/update/delete the map itself
+//
+// In every one of the above, {version} may be the literal keyword "current"
+// (resolves to the map's MapRecord.CurrentVersion), a purely numeric real
+// version identifier, or a user-defined alias created via the aliases API
+// — see resolveVersionSegment for the resolution order.
 //
 // Every route other than the version-file route requires a bearer token.
 func MapsItemHandler(st *store.Store, dataRoot string) http.HandlerFunc {
@@ -383,7 +393,11 @@ func serveMapVersionFile(w http.ResponseWriter, r *http.Request, st *store.Store
 		}
 	}
 
-	version := segments[2]
+	version, ok := resolveVersionSegment(w, r, st, id, segments[2])
+	if !ok {
+		return
+	}
+
 	versionDir := mapVersionDir(dataRoot, id, version)
 	prefix := "/maps/" + strings.Join(segments[:3], "/") + "/"
 	// A map version's directory is never modified in place after upload
@@ -396,11 +410,11 @@ func serveMapVersionFile(w http.ResponseWriter, r *http.Request, st *store.Store
 
 // routeMapSubResource dispatches every route nested under /maps/{id}/...
 // other than the bare item route and the anonymous version-file route (see
-// isVersionFilePath): upload, versions, permissions[/{username}], and
-// version/{v}/bounds|geo-objects[/{uuid}]. It returns true if segments
-// matched one of these routes — the request has been fully handled, whether
-// it succeeded or failed — or false if the caller should fall through to
-// treating this as the bare /maps/{id} route.
+// isVersionFilePath): upload, versions, permissions[/{username}],
+// aliases[/{alias}], and version/{v}/bounds|geo-objects[/{uuid}]. It returns
+// true if segments matched one of these routes — the request has been fully
+// handled, whether it succeeded or failed — or false if the caller should
+// fall through to treating this as the bare /maps/{id} route.
 func routeMapSubResource(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, segments []string) bool {
 	if len(segments) < 2 {
 		return false
@@ -413,6 +427,8 @@ func routeMapSubResource(w http.ResponseWriter, r *http.Request, st *store.Store
 		return routeMapVersions(w, r, st, id, segments)
 	case "permissions":
 		return routeMapPermissions(w, r, st, id, segments)
+	case "aliases":
+		return routeMapAliases(w, r, st, id, segments)
 	case versionPathSegment:
 		return routeMapVersionSubResource(w, r, st, dataRoot, id, segments)
 	default:
@@ -455,17 +471,101 @@ func routeMapPermissions(w http.ResponseWriter, r *http.Request, st *store.Store
 	return true
 }
 
+// resolveCurrentVersion fetches m for id and returns its current version,
+// writing a 404 and returning ok=false if the map doesn't exist or has no
+// current version yet (an empty CurrentVersion must never be used as a path
+// segment — mapVersionDir would silently resolve to the map's root
+// directory, exposing every version).
+func resolveCurrentVersion(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) (version string, ok bool) {
+	version, err := st.GetCurrentVersion(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err, store.ErrMapNotFound, http.StatusNotFound, "map not found", "failed to get map")
+		return "", false
+	}
+
+	if version == "" {
+		http.Error(w, "map has no current version", http.StatusNotFound)
+		return "", false
+	}
+
+	return version, true
+}
+
+// versionSegmentKind classifies a {version} path segment into the branch of
+// resolveVersionSegment that handles it.
+type versionSegmentKind int
+
+const (
+	versionSegmentCurrent versionSegmentKind = iota
+	versionSegmentNumeric
+	versionSegmentAlias
+)
+
+// classifyVersionSegment reports which resolution branch segment falls
+// into, without performing any I/O. Real version identifiers are always the
+// string form of an incrementing integer (see IncrementMapVersion), so any
+// non-numeric, non-"current" segment is unambiguously an alias candidate.
+func classifyVersionSegment(segment string) versionSegmentKind {
+	switch {
+	case segment == currentVersionKeyword:
+		return versionSegmentCurrent
+	case numericSegmentRE.MatchString(segment):
+		return versionSegmentNumeric
+	default:
+		return versionSegmentAlias
+	}
+}
+
+// resolveVersionSegment resolves a {version} path segment to an actual
+// version identifier: the literal keyword "current" resolves via
+// resolveCurrentVersion, a purely numeric segment is a real version
+// identifier and is used as-is, and anything else is looked up as a
+// user-defined alias for id. It writes the appropriate error response (404
+// for an unknown map/alias/missing current version, 500 on lookup failure)
+// and returns ok=false if resolution fails; the caller must stop handling
+// the request in that case.
+func resolveVersionSegment(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID, segment string) (version string, ok bool) {
+	switch classifyVersionSegment(segment) {
+	case versionSegmentCurrent:
+		return resolveCurrentVersion(w, r, st, id)
+
+	case versionSegmentNumeric:
+		return segment, true
+
+	case versionSegmentAlias:
+		resolved, err := st.GetMapVersionAlias(r.Context(), id, segment)
+		if err != nil {
+			writeStoreError(w, err, store.ErrMapVersionAliasNotFound, http.StatusNotFound, "alias not found", "failed to resolve alias")
+			return "", false
+		}
+
+		return resolved, true
+	}
+
+	return "", false
+}
+
 // routeMapVersionSubResource dispatches .../version/{v}/bounds and
-// .../version/{v}/geo-objects[/{uuid}].
+// .../version/{v}/geo-objects[/{uuid}]. {v} may be currentVersionKeyword or
+// a user-defined alias, resolved via resolveVersionSegment.
 func routeMapVersionSubResource(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, segments []string) bool {
+	if len(segments) < 4 {
+		return false
+	}
+
+	version, ok := resolveVersionSegment(w, r, st, id, segments[2])
+	if !ok {
+		return true
+	}
+
 	switch {
 	case len(segments) == 4 && segments[3] == boundsPathSegment:
 		if _, ok := getViewableMap(w, r, st, id); ok {
-			mapVersionBoundsHandler(dataRoot, id, segments[2])(w, r)
+			mapVersionBoundsHandler(dataRoot, id, version)(w, r)
 		}
 
 	case len(segments) == 4 && segments[3] == geoObjectsPathSegment:
-		geoObjectsCollectionHandler(st, id, segments[2])(w, r)
+		geoObjectsCollectionHandler(st, id, version)(w, r)
 
 	case len(segments) == 5 && segments[3] == geoObjectsPathSegment:
 		geoObjID, err := uuid.Parse(segments[4])
@@ -474,7 +574,7 @@ func routeMapVersionSubResource(w http.ResponseWriter, r *http.Request, st *stor
 			return true
 		}
 
-		geoObjectItemHandler(st, id, segments[2], geoObjID)(w, r)
+		geoObjectItemHandler(st, id, version, geoObjID)(w, r)
 
 	default:
 		return false

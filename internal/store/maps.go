@@ -150,6 +150,32 @@ func (s *Store) GetMap(ctx context.Context, id uuid.UUID) (MapRecord, error) {
 	return m, nil
 }
 
+// GetCurrentVersion returns id's current version string. It's backed by a
+// cache dedicated to this single field (separate from GetMap's MapRecord
+// cache), since the version-file/bounds/geo-objects routes that resolve the
+// "current" keyword only ever need this one value. It returns
+// ErrMapNotFound if id doesn't exist.
+func (s *Store) GetCurrentVersion(ctx context.Context, id uuid.UUID) (string, error) {
+	if v, ok := s.currentVersionCache.get(id); ok {
+		return v, nil
+	}
+
+	var version string
+
+	err := s.pool.QueryRow(ctx, `SELECT current_version FROM maps WHERE uuid = $1`, id).Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrMapNotFound
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("get current version: %w", err)
+	}
+
+	s.currentVersionCache.set(id, version)
+
+	return version, nil
+}
+
 // UpdateMap overwrites a map's name, currentVersion, and visibility flags.
 // It returns ErrMapNotFound if id doesn't exist.
 func (s *Store) UpdateMap(ctx context.Context, id uuid.UUID, name, currentVersion string, visibleToAll, anonymousAllowed bool, updatedBy string) (MapRecord, error) {
@@ -170,6 +196,7 @@ func (s *Store) UpdateMap(ctx context.Context, id uuid.UUID, name, currentVersio
 	}
 
 	s.mapCache.invalidate(id)
+	s.currentVersionCache.invalidate(id)
 
 	return m, nil
 }
@@ -237,6 +264,7 @@ func (s *Store) IncrementMapVersion(ctx context.Context, id uuid.UUID, updatedBy
 	}
 
 	s.mapCache.invalidate(id)
+	s.currentVersionCache.invalidate(id)
 
 	return m, nil
 }
@@ -282,6 +310,7 @@ func (s *Store) DeleteMap(ctx context.Context, id uuid.UUID) error {
 	}
 
 	s.mapCache.invalidate(id)
+	s.currentVersionCache.invalidate(id)
 
 	return nil
 }
