@@ -19,7 +19,10 @@ var ErrInvalidCredentials = errors.New("invalid credentials")
 // cacheTTL bounds how stale a cached map/permission lookup may be. It's the
 // window between a permission or visibility change in postgres and that
 // change taking effect for cached reads (e.g. on the tile-serving hot path).
-const cacheTTL = 15 * time.Second
+const (
+	cacheTTL      = 15 * time.Second
+	mapVersionTTL = 30 * time.Minute
+)
 
 type mapPermKey struct {
 	mapID    uuid.UUID
@@ -30,9 +33,10 @@ type mapPermKey struct {
 type Store struct {
 	pool *pgxpool.Pool
 
-	mapCache     *ttlCache[uuid.UUID, MapRecord]
-	permsCache   *ttlCache[string, Permissions]
-	mapPermCache *ttlCache[mapPermKey, MapPermission]
+	mapCache            *ttlCache[uuid.UUID, MapRecord]
+	currentVersionCache *ttlCache[uuid.UUID, string]
+	permsCache          *ttlCache[string, Permissions]
+	mapPermCache        *ttlCache[mapPermKey, MapPermission]
 }
 
 // NewStore opens a connection pool to the postgres database at dsn and
@@ -61,10 +65,11 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 	}
 
 	return &Store{
-		pool:         pool,
-		mapCache:     newTTLCache[uuid.UUID, MapRecord](cacheTTL),
-		permsCache:   newTTLCache[string, Permissions](cacheTTL),
-		mapPermCache: newTTLCache[mapPermKey, MapPermission](cacheTTL),
+		pool:                pool,
+		mapCache:            newTTLCache[uuid.UUID, MapRecord](cacheTTL),
+		currentVersionCache: newTTLCache[uuid.UUID, string](mapVersionTTL),
+		permsCache:          newTTLCache[string, Permissions](cacheTTL),
+		mapPermCache:        newTTLCache[mapPermKey, MapPermission](cacheTTL),
 	}, nil
 }
 
