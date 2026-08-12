@@ -31,12 +31,12 @@ type mapPermKey struct {
 
 // Store is the PostgreSQL-backed persistence layer for tileserve-go.
 type Store struct {
-	pool *pgxpool.Pool
-
+	pool                *pgxpool.Pool
 	mapCache            *ttlCache[uuid.UUID, MapRecord]
 	currentVersionCache *ttlCache[uuid.UUID, string]
 	permsCache          *ttlCache[string, Permissions]
 	mapPermCache        *ttlCache[mapPermKey, MapPermission]
+	mapAliasCache       *ttlCache[mapAliasKey, string]
 }
 
 // NewStore opens a connection pool to the postgres database at dsn and
@@ -70,6 +70,7 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 		currentVersionCache: newTTLCache[uuid.UUID, string](mapVersionTTL),
 		permsCache:          newTTLCache[string, Permissions](cacheTTL),
 		mapPermCache:        newTTLCache[mapPermKey, MapPermission](cacheTTL),
+		mapAliasCache:       newTTLCache[mapAliasKey, string](cacheTTL),
 	}, nil
 }
 
@@ -78,10 +79,10 @@ func (s *Store) Close() {
 	s.pool.Close()
 }
 
-// Migrate creates the users, maps, map_versions, map_permissions, and
-// geo_objects tables if they don't exist yet, and adds any columns
-// introduced since the tables were first created. It is idempotent and safe
-// to run on every startup.
+// Migrate creates the users, maps, map_versions, map_permissions,
+// map_version_aliases, and geo_objects tables if they don't exist yet, and
+// adds any columns introduced since the tables were first created. It is
+// idempotent and safe to run on every startup.
 func (s *Store) Migrate(ctx context.Context) error {
 	for _, m := range migrationSteps {
 		if _, err := s.pool.Exec(ctx, m.sql); err != nil {
@@ -215,6 +216,22 @@ var migrationSteps = []struct {
 				expires_at TIMESTAMPTZ NOT NULL,
 				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 				revoked_at TIMESTAMPTZ
+			)
+		`,
+	},
+	{
+		errContext: "migrate map_version_aliases table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS map_version_aliases (
+				map_uuid   UUID NOT NULL REFERENCES maps(uuid) ON DELETE CASCADE,
+				alias      TEXT NOT NULL,
+				version    TEXT NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+				updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+				created_by TEXT NOT NULL,
+				updated_by TEXT NOT NULL,
+				PRIMARY KEY (map_uuid, alias),
+				FOREIGN KEY (map_uuid, version) REFERENCES map_versions(map_uuid, version) ON DELETE CASCADE
 			)
 		`,
 	},

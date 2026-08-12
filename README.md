@@ -158,6 +158,32 @@ curl -X DELETE localhost:8085/maps/<uuid>/permissions/alice -H "Authorization: B
 
 Managing per-map permissions requires `is_admin`, same as the Users API.
 
+#### Version aliases
+
+Anywhere a `{version}` path segment is accepted (raw tile files, `.../bounds`, `.../geo-objects`), it may be a real
+numeric version, the literal keyword `current` (resolves to the map's `currentVersion`), or a user-defined alias
+pointing at a specific uploaded version.
+
+```sh
+# list a map's aliases
+curl localhost:8085/maps/<uuid>/aliases -H "Authorization: Bearer <token>"
+
+# point "stable" at version 3 (creates it, or repoints it if it already exists)
+curl -X PUT localhost:8085/maps/<uuid>/aliases/stable -H "Authorization: Bearer <token>" \
+  -d '{"version":"3"}'
+
+# fetch tiles via the alias instead of the literal version number
+curl localhost:8085/maps/<uuid>/version/stable/0/0/0.png -H "Authorization: Bearer <token>"
+
+# delete it
+curl -X DELETE localhost:8085/maps/<uuid>/aliases/stable -H "Authorization: Bearer <token>"
+```
+
+An alias name may not be `current` (reserved) or purely numeric (would be ambiguous with a real version), and its
+target `version` must already exist in the map's upload history. Managing aliases requires the acting user's global
+`can_edit` permission or a matching per-map `can_edit` grant — the same rule as editing a map's `currentVersion` via
+`PUT /maps/<uuid>` — unlike per-map permissions above, it is **not** admin-only.
+
 #### GeoObjects API
 
 Authenticated CRUD for a `geo_objects` table (`uuid`, `name`, `externalId`, `latitude`, `longitude`, `street`,

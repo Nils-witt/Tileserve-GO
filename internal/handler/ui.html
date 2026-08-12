@@ -300,6 +300,41 @@
     </div>
   </div>
 
+  <div id="alias-overlay" class="modal-overlay hidden">
+    <div class="modal" style="height:auto; max-height:88vh;">
+      <div class="modal-header">
+        <h2 id="alias-title">Aliases</h2>
+        <button class="secondary" id="alias-close">Close</button>
+      </div>
+      <div style="padding:1rem; overflow:auto;">
+        <p id="alias-error" class="hidden" style="color:#dc2626"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Alias</th>
+              <th>Version</th>
+              <th>Updated</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="alias-body"></tbody>
+        </table>
+        <p id="alias-empty" class="muted hidden">No aliases yet.</p>
+        <div class="row" style="margin-top:1rem">
+          <div class="field">
+            <label for="alias-add-name">Alias name</label>
+            <input id="alias-add-name" placeholder="e.g. stable">
+          </div>
+          <div class="field">
+            <label for="alias-add-version">Version</label>
+            <input id="alias-add-version" placeholder="e.g. 7">
+          </div>
+          <button id="alias-add-btn">Save</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div id="geo-overlay" class="modal-overlay hidden">
     <div class="modal" style="height:auto; max-height:88vh;">
       <div class="modal-header">

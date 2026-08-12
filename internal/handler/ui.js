@@ -197,6 +197,12 @@
       permBtn.onclick = () => openPermissions(m);
       actions.append(permBtn);
 
+      const aliasBtn = document.createElement('button');
+      aliasBtn.className = 'secondary';
+      aliasBtn.textContent = 'Aliases';
+      aliasBtn.onclick = () => openAliases(m);
+      actions.append(aliasBtn);
+
       const geoBtn = document.createElement('button');
       geoBtn.className = 'secondary';
       geoBtn.textContent = 'Geo objects';
@@ -491,6 +497,121 @@
     permAddBtn.addEventListener('click', () => {
       if (!permAddUser.value) return;
       grantMapPermission(permAddUser.value, permAddView.checked, permAddEdit.checked, permAddDelete.checked);
+    });
+
+    const aliasOverlay = document.getElementById('alias-overlay');
+    const aliasTitle = document.getElementById('alias-title');
+    const aliasBody = document.getElementById('alias-body');
+    const aliasEmptyEl = document.getElementById('alias-empty');
+    const aliasErrorEl = document.getElementById('alias-error');
+    const aliasClose = document.getElementById('alias-close');
+    const aliasAddName = document.getElementById('alias-add-name');
+    const aliasAddVersion = document.getElementById('alias-add-version');
+    const aliasAddBtn = document.getElementById('alias-add-btn');
+    let aliasMapId = null;
+
+    function aliasError(message) {
+      if (!message) {
+        aliasErrorEl.classList.add('hidden');
+        return;
+      }
+      aliasErrorEl.textContent = message;
+      aliasErrorEl.classList.remove('hidden');
+    }
+
+    async function openAliases(m) {
+      aliasMapId = m.uuid;
+      aliasTitle.textContent = 'Aliases — ' + m.name;
+      aliasError(null);
+      aliasAddName.value = '';
+      aliasAddVersion.value = '';
+      aliasOverlay.classList.remove('hidden');
+      await loadAliases();
+    }
+
+    function closeAliases() {
+      aliasOverlay.classList.add('hidden');
+      aliasMapId = null;
+    }
+
+    async function loadAliases() {
+      aliasError(null);
+      try {
+        const res = await api('/maps/' + aliasMapId + '/aliases');
+        renderAliases(await res.json());
+      } catch (err) {
+        if (err.message !== 'unauthorized') aliasError(err.message);
+      }
+    }
+
+    function renderAliases(aliases) {
+      aliasBody.innerHTML = '';
+      aliasEmptyEl.classList.toggle('hidden', aliases.length > 0);
+      for (const a of aliases) {
+        aliasBody.appendChild(renderAliasRow(a));
+      }
+    }
+
+    function renderAliasRow(a) {
+      const tr = document.createElement('tr');
+
+      const nameTd = document.createElement('td');
+      nameTd.textContent = a.alias;
+
+      const versionTd = document.createElement('td');
+      versionTd.textContent = a.version;
+
+      const updatedTd = document.createElement('td');
+      updatedTd.innerHTML = fmtDate(a.updatedAt) + '<br><span class="muted">by ' + a.updatedBy + '</span>';
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'danger';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.onclick = () => deleteAlias(a.alias);
+
+      const actionsTd = document.createElement('td');
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      actions.append(deleteBtn);
+      actionsTd.append(actions);
+
+      tr.append(nameTd, versionTd, updatedTd, actionsTd);
+      return tr;
+    }
+
+    async function saveAlias(alias, version) {
+      aliasError(null);
+      try {
+        await api('/maps/' + aliasMapId + '/aliases/' + encodeURIComponent(alias), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ version }),
+        });
+        aliasAddName.value = '';
+        aliasAddVersion.value = '';
+        await loadAliases();
+      } catch (err) {
+        if (err.message !== 'unauthorized') aliasError(err.message);
+      }
+    }
+
+    async function deleteAlias(alias) {
+      aliasError(null);
+      try {
+        await api('/maps/' + aliasMapId + '/aliases/' + encodeURIComponent(alias), { method: 'DELETE' });
+        await loadAliases();
+      } catch (err) {
+        if (err.message !== 'unauthorized') aliasError(err.message);
+      }
+    }
+
+    aliasClose.addEventListener('click', closeAliases);
+    aliasOverlay.addEventListener('click', (e) => {
+      if (e.target === aliasOverlay) closeAliases();
+    });
+    aliasAddBtn.addEventListener('click', () => {
+      if (!aliasAddName.value || !aliasAddVersion.value) return;
+      saveAlias(aliasAddName.value.trim(), aliasAddVersion.value.trim());
     });
 
     const geoOverlay = document.getElementById('geo-overlay');
