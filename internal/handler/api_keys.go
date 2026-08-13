@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -8,16 +9,11 @@ import (
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
+// apiKeyRequest carries a caller-generated public key to register — the
+// server never sees or stores a private key (see store.CreateAPIKey).
 type apiKeyRequest struct {
-	Name string `json:"name"`
-}
-
-// apiKeyCreatedResponse embeds a created key's record plus its plaintext
-// value, which is returned exactly once (at creation) and never again — the
-// same principle as never re-exposing a password hash or refresh token.
-type apiKeyCreatedResponse struct {
-	store.APIKeyRecord
-	Key string `json:"key"`
+	Name         string `json:"name"`
+	PublicKeyPEM string `json:"publicKeyPem"`
 }
 
 // routeUserAPIKeys dispatches /users/{username}/api-keys[/{id}], mirroring
@@ -54,13 +50,24 @@ func apiKeysCollectionHandler(st *store.Store, username string) http.HandlerFunc
 				return
 			}
 
-			plainKey, rec, err := st.CreateAPIKey(r.Context(), username, req.Name, usernameFromContext(r.Context()))
-			if err != nil {
-				writeStoreError(w, err, store.ErrUserNotFound, http.StatusNotFound, "user not found", "failed to create api key")
+			if req.PublicKeyPEM == "" {
+				http.Error(w, "publicKeyPem is required", http.StatusBadRequest)
 				return
 			}
 
-			writeJSON(w, http.StatusCreated, apiKeyCreatedResponse{APIKeyRecord: rec, Key: plainKey})
+			rec, err := st.CreateAPIKey(r.Context(), username, req.Name, usernameFromContext(r.Context()), req.PublicKeyPEM)
+			if err != nil {
+				if errors.Is(err, store.ErrInvalidPublicKeyPEM) {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+
+				writeStoreError(w, err, store.ErrUserNotFound, http.StatusNotFound, "user not found", "failed to create api key")
+
+				return
+			}
+
+			writeJSON(w, http.StatusCreated, rec)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

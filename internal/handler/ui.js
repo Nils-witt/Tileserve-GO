@@ -50,6 +50,15 @@
       return res;
     }
 
+    // generateKeyPair asks the server to generate a fresh RSA key pair
+    // (nothing persisted server-side) — shared by the API-key modal and the
+    // sync-remote form, since both need a caller-held private key plus a
+    // public key to register somewhere.
+    async function generateKeyPair() {
+      const res = await api('/keys/generate', { method: 'POST' });
+      return res.json();
+    }
+
     function showLogin(message) {
       app.classList.add('hidden');
       loginCard.classList.remove('hidden');
@@ -1006,6 +1015,8 @@
     const apikeyErrorEl = document.getElementById('apikey-error');
     const apikeyClose = document.getElementById('apikey-close');
     const apikeyAddName = document.getElementById('apikey-add-name');
+    const apikeyAddPubkey = document.getElementById('apikey-add-pubkey');
+    const apikeyGenerateBtn = document.getElementById('apikey-generate-btn');
     const apikeyAddBtn = document.getElementById('apikey-add-btn');
     let apikeyUsername = null;
 
@@ -1023,6 +1034,7 @@
       apikeyTitle.textContent = 'API keys — ' + username;
       apikeyError(null);
       apikeyAddName.value = '';
+      apikeyAddPubkey.value = '';
       apikeyOverlay.classList.remove('hidden');
       await loadAPIKeys();
     }
@@ -1077,21 +1089,22 @@
       return tr;
     }
 
-    async function createAPIKey(name) {
+    async function createAPIKey(name, publicKeyPem) {
       apikeyError(null);
       try {
         const res = await api('/users/' + encodeURIComponent(apikeyUsername) + '/api-keys', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name }),
+          body: JSON.stringify({ name, publicKeyPem }),
         });
         const created = await res.json();
         apikeyAddName.value = '';
+        apikeyAddPubkey.value = '';
         await loadAPIKeys();
-        // The plaintext key is only ever returned here, once — a blocking
-        // prompt (pre-filled, selectable) is the simplest way to give the
-        // admin a chance to copy it before the value is gone for good.
-        prompt('API key created — copy it now, it will not be shown again:', created.key);
+        // Nothing secret comes back here — the server never sees a private
+        // key — but the caller still needs to know which id to use as the
+        // JWT `kid` when signing tokens for this key.
+        alert('API key registered. Key ID (use as the JWT "kid" when signing tokens): ' + created.id);
       } catch (err) {
         if (err.message !== 'unauthorized') apikeyError(err.message);
       }
@@ -1112,9 +1125,22 @@
     apikeyOverlay.addEventListener('click', (e) => {
       if (e.target === apikeyOverlay) closeAPIKeys();
     });
+    apikeyGenerateBtn.addEventListener('click', async () => {
+      apikeyError(null);
+      try {
+        const kp = await generateKeyPair();
+        // The private key is only ever available here, once — a blocking
+        // prompt (pre-filled, selectable) is the simplest way to give the
+        // admin a chance to copy it before it's gone for good.
+        prompt('Save this private key now — it will not be shown again:', kp.privateKeyPem);
+        apikeyAddPubkey.value = kp.publicKeyPem;
+      } catch (err) {
+        if (err.message !== 'unauthorized') apikeyError(err.message);
+      }
+    });
     apikeyAddBtn.addEventListener('click', () => {
-      if (!apikeyAddName.value.trim()) return;
-      createAPIKey(apikeyAddName.value.trim());
+      if (!apikeyAddName.value.trim() || !apikeyAddPubkey.value.trim()) return;
+      createAPIKey(apikeyAddName.value.trim(), apikeyAddPubkey.value.trim());
     });
 
     function syncError(message) {
@@ -1225,10 +1251,11 @@
 
     // updateSyncRemote PUTs the full remote configuration, merging patch
     // over r's current fields — mirrors updateMapFlag's pattern for
-    // toggling a single boolean via a full-replace endpoint. apiKey is
+    // toggling a single boolean via a full-replace endpoint. remoteApiKeyId
+    // isn't secret, so it's always resent from r; privateKeyPem is
     // deliberately omitted: PUT /sync/remotes/{id} treats a missing/empty
-    // apiKey as "keep the current one" (see store.UpdateSyncRemote), since
-    // GET /sync/remotes never echoes it back for this code to resend.
+    // privateKeyPem as "keep the current one" (see store.UpdateSyncRemote),
+    // since GET /sync/remotes never echoes it back for this code to resend.
     async function updateSyncRemote(r, patch) {
       syncError(null);
       try {
@@ -1238,6 +1265,7 @@
           body: JSON.stringify(Object.assign({
             name: r.name,
             baseUrl: r.baseUrl,
+            remoteApiKeyId: r.remoteApiKeyId,
             pollIntervalSec: r.pollIntervalSec,
             enabled: r.enabled,
           }, patch)),
@@ -1248,13 +1276,41 @@
       await loadSyncRemotes();
     }
 
+    // editSyncRemote uses the existing sequential-prompt() pattern for the
+    // short scalar fields, but a multi-line PEM private key doesn't fit a
+    // single-line prompt() well — so instead of asking the admin to paste
+    // one, this offers to generate a fresh key pair (same as the create
+    // form) and only prompts for the new remote key id once it's been
+    // registered on the remote.
     async function editSyncRemote(r) {
       const name = prompt('Name', r.name);
       if (name === null) return;
       const baseUrl = prompt('Base URL', r.baseUrl);
       if (baseUrl === null) return;
-      const apiKey = prompt('New API key (leave blank to keep the current one)', '');
-      if (apiKey === null) return;
+
+      let remoteApiKeyId = r.remoteApiKeyId;
+      let privateKeyPem = '';
+
+      if (confirm('Generate a new key pair for this remote? (Cancel to keep the current one)')) {
+        syncError(null);
+        try {
+          const kp = await generateKeyPair();
+          prompt('Public key — register this as a new API key on the remote, then note the resulting key ID:', kp.publicKeyPem);
+          privateKeyPem = kp.privateKeyPem;
+        } catch (err) {
+          if (err.message !== 'unauthorized') syncError(err.message);
+          return;
+        }
+
+        const newId = prompt('New remote API key ID (from the remote\'s response)', remoteApiKeyId);
+        if (newId === null) return;
+        remoteApiKeyId = newId;
+      } else {
+        const newId = prompt('Remote API key ID', remoteApiKeyId);
+        if (newId === null) return;
+        remoteApiKeyId = newId;
+      }
+
       const pollIntervalSec = prompt('Poll interval (seconds)', r.pollIntervalSec);
       if (pollIntervalSec === null) return;
       syncError(null);
@@ -1265,7 +1321,8 @@
           body: JSON.stringify({
             name,
             baseUrl,
-            apiKey,
+            remoteApiKeyId,
+            privateKeyPem,
             pollIntervalSec: parseInt(pollIntervalSec, 10),
             enabled: r.enabled,
           }),
@@ -1296,17 +1353,31 @@
       }
     }
 
+    document.getElementById('sync-generate-btn').addEventListener('click', async () => {
+      syncError(null);
+      try {
+        const kp = await generateKeyPair();
+        document.getElementById('sync-private-key-pem').value = kp.privateKeyPem;
+        document.getElementById('sync-public-key-pem').value = kp.publicKeyPem;
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncError(err.message);
+      }
+    });
+
     document.getElementById('create-sync-form').addEventListener('submit', (e) => {
       e.preventDefault();
       const payload = {
         name: document.getElementById('sync-name').value,
         baseUrl: document.getElementById('sync-base-url').value,
-        apiKey: document.getElementById('sync-api-key').value,
+        remoteApiKeyId: document.getElementById('sync-remote-key-id').value,
+        privateKeyPem: document.getElementById('sync-private-key-pem').value,
         pollIntervalSec: parseInt(document.getElementById('sync-interval').value, 10),
         enabled: document.getElementById('sync-enabled').checked,
       };
       createSyncRemote(payload).then(() => {
         e.target.reset();
+        document.getElementById('sync-public-key-pem').value = '';
+        document.getElementById('sync-private-key-pem').value = '';
         document.getElementById('sync-interval').value = 300;
         document.getElementById('sync-enabled').checked = true;
       });

@@ -5,6 +5,7 @@ package sync
 
 import (
 	"context"
+	"crypto/rsa"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
 	"nilswitt.dev/tileserve-go/internal/store"
@@ -30,25 +32,59 @@ const maxArchiveSize = 1 << 30 // 1 GiB
 // (cmd/tileserve-go/main.go).
 const httpTimeout = 5 * time.Minute
 
-// Client talks to one remote tileserve-go instance's REST API using an API
-// key (see store.CreateAPIKey), decoding responses directly into the
-// remote's own JSON types (store.MapRecord, etc.) rather than separate DTOs
-// — valid specifically because the remote is guaranteed to be another
-// tileserve-go instance running the same code.
+// apiKeyTokenTTL is how long each outbound JWT this client mints is valid
+// for — well under the remote's maxAPIKeyTokenLifetime policy ceiling
+// (internal/handler/auth.go), and short enough that minting a fresh one on
+// every request (rather than caching/reusing) is simplest and cheap given
+// sync's low request volume.
+const apiKeyTokenTTL = 5 * time.Minute
+
+// Client talks to one remote tileserve-go instance's REST API using a
+// caller-signed API key JWT (see store.CreateAPIKey), decoding responses
+// directly into the remote's own JSON types (store.MapRecord, etc.) rather
+// than separate DTOs — valid specifically because the remote is guaranteed
+// to be another tileserve-go instance running the same code.
 type Client struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	baseURL    string
+	keyID      uuid.UUID
+	privateKey *rsa.PrivateKey
+	http       *http.Client
 }
 
 // NewClient returns a Client for the remote instance at baseURL,
-// authenticating every request with apiKey.
-func NewClient(baseURL, apiKey string) *Client {
-	return &Client{
-		baseURL: strings.TrimSuffix(baseURL, "/"),
-		apiKey:  apiKey,
-		http:    &http.Client{Timeout: httpTimeout},
+// authenticating every request with a freshly-signed RS256 JWT (see
+// signToken) naming keyID as its `kid` and signed with privateKeyPEM — the
+// private half of the key pair whose public half was registered as API key
+// keyID on the remote. It returns an error if privateKeyPEM doesn't parse.
+func NewClient(baseURL string, keyID uuid.UUID, privateKeyPEM string) (*Client, error) {
+	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
+	if err != nil {
+		return nil, fmt.Errorf("parse sync remote private key: %w", err)
 	}
+
+	return &Client{
+		baseURL:    strings.TrimSuffix(baseURL, "/"),
+		keyID:      keyID,
+		privateKey: privateKey,
+		http:       &http.Client{Timeout: httpTimeout},
+	}, nil
+}
+
+// signToken mints a fresh, short-lived RS256 JWT identifying this client's
+// registered API key via the `kid` header. The `sub` claim is deliberately
+// left unset: the remote never trusts it (identity comes from kid -> DB
+// lookup, see handler.parseBearerToken), so setting it would only mislead.
+func (c *Client) signToken() (string, error) {
+	now := time.Now()
+	claims := jwt.RegisteredClaims{
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(apiKeyTokenTTL)),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	token.Header["kid"] = c.keyID.String()
+
+	return token.SignedString(c.privateKey)
 }
 
 // newRequest builds an authenticated request for path (relative to
@@ -59,7 +95,12 @@ func (c *Client) newRequest(ctx context.Context, path string) (*http.Request, er
 		return nil, fmt.Errorf("build request for %s: %w", path, err)
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	token, err := c.signToken()
+	if err != nil {
+		return nil, fmt.Errorf("sign api key jwt for %s: %w", path, err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	return req, nil
 }

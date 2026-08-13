@@ -117,8 +117,9 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 	// GET /openapi.yaml: serves the OpenAPI 3.0 spec (public, unauthenticated).
 	mux.HandleFunc("/openapi.yaml", handler.OpenAPIHandler())
 	// GET /maps, POST /maps: list maps visible to the caller / create a map.
-	// RequireAuth/OptionalAuth accept both a login JWT and an API key (see
-	// handler.parseBearerToken) — st satisfies handler.apiKeyLookup.
+	// RequireAuth/OptionalAuth accept both a login JWT and an API key JWT
+	// (see handler.parseBearerToken) — st satisfies
+	// handler.apiKeySigningKeyResolver.
 	mux.Handle("/maps", handler.RequireAuth(secret, st, handler.MapsCollectionHandler(st)))
 	// /maps/{id}, /maps/{id}/upload, /maps/{id}/versions,
 	// /maps/{id}/permissions[/{username}], /maps/{id}/version/{v}[/bounds|...]:
@@ -139,6 +140,9 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 	// GET/PUT/DELETE /sync/remotes/{id}, POST /sync/remotes/{id}/trigger
 	// (admin-only).
 	mux.Handle("/sync/remotes/", handler.RequireAuth(secret, st, handler.SyncRemoteItemHandler(st, syncManager)))
+	// POST /keys/generate: server-side RSA key pair generation convenience
+	// for the admin UI (admin-only, nothing persisted).
+	mux.Handle("/keys/generate", handler.RequireAuth(secret, st, handler.GenerateKeyPairHandler(st)))
 
 	addr := ":" + port
 	srv := &http.Server{

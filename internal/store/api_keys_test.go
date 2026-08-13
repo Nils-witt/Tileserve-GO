@@ -1,47 +1,64 @@
 package store
 
 import (
-	"encoding/hex"
-	"strings"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"testing"
 )
 
-func TestNewAPIKeyValue(t *testing.T) {
-	t.Parallel()
+// testRSAPublicKeyPEM generates a fresh RSA key of the given size and
+// returns its PKIX-encoded public key PEM.
+func testRSAPublicKeyPEM(t *testing.T, bits int) string {
+	t.Helper()
 
-	a, err := newAPIKeyValue()
+	key, err := rsa.GenerateKey(rand.Reader, bits)
 	if err != nil {
-		t.Fatalf("newAPIKeyValue: %v", err)
+		t.Fatalf("generate rsa key: %v", err)
 	}
 
-	if !strings.HasPrefix(a, APIKeyPrefix) {
-		t.Fatalf("newAPIKeyValue() = %q, want prefix %q", a, APIKeyPrefix)
-	}
-
-	b, err := newAPIKeyValue()
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
 	if err != nil {
-		t.Fatalf("newAPIKeyValue: %v", err)
+		t.Fatalf("marshal public key: %v", err)
 	}
 
-	if a == b {
-		t.Fatal("newAPIKeyValue produced the same key twice")
-	}
+	return string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 }
 
-func TestHashAPIKey(t *testing.T) {
+func TestValidateRSAPublicKeyPEM(t *testing.T) {
 	t.Parallel()
 
-	hash := hashAPIKey("key-a")
+	valid := testRSAPublicKeyPEM(t, 2048)
+	tooSmall := testRSAPublicKeyPEM(t, 1024)
 
-	if got, err := hex.DecodeString(hash); err != nil || len(got) != 32 {
-		t.Fatalf("hashAPIKey() = %q, want a 32-byte hex-encoded SHA-256 digest", hash)
+	tests := []struct {
+		name    string
+		pemStr  string
+		wantErr bool
+	}{
+		{name: "valid 2048-bit key", pemStr: valid, wantErr: false},
+		{name: "empty string", pemStr: "", wantErr: true},
+		{name: "not PEM at all", pemStr: "not a pem block", wantErr: true},
+		{name: "key too small", pemStr: tooSmall, wantErr: true},
+		{
+			name: "PEM block that isn't a public key",
+			pemStr: string(pem.EncodeToMemory(&pem.Block{
+				Type:  "PUBLIC KEY",
+				Bytes: []byte("not a valid PKIX-encoded key"),
+			})),
+			wantErr: true,
+		},
 	}
 
-	if hashAPIKey("key-a") != hash {
-		t.Fatal("hashAPIKey is not deterministic for the same input")
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	if hashAPIKey("key-b") == hash {
-		t.Fatal("hashAPIKey produced the same digest for two different keys")
+			err := validateRSAPublicKeyPEM(tc.pemStr)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateRSAPublicKeyPEM(%q) error = %v, wantErr %v", tc.name, err, tc.wantErr)
+			}
+		})
 	}
 }

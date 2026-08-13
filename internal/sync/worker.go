@@ -19,9 +19,7 @@ const defaultPollInterval = 5 * time.Minute
 // outcome is persisted via st.SetSyncRemoteStatus for observability. Meant
 // to be launched in its own goroutine by Manager.
 func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote, trigger <-chan struct{}) {
-	client := NewClient(remote.BaseURL, remote.APIKey)
-
-	runOnce(ctx, st, dataRoot, client, remote)
+	runOnce(ctx, st, dataRoot, remote)
 
 	interval := time.Duration(remote.PollIntervalSec) * time.Second
 	if interval <= 0 {
@@ -36,23 +34,29 @@ func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote sto
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			runOnce(ctx, st, dataRoot, client, remote)
+			runOnce(ctx, st, dataRoot, remote)
 		case <-trigger:
-			runOnce(ctx, st, dataRoot, client, remote)
+			runOnce(ctx, st, dataRoot, remote)
 		}
 	}
 }
 
 // runOnce performs a single sync pass for remote and records its outcome.
 // Errors are logged, not propagated — a failed sync tick is retried on the
-// next tick/trigger, not treated as fatal to the worker loop.
-func runOnce(ctx context.Context, st *store.Store, dataRoot string, client *Client, remote store.SyncRemote) {
+// next tick/trigger, not treated as fatal to the worker loop. The client is
+// (re)built on every call, rather than once per worker goroutine, because
+// NewClient can now fail (a malformed stored private key) — building it
+// here means that failure surfaces as a normal recurring sync-status error
+// instead of permanently stranding the worker.
+func runOnce(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote) {
 	status, errMsg := "ok", ""
 
-	if err := syncRemoteOnce(ctx, st, dataRoot, client, remote); err != nil {
-		status = "error"
-		errMsg = err.Error()
-
+	client, err := NewClient(remote.BaseURL, remote.RemoteAPIKeyID, remote.PrivateKeyPEM)
+	if err != nil {
+		status, errMsg = "error", err.Error()
+		log.Printf("sync remote %s (%s): %v", remote.Name, remote.ID, err)
+	} else if err := syncRemoteOnce(ctx, st, dataRoot, client, remote); err != nil {
+		status, errMsg = "error", err.Error()
 		log.Printf("sync remote %s (%s): %v", remote.Name, remote.ID, err)
 	}
 

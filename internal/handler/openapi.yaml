@@ -693,8 +693,10 @@ paths:
       tags: [api-keys]
       summary: List a user's API keys
       description: >-
-        Requires the acting user's `is_admin` permission. Never includes the
-        plaintext key — that's returned only once, at creation.
+        Requires the acting user's `is_admin` permission. This server never
+        holds a private key for an API key, so there is nothing secret to
+        omit here — the response is the same shape whether just created or
+        listed later.
       responses:
         "200":
           description: Array of API keys
@@ -710,14 +712,16 @@ paths:
           $ref: "#/components/responses/Forbidden"
     post:
       tags: [api-keys]
-      summary: Create an API key for a user
+      summary: Register a caller-generated public key as an API key for a user
       description: >-
-        Requires the acting user's `is_admin` permission. The created key
+        Requires the acting user's `is_admin` permission. The registered key
         authenticates as the target user (their full global and per-map
         permissions apply) — intended for a service account used by a
         remote tileserve-go instance's sync puller (see `POST
-        /sync/remotes`), not for human login. The plaintext key is returned
-        exactly once, in this response; it cannot be recovered afterward.
+        /sync/remotes`), not for human login. The caller generates its own
+        RSA key pair and submits only `publicKeyPem`; this server never
+        sees the private half. See `POST /keys/generate` for a convenience
+        endpoint that generates a fresh pair.
       requestBody:
         required: true
         content:
@@ -726,11 +730,17 @@ paths:
               $ref: "#/components/schemas/APIKeyRequest"
       responses:
         "201":
-          description: API key created
+          description: API key registered
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/APIKeyCreated"
+                $ref: "#/components/schemas/APIKey"
+        "400":
+          description: Invalid or missing public key
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -779,7 +789,8 @@ paths:
       summary: List configured sync remotes
       description: >-
         Requires the acting user's `is_admin` permission. Never includes
-        `apiKey` — the credential this server presents to the remote.
+        `privateKeyPem` — the secret this server uses to sign its outbound
+        requests to the remote.
       responses:
         "200":
           description: Array of sync remotes
@@ -797,14 +808,18 @@ paths:
       tags: [sync]
       summary: Register a remote to pull a full mirror from
       description: >-
-        Requires the acting user's `is_admin` permission. `apiKey` is
-        required here (unlike on `PUT`). Once created and enabled, this
-        server periodically (every `pollIntervalSec`) pulls every map
-        visible to `apiKey` on the remote — including every version and
-        alias, mirrored under the same map UUIDs — via `GET /maps`, `GET
+        Requires the acting user's `is_admin` permission. `privateKeyPem` is
+        required here (unlike on `PUT`) — this server generates its own RSA
+        key pair (e.g. via `POST /keys/generate`), registers the public half
+        as an API key on the remote (`POST /users/{username}/api-keys`
+        there), and configures the resulting key id as `remoteApiKeyId`
+        alongside its own `privateKeyPem` here. Once created and enabled,
+        this server periodically (every `pollIntervalSec`) signs a
+        short-lived JWT per request and pulls every map visible to that
+        identity on the remote — including every version and alias,
+        mirrored under the same map UUIDs — via `GET /maps`, `GET
         /maps/{id}/versions`, `GET /maps/{id}/version/{version}/archive`,
-        and `GET /maps/{id}/aliases` on the remote. `apiKey` should be one
-        issued by `POST /users/{username}/api-keys` on the remote instance.
+        and `GET /maps/{id}/aliases` on the remote.
       requestBody:
         required: true
         content:
@@ -863,9 +878,9 @@ paths:
       summary: Replace a sync remote's configuration
       description: >-
         Requires the acting user's `is_admin` permission. Changing
-        `baseUrl`, `apiKey`, or `pollIntervalSec` on a currently-running
-        remote restarts its background sync worker with the new
-        configuration (within ~30s).
+        `baseUrl`, `remoteApiKeyId`, `privateKeyPem`, or `pollIntervalSec`
+        on a currently-running remote restarts its background sync worker
+        with the new configuration (within ~30s).
       requestBody:
         required: true
         content:
@@ -945,6 +960,28 @@ paths:
             text/plain:
               schema:
                 $ref: "#/components/schemas/ErrorMessage"
+
+  /keys/generate:
+    post:
+      tags: [api-keys]
+      summary: Generate a fresh RSA key pair (convenience, not persisted)
+      description: >-
+        Requires the acting user's `is_admin` permission. Generates a fresh
+        RSA-2048 key pair and returns both halves PEM-encoded. Nothing is
+        persisted — this exists purely so the admin UI can bootstrap a key
+        pair without external tooling; the caller must save the returned
+        `privateKeyPem` themselves, it is never retrievable again.
+      responses:
+        "200":
+          description: Freshly generated key pair
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyPair"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
 
   /maps/{id}/version/{version}/bounds:
     parameters:
@@ -1267,11 +1304,22 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: >-
+        Every bearer token is a JWT, of one of two kinds: a human login/
+        refresh token (`POST /login`, `POST /refresh`), signed HS256 with a
+        server-wide shared secret and carrying no `kid` header; or an API
+        key token, signed RS256 by the caller with the private half of a
+        key pair whose public half was registered via `POST
+        /users/{username}/api-keys`, carrying a `kid` header naming that
+        key's id. API key tokens must be short-lived (no more than 15
+        minutes between `iat` and `exp`) — the caller mints and signs a
+        fresh one for each use rather than reusing a single long-lived
+        token.
     tokenQuery:
       type: apiKey
       in: query
       name: token
-      description: JWT passed as a query parameter instead of the Authorization header.
+      description: JWT (login or API key) passed as a query parameter instead of the Authorization header.
 
   parameters:
     MapId:
@@ -1582,10 +1630,19 @@ components:
 
     APIKeyRequest:
       type: object
+      required: [publicKeyPem]
       properties:
         name:
           type: string
           description: Human-readable label for this key (e.g. "edge-server-01 sync").
+        publicKeyPem:
+          type: string
+          description: >-
+            The caller's own RSA public key (>=2048 bits), PEM-encoded
+            (PKIX). The caller generates this key pair itself and keeps the
+            private half — this server never sees or stores it. See `POST
+            /keys/generate` for a convenience endpoint that generates a
+            fresh pair without persisting anything.
 
     APIKey:
       type: object
@@ -1593,6 +1650,9 @@ components:
         id:
           type: string
           format: uuid
+          description: >-
+            Also the JWT `kid` header this key's caller must set when
+            signing an API key token (see `bearerAuth`).
         username:
           type: string
         name:
@@ -1606,37 +1666,47 @@ components:
           type: string
           format: date-time
 
-    APIKeyCreated:
-      allOf:
-        - $ref: "#/components/schemas/APIKey"
-        - type: object
-          properties:
-            key:
-              type: string
-              description: >-
-                The plaintext API key, prefixed `tsk_`. Returned exactly
-                once, here; it cannot be recovered afterward. Pass it as a
-                bearer token (`Authorization: Bearer tsk_...`) — accepted
-                anywhere a login JWT is.
+    KeyPair:
+      type: object
+      properties:
+        privateKeyPem:
+          type: string
+          description: >-
+            Freshly generated RSA-2048 private key, PEM-encoded (PKCS8).
+            Not persisted server-side — save it now, it cannot be
+            recovered.
+        publicKeyPem:
+          type: string
+          description: The matching public key, PEM-encoded (PKIX). Register this wherever an API key needs it.
 
     SyncRemoteRequest:
       type: object
-      required: [name, baseUrl, pollIntervalSec]
+      required: [name, baseUrl, remoteApiKeyId, pollIntervalSec]
       properties:
         name:
           type: string
         baseUrl:
           type: string
           description: Base URL of the remote tileserve-go instance, e.g. "https://source.example.com".
-        apiKey:
+        remoteApiKeyId:
+          type: string
+          format: uuid
+          description: >-
+            The `id` returned by `POST /users/{username}/api-keys` on the
+            remote instance, when this server's own public key was
+            registered there. Always required (not secret — echoed back by
+            `GET`).
+        privateKeyPem:
           type: string
           description: >-
-            The API key this server presents to the remote, as issued by
-            `POST /users/{username}/api-keys` on that instance. Required
-            when creating a remote (`POST /sync/remotes`). On update (`PUT
+            This (local) server's own RSA private key, PEM-encoded, used to
+            sign short-lived JWTs presented to the remote. Required when
+            creating a remote (`POST /sync/remotes`). On update (`PUT
             /sync/remotes/{id}`), optional — omit or leave empty to keep the
             current key, the same convention `UserRequest.password` uses;
             necessary because `GET`/list responses never echo the key back.
+            See `POST /keys/generate` for a convenience endpoint that
+            generates a fresh key pair without persisting anything.
         pollIntervalSec:
           type: integer
           description: How often to sync, in seconds. Must be positive.
@@ -1654,6 +1724,9 @@ components:
           type: string
         baseUrl:
           type: string
+        remoteApiKeyId:
+          type: string
+          format: uuid
         pollIntervalSec:
           type: integer
         enabled:

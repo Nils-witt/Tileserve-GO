@@ -114,7 +114,8 @@ func (m *Manager) reconcile(ctx context.Context) {
 // because its connection details or poll interval changed.
 func configChanged(running, current store.SyncRemote) bool {
 	return running.BaseURL != current.BaseURL ||
-		running.APIKey != current.APIKey ||
+		running.RemoteAPIKeyID != current.RemoteAPIKeyID ||
+		running.PrivateKeyPEM != current.PrivateKeyPEM ||
 		running.PollIntervalSec != current.PollIntervalSec
 }
 

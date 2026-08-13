@@ -2,10 +2,9 @@ package store
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha3"
-	"encoding/base64"
-	"encoding/hex"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log"
@@ -15,24 +14,24 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// APIKeyPrefix distinguishes an API key from a JWT at a glance, so
-// parseBearerToken (internal/handler/auth.go) can dispatch on it without
-// trial-parsing a JWT first.
-const APIKeyPrefix = "tsk_"
-
-// apiKeyBytes is how much crypto/rand entropy backs each issued API key
-// before base64 encoding, matching refreshTokenBytes' precedent.
-const apiKeyBytes = 32
+// minRSAKeyBits is the smallest RSA modulus size accepted for an API key's
+// public key.
+const minRSAKeyBits = 2048
 
 var (
-	// ErrInvalidAPIKey is returned when an API key is unknown or revoked.
+	// ErrInvalidAPIKey is returned when an API key JWT names an unknown or revoked key.
 	ErrInvalidAPIKey = errors.New("invalid or revoked api key")
 	// ErrAPIKeyNotFound is returned when looking up a specific key by id finds no row.
 	ErrAPIKeyNotFound = errors.New("api key not found")
+	// ErrInvalidPublicKeyPEM is returned when a submitted public key isn't a
+	// PEM-encoded RSA public key of at least minRSAKeyBits.
+	ErrInvalidPublicKeyPEM = errors.New("public key must be a PEM-encoded RSA public key of at least 2048 bits")
 )
 
-// APIKeyRecord is the persisted (non-secret) form of an API key: everything
-// but the key itself, which is only ever returned once, at creation.
+// APIKeyRecord is the persisted (non-secret) form of an API key. ID doubles
+// as the JWT `kid` a caller must set to authenticate as this key — there is
+// no separate secret or hash: the server only ever stores the caller's
+// public key (see CreateAPIKey), never a private key.
 type APIKeyRecord struct {
 	ID         uuid.UUID  `json:"id"`
 	Username   string     `json:"username"`
@@ -42,62 +41,64 @@ type APIKeyRecord struct {
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
 }
 
-// newAPIKeyValue returns a random, URL-safe API key string, prefixed with
-// APIKeyPrefix.
-func newAPIKeyValue() (string, error) {
-	buf := make([]byte, apiKeyBytes)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("generate api key: %w", err)
+// validateRSAPublicKeyPEM parses pemStr as a PKIX-encoded RSA public key
+// (the format produced by GenerateKeyPairHandler and x509.MarshalPKIXPublicKey
+// generally) and rejects anything under minRSAKeyBits.
+func validateRSAPublicKeyPEM(pemStr string) error {
+	block, _ := pem.Decode([]byte(pemStr))
+	if block == nil {
+		return ErrInvalidPublicKeyPEM
 	}
 
-	return APIKeyPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
-}
-
-// hashAPIKey returns the hex-encoded SHA3-256 digest of key. Only this
-// digest is ever persisted, matching hashRefreshToken's rationale: a fast
-// hash (rather than bcrypt) is fine here because the input is high-entropy
-// random data, not a low-entropy user password, and it must support
-// exact-match lookup in the database.
-func hashAPIKey(key string) string {
-	sum := sha3.Sum256([]byte(key))
-	return hex.EncodeToString(sum[:])
-}
-
-// CreateAPIKey issues a new API key for username, labeled name. It returns
-// ErrUserNotFound if username doesn't exist. The plaintext key is returned
-// only here — it is never recoverable again, only its hash is stored.
-func (s *Store) CreateAPIKey(ctx context.Context, username, name, createdBy string) (plainKey string, rec APIKeyRecord, err error) {
-	plainKey, err = newAPIKeyValue()
+	pub, err := x509.ParsePKIXPublicKey(block.Bytes)
 	if err != nil {
-		return "", APIKeyRecord{}, err
+		return fmt.Errorf("%w: %w", ErrInvalidPublicKeyPEM, err)
 	}
 
-	rec = APIKeyRecord{
+	rsaPub, ok := pub.(*rsa.PublicKey)
+	if !ok || rsaPub.N.BitLen() < minRSAKeyBits {
+		return ErrInvalidPublicKeyPEM
+	}
+
+	return nil
+}
+
+// CreateAPIKey registers publicKeyPEM (caller-generated, >=2048-bit RSA,
+// PKIX-encoded PEM) as a new API key for username, labeled name. The server
+// never sees a private key: the caller alone is responsible for signing JWTs
+// with the matching private key and presenting them as bearer tokens (see
+// ResolveAPIKeySigningKey). It returns ErrInvalidPublicKeyPEM if publicKeyPEM
+// doesn't parse as required, or ErrUserNotFound if username doesn't exist.
+func (s *Store) CreateAPIKey(ctx context.Context, username, name, createdBy, publicKeyPEM string) (APIKeyRecord, error) {
+	if err := validateRSAPublicKeyPEM(publicKeyPEM); err != nil {
+		return APIKeyRecord{}, err
+	}
+
+	rec := APIKeyRecord{
 		ID:        uuid.New(),
 		Username:  username,
 		Name:      name,
 		CreatedBy: createdBy,
 	}
 
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO api_keys (id, key_hash, username, name, created_by)
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO api_keys (id, public_key_pem, username, name, created_by)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING created_at
-	`, rec.ID, hashAPIKey(plainKey), username, name, createdBy).Scan(&rec.CreatedAt)
+	`, rec.ID, publicKeyPEM, username, name, createdBy).Scan(&rec.CreatedAt)
 	if err != nil {
 		if isPgErrCode(err, "23503") {
-			return "", APIKeyRecord{}, ErrUserNotFound
+			return APIKeyRecord{}, ErrUserNotFound
 		}
 
-		return "", APIKeyRecord{}, fmt.Errorf("create api key: %w", err)
+		return APIKeyRecord{}, fmt.Errorf("create api key: %w", err)
 	}
 
-	return plainKey, rec, nil
+	return rec, nil
 }
 
 // ListAPIKeys returns every non-revoked API key belonging to username, most
-// recently created first. The plaintext key is never included (it isn't
-// stored).
+// recently created first.
 func (s *Store) ListAPIKeys(ctx context.Context, username string) ([]APIKeyRecord, error) {
 	return collectRows(ctx, s.pool, "list api keys", `
 		SELECT id, username, name, created_at, created_by, last_used_at
@@ -131,38 +132,40 @@ func (s *Store) RevokeAPIKey(ctx context.Context, username string, id uuid.UUID)
 	return nil
 }
 
-// LookupAPIKey resolves plainKey (as presented in a bearer token) to the
-// username it authenticates as. It returns ErrInvalidAPIKey if the key is
-// unknown or revoked. Results are cached for cacheTTL, keyed by hash rather
-// than plaintext, since this is called on every API-key-authenticated
-// request.
-func (s *Store) LookupAPIKey(ctx context.Context, plainKey string) (string, error) {
-	hash := hashAPIKey(plainKey)
+// apiKeySigningKey is the cached form of a resolved key: the username it
+// authenticates as, plus its registered public key PEM (parsing that PEM
+// into an *rsa.PublicKey happens in internal/handler, which owns all JWT
+// verification concerns and already depends on golang-jwt).
+type apiKeySigningKey struct {
+	username     string
+	publicKeyPEM string
+}
 
-	if username, ok := s.apiKeyCache.get(hash); ok {
-		return username, nil
+// ResolveAPIKeySigningKey resolves keyID — a JWT's `kid` header, which IS
+// api_keys.id — to the username it authenticates as and its registered
+// public key PEM. It returns ErrInvalidAPIKey if keyID is unknown or
+// revoked. Results are cached for cacheTTL, keyed by id, since this runs on
+// every API-key-authenticated request.
+func (s *Store) ResolveAPIKeySigningKey(ctx context.Context, keyID uuid.UUID) (username, publicKeyPEM string, err error) {
+	if v, ok := s.apiKeyCache.get(keyID); ok {
+		return v.username, v.publicKeyPEM, nil
 	}
 
-	var (
-		id       uuid.UUID
-		username string
-	)
-
-	err := s.pool.QueryRow(ctx, `
-		SELECT id, username FROM api_keys WHERE key_hash = $1 AND revoked_at IS NULL
-	`, hash).Scan(&id, &username)
+	err = s.pool.QueryRow(ctx, `
+		SELECT username, public_key_pem FROM api_keys WHERE id = $1 AND revoked_at IS NULL
+	`, keyID).Scan(&username, &publicKeyPEM)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrInvalidAPIKey
+		return "", "", ErrInvalidAPIKey
 	}
 
 	if err != nil {
-		return "", fmt.Errorf("look up api key: %w", err)
+		return "", "", fmt.Errorf("resolve api key signing key: %w", err)
 	}
 
-	s.apiKeyCache.set(hash, username)
-	s.TouchAPIKeyLastUsed(ctx, id)
+	s.apiKeyCache.set(keyID, apiKeySigningKey{username: username, publicKeyPEM: publicKeyPEM})
+	s.TouchAPIKeyLastUsed(ctx, keyID)
 
-	return username, nil
+	return username, publicKeyPEM, nil
 }
 
 // TouchAPIKeyLastUsed best-effort records that id was just used, logging
