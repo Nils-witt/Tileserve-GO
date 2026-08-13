@@ -34,6 +34,11 @@ func envOrDefault(key, fallback string) string {
 // database, optionally seeds an initial user, then wires up and starts the
 // HTTP server. See the mux.Handle calls below for the route table.
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "status" {
+		statusCmd(os.Args[2:])
+		return
+	}
+
 	dataRoot := flag.String("data-root", envOrDefault("DATA_ROOT", "./data/overlays"), "directory to serve files from (env DATA_ROOT)")
 	jwtSecret := flag.String("jwt-secret", envOrDefault("JWT_SECRET", ""), "secret used to sign and verify JWTs (env JWT_SECRET)")
 	dbDSN := flag.String("db-dsn", envOrDefault("DATABASE_URL", "postgres://user:pass@localhost:5432/db"), "postgres connection string, e.g. postgres://user:pass@host:5432/db (env DATABASE_URL)")
@@ -46,6 +51,44 @@ func main() {
 	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port); err != nil {
 		log.Fatal(err)
 	}
+}
+
+// statusCmd implements `tileserve-go status`, a lightweight check for
+// whether a tileserve-go server is already listening locally: it hits
+// /healthz on the given port and reports up/down via exit code (0 up, 1
+// down), without touching the database or any other server dependency.
+func statusCmd(args []string) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	port := fs.String("port", envOrDefault("PORT", "80"), "port the local server is expected to listen on (env PORT)")
+	_ = fs.Parse(args)
+
+	url := "http://127.0.0.1:" + *port + "/healthz"
+	client := http.Client{Timeout: 2 * time.Second}
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		fmt.Printf("tileserve-go is not running on port %s: %v\n", *port, err)
+		os.Exit(1)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		fmt.Printf("tileserve-go is not running on port %s: %v\n", *port, err)
+		os.Exit(1)
+	}
+
+	statusCode := resp.StatusCode
+	if err := resp.Body.Close(); err != nil {
+		fmt.Printf("tileserve-go is not running on port %s: %v\n", *port, err)
+		os.Exit(1)
+	}
+
+	if statusCode != http.StatusOK {
+		fmt.Printf("tileserve-go is not running on port %s: /healthz returned %d\n", *port, statusCode)
+		os.Exit(1)
+	}
+
+	fmt.Printf("tileserve-go is running on port %s\n", *port)
 }
 
 // run wires up storage and the HTTP server and blocks until the server
