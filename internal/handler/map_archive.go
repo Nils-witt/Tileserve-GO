@@ -25,11 +25,13 @@ func mapVersionArchiveHandler(dataRoot string, id uuid.UUID, version string) htt
 			return
 		}
 
-		// version was already resolved and validated by resolveVersionSegment
-		// (the caller, routeMapVersionSubResource) before reaching here: it's
-		// either purely numeric, or a value looked up from the database (the
-		// "current" keyword or a stored alias) — never taken verbatim from
-		// the request path.
+		// Defense in depth: ensure version is a single numeric segment before
+		// using it in filesystem path construction.
+		if !tilearchive.NumericSegmentRE.MatchString(version) {
+			http.Error(w, "invalid version", http.StatusBadRequest)
+			return
+		}
+
 		versionDir := tilearchive.MapVersionDir(dataRoot, id, version)
 
 		//nolint:gosec // G703: versionDir is built from a validated version (see comment above), not raw request input
