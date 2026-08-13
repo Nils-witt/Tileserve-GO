@@ -310,6 +310,35 @@ var migrationSteps = []struct {
 			ALTER TABLE maps ADD COLUMN IF NOT EXISTS sync_remote_id UUID REFERENCES sync_remotes(id) ON DELETE SET NULL;
 		`,
 	},
+	{
+		// sync_all_maps defaults to true so every remote configured before
+		// this feature existed keeps its prior full-mirror behavior
+		// unchanged. sync_new_maps only matters when sync_all_maps is
+		// false — it defaults to false (opt-in), matching the strict
+		// reading of an explicit map selection: a newly appearing remote
+		// map isn't synced until the admin either selects it or turns
+		// this on.
+		errContext: "migrate sync_remotes selective sync columns",
+		sql: `
+			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS sync_all_maps BOOLEAN NOT NULL DEFAULT true;
+			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS sync_new_maps BOOLEAN NOT NULL DEFAULT false;
+		`,
+	},
+	{
+		// Holds the admin's explicit map selection for a remote whose
+		// sync_all_maps is false (see internal/sync.mapsToSync). map_uuid
+		// isn't a foreign key into maps(uuid): a selected map may not be
+		// mirrored locally yet at the time it's selected.
+		errContext: "migrate sync_remote_maps table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS sync_remote_maps (
+				remote_id  UUID NOT NULL REFERENCES sync_remotes(id) ON DELETE CASCADE,
+				map_uuid   UUID NOT NULL,
+				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+				PRIMARY KEY (remote_id, map_uuid)
+			)
+		`,
+	},
 }
 
 // Authenticate looks up username and verifies password against its bcrypt hash.

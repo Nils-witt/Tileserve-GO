@@ -2,7 +2,6 @@ package sync
 
 import (
 	"context"
-	"log"
 	"time"
 
 	"nilswitt.dev/tileserve-go/internal/store"
@@ -16,15 +15,18 @@ const defaultPollInterval = 5 * time.Minute
 // runRemote runs remote's periodic sync loop until ctx is canceled: an
 // immediate sync on start, then one every remote.PollIntervalSec, or
 // whenever a signal arrives on trigger (see Manager.Trigger). Each run's
-// outcome is persisted via st.SetSyncRemoteStatus for observability. Meant
-// to be launched in its own goroutine by Manager.
-func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote, trigger <-chan struct{}) {
-	runOnce(ctx, st, dataRoot, remote)
-
+// outcome is persisted via st.SetSyncRemoteStatus for observability, and its
+// log lines are recorded in logs for the admin UI's log view (see
+// Manager.Logs). Meant to be launched in its own goroutine by Manager.
+func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote, trigger <-chan struct{}, logs *LogStore) {
 	interval := time.Duration(remote.PollIntervalSec) * time.Second
 	if interval <= 0 {
 		interval = defaultPollInterval
 	}
+
+	logs.logf(remote.ID, "sync remote %s (%s): worker started, polling every %s", remote.Name, remote.ID, interval)
+
+	runOnce(ctx, st, dataRoot, remote, logs)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -32,11 +34,13 @@ func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote sto
 	for {
 		select {
 		case <-ctx.Done():
+			logs.logf(remote.ID, "sync remote %s (%s): worker stopped", remote.Name, remote.ID)
 			return
 		case <-ticker.C:
-			runOnce(ctx, st, dataRoot, remote)
+			runOnce(ctx, st, dataRoot, remote, logs)
 		case <-trigger:
-			runOnce(ctx, st, dataRoot, remote)
+			logs.logf(remote.ID, "sync remote %s (%s): running triggered sync", remote.Name, remote.ID)
+			runOnce(ctx, st, dataRoot, remote, logs)
 		}
 	}
 }
@@ -48,19 +52,28 @@ func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote sto
 // NewClient can now fail (a malformed stored private key) — building it
 // here means that failure surfaces as a normal recurring sync-status error
 // instead of permanently stranding the worker.
-func runOnce(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote) {
+func runOnce(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote, logs *LogStore) {
+	start := time.Now()
 	status, errMsg := "ok", ""
+
+	logs.logf(remote.ID, "sync remote %s (%s): starting sync pass", remote.Name, remote.ID)
 
 	client, err := NewClient(remote.BaseURL, remote.RemoteAPIKeyID, remote.PrivateKeyPEM)
 	if err != nil {
 		status, errMsg = "error", err.Error()
-		log.Printf("sync remote %s (%s): %v", remote.Name, remote.ID, err)
-	} else if err := syncRemoteOnce(ctx, st, dataRoot, client, remote); err != nil {
+		logs.logf(remote.ID, "sync remote %s (%s): build client: %v", remote.Name, remote.ID, err)
+	} else if err := syncRemoteOnce(ctx, st, dataRoot, client, remote, logs); err != nil {
 		status, errMsg = "error", err.Error()
-		log.Printf("sync remote %s (%s): %v", remote.Name, remote.ID, err)
+		logs.logf(remote.ID, "sync remote %s (%s): %v", remote.Name, remote.ID, err)
+	}
+
+	if status == "ok" {
+		logs.logf(remote.ID, "sync remote %s (%s): sync pass complete in %s", remote.Name, remote.ID, time.Since(start).Round(time.Millisecond))
+	} else {
+		logs.logf(remote.ID, "sync remote %s (%s): sync pass failed after %s", remote.Name, remote.ID, time.Since(start).Round(time.Millisecond))
 	}
 
 	if err := st.SetSyncRemoteStatus(ctx, remote.ID, status, errMsg, time.Now()); err != nil {
-		log.Printf("sync remote %s (%s): record status: %v", remote.Name, remote.ID, err)
+		logs.logf(remote.ID, "sync remote %s (%s): record status: %v", remote.Name, remote.ID, err)
 	}
 }

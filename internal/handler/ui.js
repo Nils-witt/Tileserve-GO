@@ -21,6 +21,24 @@
     const syncBody = document.getElementById('sync-body');
     const syncEmptyEl = document.getElementById('sync-empty');
     const syncErrorEl = document.getElementById('sync-error');
+    const syncLogOverlay = document.getElementById('sync-log-overlay');
+    const syncLogTitle = document.getElementById('sync-log-title');
+    const syncLogBody = document.getElementById('sync-log-body');
+    const syncLogEmptyEl = document.getElementById('sync-log-empty');
+    const syncLogErrorEl = document.getElementById('sync-log-error');
+    const syncLogClose = document.getElementById('sync-log-close');
+    const syncLogRefresh = document.getElementById('sync-log-refresh');
+    let syncLogRemoteId = null;
+    const syncMapsOverlay = document.getElementById('sync-maps-overlay');
+    const syncMapsTitle = document.getElementById('sync-maps-title');
+    const syncMapsBody = document.getElementById('sync-maps-body');
+    const syncMapsEmptyEl = document.getElementById('sync-maps-empty');
+    const syncMapsErrorEl = document.getElementById('sync-maps-error');
+    const syncMapsAllCb = document.getElementById('sync-maps-all');
+    const syncMapsNewCb = document.getElementById('sync-maps-new');
+    const syncMapsSaveBtn = document.getElementById('sync-maps-save');
+    const syncMapsCloseBtn = document.getElementById('sync-maps-close');
+    let syncMapsRemote = null;
 
     let isAdmin = false;
     let allUsers = [];
@@ -1199,6 +1217,9 @@
       const intervalTd = document.createElement('td');
       intervalTd.textContent = r.pollIntervalSec + 's';
 
+      const scopeTd = document.createElement('td');
+      scopeTd.textContent = r.syncAllMaps ? 'All maps' : 'Selected maps';
+
       const enabledTd = document.createElement('td');
       enabledTd.className = 'checkbox-cell';
       const enabledCb = document.createElement('input');
@@ -1215,10 +1236,20 @@
       editBtn.textContent = 'Edit';
       editBtn.onclick = () => editSyncRemote(r);
 
+      const mapsBtn = document.createElement('button');
+      mapsBtn.className = 'secondary';
+      mapsBtn.textContent = 'Select maps';
+      mapsBtn.onclick = () => openSyncMapsModal(r);
+
       const triggerBtn = document.createElement('button');
       triggerBtn.className = 'secondary';
       triggerBtn.textContent = 'Sync now';
       triggerBtn.onclick = () => triggerSyncRemote(r.id);
+
+      const logBtn = document.createElement('button');
+      logBtn.className = 'secondary';
+      logBtn.textContent = 'Logs';
+      logBtn.onclick = () => openSyncLog(r);
 
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'danger';
@@ -1228,10 +1259,10 @@
       const actionsTd = document.createElement('td');
       const actions = document.createElement('div');
       actions.className = 'actions';
-      actions.append(editBtn, triggerBtn, deleteBtn);
+      actions.append(editBtn, mapsBtn, triggerBtn, logBtn, deleteBtn);
       actionsTd.append(actions);
 
-      tr.append(nameTd, urlTd, intervalTd, enabledTd, statusTd, actionsTd);
+      tr.append(nameTd, urlTd, intervalTd, scopeTd, enabledTd, statusTd, actionsTd);
       return tr;
     }
 
@@ -1268,6 +1299,8 @@
             remoteApiKeyId: r.remoteApiKeyId,
             pollIntervalSec: r.pollIntervalSec,
             enabled: r.enabled,
+            syncAllMaps: r.syncAllMaps,
+            syncNewMaps: r.syncNewMaps,
           }, patch)),
         });
       } catch (err) {
@@ -1325,6 +1358,12 @@
             privateKeyPem,
             pollIntervalSec: parseInt(pollIntervalSec, 10),
             enabled: r.enabled,
+            syncAllMaps: r.syncAllMaps,
+            syncNewMaps: r.syncNewMaps,
+            // selectedMapUuids deliberately omitted, same reasoning as
+            // updateSyncRemote: it's edited via the "Select maps" modal,
+            // not this prompt-based flow, and omitting it here leaves the
+            // saved selection untouched.
           }),
         });
         await loadSyncRemotes();
@@ -1353,6 +1392,165 @@
       }
     }
 
+    function syncLogError(message) {
+      if (!message) {
+        syncLogErrorEl.classList.add('hidden');
+        return;
+      }
+      syncLogErrorEl.textContent = message;
+      syncLogErrorEl.classList.remove('hidden');
+    }
+
+    async function openSyncLog(r) {
+      syncLogRemoteId = r.id;
+      syncLogTitle.textContent = 'Sync log — ' + r.name;
+      syncLogOverlay.classList.remove('hidden');
+      await loadSyncLog();
+    }
+
+    function closeSyncLog() {
+      syncLogOverlay.classList.add('hidden');
+      syncLogRemoteId = null;
+    }
+
+    async function loadSyncLog() {
+      syncLogError(null);
+      try {
+        const res = await api('/sync/remotes/' + syncLogRemoteId + '/logs');
+        renderSyncLog(await res.json());
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncLogError(err.message);
+      }
+    }
+
+    // renderSyncLog shows the newest entry first, since that's the one an
+    // admin checking on a sync is almost always looking for.
+    function renderSyncLog(entries) {
+      syncLogEmptyEl.classList.toggle('hidden', entries.length > 0);
+      syncLogBody.textContent = entries
+        .slice()
+        .reverse()
+        .map((e) => '[' + fmtDate(e.time) + '] ' + e.message)
+        .join('\n');
+    }
+
+    syncLogClose.addEventListener('click', closeSyncLog);
+    syncLogRefresh.addEventListener('click', loadSyncLog);
+    syncLogOverlay.addEventListener('click', (e) => {
+      if (e.target === syncLogOverlay) closeSyncLog();
+    });
+
+    function syncMapsError(message) {
+      if (!message) {
+        syncMapsErrorEl.classList.add('hidden');
+        return;
+      }
+      syncMapsErrorEl.textContent = message;
+      syncMapsErrorEl.classList.remove('hidden');
+    }
+
+    async function openSyncMapsModal(r) {
+      syncMapsRemote = r;
+      syncMapsTitle.textContent = 'Select maps — ' + r.name;
+      syncMapsAllCb.checked = r.syncAllMaps;
+      syncMapsNewCb.checked = r.syncNewMaps;
+      syncMapsNewCb.disabled = r.syncAllMaps;
+      syncMapsOverlay.classList.remove('hidden');
+      await loadSyncMapsPicker();
+    }
+
+    function closeSyncMapsModal() {
+      syncMapsOverlay.classList.add('hidden');
+      syncMapsRemote = null;
+      syncMapsBody.innerHTML = '';
+    }
+
+    // loadSyncMapsPicker fetches both the remote's live map list (what can
+    // be selected) and this remote's already-saved selection (what's
+    // currently checked), so renderSyncMapsPicker can pre-check the right
+    // boxes.
+    async function loadSyncMapsPicker() {
+      syncMapsError(null);
+      syncMapsBody.innerHTML = '';
+      try {
+        const [remoteRes, selectedRes] = await Promise.all([
+          api('/sync/remotes/' + syncMapsRemote.id + '/remote-maps'),
+          api('/sync/remotes/' + syncMapsRemote.id + '/selected-maps'),
+        ]);
+        const remoteMaps = await remoteRes.json();
+        const selectedIds = new Set(await selectedRes.json());
+        renderSyncMapsPicker(remoteMaps, selectedIds);
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncMapsError(err.message);
+      }
+    }
+
+    function renderSyncMapsPicker(remoteMaps, selectedIds) {
+      syncMapsEmptyEl.classList.toggle('hidden', remoteMaps.length > 0);
+      syncMapsBody.innerHTML = '';
+      for (const m of remoteMaps) {
+        const tr = document.createElement('tr');
+
+        const cbTd = document.createElement('td');
+        cbTd.className = 'checkbox-cell';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = selectedIds.has(m.uuid);
+        cb.dataset.mapUuid = m.uuid;
+        cbTd.appendChild(cb);
+
+        const nameTd = document.createElement('td');
+        nameTd.textContent = m.name;
+
+        const idTd = document.createElement('td');
+        idTd.textContent = m.uuid;
+        idTd.className = 'muted';
+
+        tr.append(cbTd, nameTd, idTd);
+        syncMapsBody.appendChild(tr);
+      }
+    }
+
+    // saveSyncMapsSelection PUTs the full remote configuration (mirroring
+    // updateSyncRemote's full-replace pattern), setting selectedMapUuids
+    // explicitly — the one place in the UI that intentionally overwrites
+    // the saved selection.
+    async function saveSyncMapsSelection() {
+      syncMapsError(null);
+      const r = syncMapsRemote;
+      const selectedMapUuids = Array.from(syncMapsBody.querySelectorAll('input[type=checkbox]:checked'))
+        .map((cb) => cb.dataset.mapUuid);
+      try {
+        await api('/sync/remotes/' + r.id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: r.name,
+            baseUrl: r.baseUrl,
+            remoteApiKeyId: r.remoteApiKeyId,
+            pollIntervalSec: r.pollIntervalSec,
+            enabled: r.enabled,
+            syncAllMaps: syncMapsAllCb.checked,
+            syncNewMaps: syncMapsNewCb.checked,
+            selectedMapUuids,
+          }),
+        });
+        closeSyncMapsModal();
+        await loadSyncRemotes();
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncMapsError(err.message);
+      }
+    }
+
+    syncMapsAllCb.addEventListener('change', () => {
+      syncMapsNewCb.disabled = syncMapsAllCb.checked;
+    });
+    syncMapsSaveBtn.addEventListener('click', saveSyncMapsSelection);
+    syncMapsCloseBtn.addEventListener('click', closeSyncMapsModal);
+    syncMapsOverlay.addEventListener('click', (e) => {
+      if (e.target === syncMapsOverlay) closeSyncMapsModal();
+    });
+
     document.getElementById('sync-generate-btn').addEventListener('click', async () => {
       syncError(null);
       try {
@@ -1373,6 +1571,11 @@
         privateKeyPem: document.getElementById('sync-private-key-pem').value,
         pollIntervalSec: parseInt(document.getElementById('sync-interval').value, 10),
         enabled: document.getElementById('sync-enabled').checked,
+        // A freshly registered remote starts in "sync everything" mode,
+        // matching this feature's behavior before selective sync existed;
+        // use the "Select maps" button afterwards to narrow it down.
+        syncAllMaps: true,
+        syncNewMaps: false,
       };
       createSyncRemote(payload).then(() => {
         e.target.reset();
