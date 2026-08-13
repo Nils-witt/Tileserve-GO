@@ -142,6 +142,7 @@
       <div class="tabs">
         <button id="tab-maps-btn" class="active">Maps</button>
         <button id="tab-users-btn" class="hidden">Users</button>
+        <button id="tab-sync-btn" class="hidden">Sync</button>
       </div>
 
       <div id="tab-maps">
@@ -240,6 +241,67 @@
             </thead>
             <tbody id="users-body"></tbody>
           </table>
+        </div>
+      </div>
+
+      <div id="tab-sync" class="hidden">
+        <div class="card">
+          <h2>Register sync remote</h2>
+          <p class="muted" style="margin-top:0; margin-bottom:0.9rem">
+            Pulls a full mirror of every map visible to a registered API key on another tileserve-go instance —
+            versions and aliases included, under the same map UUIDs. This server signs its own short-lived JWTs
+            using a key pair it generates itself: click "Generate key pair" below, register the resulting public
+            key as an API key for a user on the remote instance (via that instance's "API keys" button on its
+            Users tab), then paste the key ID that call returns into "Remote API key ID".
+          </p>
+          <form id="create-sync-form" class="row">
+            <div class="field">
+              <label for="sync-name">Name</label>
+              <input id="sync-name" required>
+            </div>
+            <div class="field">
+              <label for="sync-base-url">Base URL</label>
+              <input id="sync-base-url" placeholder="https://source.example.com" required>
+            </div>
+            <div class="field">
+              <label for="sync-remote-key-id">Remote API key ID</label>
+              <input id="sync-remote-key-id" class="inline" placeholder="uuid returned by the remote" required>
+            </div>
+            <div class="field">
+              <label for="sync-interval">Poll interval (s)</label>
+              <input id="sync-interval" type="number" min="1" value="300" required>
+            </div>
+            <div class="field">
+              <label><input type="checkbox" id="sync-enabled" checked> Enabled</label>
+            </div>
+            <div class="field" style="flex-basis:100%">
+              <label for="sync-public-key-pem">Public key (copy this to the remote's "API keys" form)</label>
+              <textarea id="sync-public-key-pem" rows="3" readonly placeholder="Click &quot;Generate key pair&quot;" style="width:100%; font-family:monospace; font-size:0.8em"></textarea>
+            </div>
+            <input type="hidden" id="sync-private-key-pem">
+            <button type="button" class="secondary" id="sync-generate-btn">Generate key pair</button>
+            <button type="submit">Register</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <p id="sync-error" class="hidden" style="color:#dc2626"></p>
+          <table>
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Base URL</th>
+                <th>Interval</th>
+                <th class="checkbox-cell">Enabled</th>
+                <th>Last sync</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="sync-body"></tbody>
+          </table>
+          <p id="sync-empty" class="muted hidden">No sync remotes configured yet.</p>
+          <p class="muted">Removing a remote stops future syncing; maps already mirrored from it keep their local
+            data. Deletions on the remote are never propagated here.</p>
         </div>
       </div>
     </div>
@@ -398,6 +460,48 @@
           </div>
           <button type="submit">Add</button>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="apikey-overlay" class="modal-overlay hidden">
+    <div class="modal" style="height:auto; max-height:88vh;">
+      <div class="modal-header">
+        <h2 id="apikey-title">API keys</h2>
+        <button class="secondary" id="apikey-close">Close</button>
+      </div>
+      <div style="padding:1rem; overflow:auto;">
+        <p id="apikey-error" class="hidden" style="color:#dc2626"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Created</th>
+              <th>Last used</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="apikey-body"></tbody>
+        </table>
+        <p id="apikey-empty" class="muted hidden">No API keys yet.</p>
+        <div class="row" style="margin-top:1rem">
+          <div class="field">
+            <label for="apikey-add-name">Name</label>
+            <input id="apikey-add-name" placeholder="e.g. edge-server-01 sync">
+          </div>
+          <div class="field" style="flex-basis:100%">
+            <label for="apikey-add-pubkey">Public key (PEM)</label>
+            <textarea id="apikey-add-pubkey" rows="3" placeholder="-----BEGIN PUBLIC KEY-----..." style="width:100%; font-family:monospace; font-size:0.8em"></textarea>
+          </div>
+          <button type="button" class="secondary" id="apikey-generate-btn">Generate key pair</button>
+          <button id="apikey-add-btn">Create</button>
+        </div>
+        <p class="muted">The key authenticates as this user (their full permissions apply). The caller generates
+          its own RSA key pair and signs short-lived JWTs with the private half — this server only ever stores
+          the public half. Click "Generate key pair" to have this server generate one for you (the private key is
+          shown exactly once, copy it immediately), or paste a public key generated elsewhere. Use the resulting
+          key's ID as the "Remote API key ID" when registering this server as a sync remote on another instance.
+        </p>
       </div>
     </div>
   </div>

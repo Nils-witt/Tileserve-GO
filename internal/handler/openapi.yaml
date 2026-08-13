@@ -19,6 +19,10 @@ tags:
     description: CRUD for geo objects (addresses/points of interest) tied to a map version
   - name: users
     description: Admin-only user account management
+  - name: api-keys
+    description: Admin-only API key management, for server-to-server authentication
+  - name: sync
+    description: Admin-only configuration and control of pulling a full mirror from remote tileserve-go instances
   - name: files
     description: Serving extracted map/tile files
   - name: ui
@@ -678,6 +682,307 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorMessage"
 
+  /users/{username}/api-keys:
+    parameters:
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [api-keys]
+      summary: List a user's API keys
+      description: >-
+        Requires the acting user's `is_admin` permission. This server never
+        holds a private key for an API key, so there is nothing secret to
+        omit here — the response is the same shape whether just created or
+        listed later.
+      responses:
+        "200":
+          description: Array of API keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [api-keys]
+      summary: Register a caller-generated public key as an API key for a user
+      description: >-
+        Requires the acting user's `is_admin` permission. The registered key
+        authenticates as the target user (their full global and per-map
+        permissions apply) — intended for a service account used by a
+        remote tileserve-go instance's sync puller (see `POST
+        /sync/remotes`), not for human login. The caller generates its own
+        RSA key pair and submits only `publicKeyPem`; this server never
+        sees the private half. See `POST /keys/generate` for a convenience
+        endpoint that generates a fresh pair.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIKeyRequest"
+      responses:
+        "201":
+          description: API key registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKey"
+        "400":
+          description: Invalid or missing public key
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: User not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
+  /users/{username}/api-keys/{id}:
+    parameters:
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [api-keys]
+      summary: Revoke an API key
+      description: Requires the acting user's `is_admin` permission.
+      responses:
+        "204":
+          description: API key revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: API key not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
+  /sync/remotes:
+    get:
+      tags: [sync]
+      summary: List configured sync remotes
+      description: >-
+        Requires the acting user's `is_admin` permission. Never includes
+        `privateKeyPem` — the secret this server uses to sign its outbound
+        requests to the remote.
+      responses:
+        "200":
+          description: Array of sync remotes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SyncRemote"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [sync]
+      summary: Register a remote to pull a full mirror from
+      description: >-
+        Requires the acting user's `is_admin` permission. `privateKeyPem` is
+        required here (unlike on `PUT`) — this server generates its own RSA
+        key pair (e.g. via `POST /keys/generate`), registers the public half
+        as an API key on the remote (`POST /users/{username}/api-keys`
+        there), and configures the resulting key id as `remoteApiKeyId`
+        alongside its own `privateKeyPem` here. Once created and enabled,
+        this server periodically (every `pollIntervalSec`) signs a
+        short-lived JWT per request and pulls every map visible to that
+        identity on the remote — including every version and alias,
+        mirrored under the same map UUIDs — via `GET /maps`, `GET
+        /maps/{id}/versions`, `GET /maps/{id}/version/{version}/archive`,
+        and `GET /maps/{id}/aliases` on the remote.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncRemoteRequest"
+      responses:
+        "201":
+          description: Sync remote created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncRemote"
+        "400":
+          description: Invalid request body
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /sync/remotes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [sync]
+      summary: Get a sync remote
+      description: Requires the acting user's `is_admin` permission.
+      responses:
+        "200":
+          description: The sync remote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncRemote"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Sync remote not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+    put:
+      tags: [sync]
+      summary: Replace a sync remote's configuration
+      description: >-
+        Requires the acting user's `is_admin` permission. Changing
+        `baseUrl`, `remoteApiKeyId`, `privateKeyPem`, or `pollIntervalSec`
+        on a currently-running remote restarts its background sync worker
+        with the new configuration (within ~30s).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncRemoteRequest"
+      responses:
+        "200":
+          description: Updated sync remote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncRemote"
+        "400":
+          description: Invalid request body
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Sync remote not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+    delete:
+      tags: [sync]
+      summary: Remove a sync remote
+      description: >-
+        Requires the acting user's `is_admin` permission. Stops future
+        syncing from this remote; maps already mirrored from it keep their
+        local data.
+      responses:
+        "204":
+          description: Sync remote deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Sync remote not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
+  /sync/remotes/{id}/trigger:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [sync]
+      summary: Trigger an immediate sync
+      description: >-
+        Requires the acting user's `is_admin` permission. Asks the remote's
+        running background worker to sync now, outside its regular
+        `pollIntervalSec` interval. Returns 409 if the remote has no active
+        worker (it doesn't exist, or is disabled).
+      responses:
+        "202":
+          description: Sync triggered
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Sync remote is not currently running
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
+  /keys/generate:
+    post:
+      tags: [api-keys]
+      summary: Generate a fresh RSA key pair (convenience, not persisted)
+      description: >-
+        Requires the acting user's `is_admin` permission. Generates a fresh
+        RSA-2048 key pair and returns both halves PEM-encoded. Nothing is
+        persisted — this exists purely so the admin UI can bootstrap a key
+        pair without external tooling; the caller must save the returned
+        `privateKeyPem` themselves, it is never retrievable again.
+      responses:
+        "200":
+          description: Freshly generated key pair
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KeyPair"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /maps/{id}/version/{version}/bounds:
     parameters:
       - $ref: "#/components/parameters/MapId"
@@ -714,6 +1019,44 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           description: Version not found or has no tiles
+
+  /maps/{id}/version/{version}/archive:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - name: version
+        in: path
+        required: true
+        schema:
+          type: string
+        description: >-
+          A real (numeric) version identifier, the literal keyword
+          "current" (resolves to the map's currentVersion), or a
+          user-defined alias created via `PUT /maps/{id}/aliases/{alias}`.
+    get:
+      tags: [files, sync]
+      summary: Download a whole map version as a zip archive
+      description: >-
+        Streams every file under `<data-root>/<id>/<version>/` (tiles plus
+        `index.json`) as a single zip, so a puller can fetch a whole version
+        in one request instead of one per tile file. This is the endpoint a
+        remote tileserve-go instance calls when another instance configures
+        it as a sync source (see `POST /sync/remotes`). Requires view access
+        to this map (see `GET /maps`); unlike the raw tile-file route, this
+        is never reachable anonymously even if `anonymousAllowed` is set.
+      responses:
+        "200":
+          description: Zip archive of the version's contents
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Map or version not found
 
   /maps/{id}/version/{version}/geo-objects:
     parameters:
@@ -961,11 +1304,22 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+      description: >-
+        Every bearer token is a JWT, of one of two kinds: a human login/
+        refresh token (`POST /login`, `POST /refresh`), signed HS256 with a
+        server-wide shared secret and carrying no `kid` header; or an API
+        key token, signed RS256 by the caller with the private half of a
+        key pair whose public half was registered via `POST
+        /users/{username}/api-keys`, carrying a `kid` header naming that
+        key's id. API key tokens must be short-lived (no more than 15
+        minutes between `iat` and `exp`) — the caller mints and signs a
+        fresh one for each use rather than reusing a single long-lived
+        token.
     tokenQuery:
       type: apiKey
       in: query
       name: token
-      description: JWT passed as a query parameter instead of the Authorization header.
+      description: JWT (login or API key) passed as a query parameter instead of the Authorization header.
 
   parameters:
     MapId:
@@ -1263,6 +1617,129 @@ components:
           type: string
         version:
           type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        updatedBy:
+          type: string
+
+    APIKeyRequest:
+      type: object
+      required: [publicKeyPem]
+      properties:
+        name:
+          type: string
+          description: Human-readable label for this key (e.g. "edge-server-01 sync").
+        publicKeyPem:
+          type: string
+          description: >-
+            The caller's own RSA public key (>=2048 bits), PEM-encoded
+            (PKIX). The caller generates this key pair itself and keeps the
+            private half — this server never sees or stores it. See `POST
+            /keys/generate` for a convenience endpoint that generates a
+            fresh pair without persisting anything.
+
+    APIKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: >-
+            Also the JWT `kid` header this key's caller must set when
+            signing an API key token (see `bearerAuth`).
+        username:
+          type: string
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        lastUsedAt:
+          type: string
+          format: date-time
+
+    KeyPair:
+      type: object
+      properties:
+        privateKeyPem:
+          type: string
+          description: >-
+            Freshly generated RSA-2048 private key, PEM-encoded (PKCS8).
+            Not persisted server-side — save it now, it cannot be
+            recovered.
+        publicKeyPem:
+          type: string
+          description: The matching public key, PEM-encoded (PKIX). Register this wherever an API key needs it.
+
+    SyncRemoteRequest:
+      type: object
+      required: [name, baseUrl, remoteApiKeyId, pollIntervalSec]
+      properties:
+        name:
+          type: string
+        baseUrl:
+          type: string
+          description: Base URL of the remote tileserve-go instance, e.g. "https://source.example.com".
+        remoteApiKeyId:
+          type: string
+          format: uuid
+          description: >-
+            The `id` returned by `POST /users/{username}/api-keys` on the
+            remote instance, when this server's own public key was
+            registered there. Always required (not secret — echoed back by
+            `GET`).
+        privateKeyPem:
+          type: string
+          description: >-
+            This (local) server's own RSA private key, PEM-encoded, used to
+            sign short-lived JWTs presented to the remote. Required when
+            creating a remote (`POST /sync/remotes`). On update (`PUT
+            /sync/remotes/{id}`), optional — omit or leave empty to keep the
+            current key, the same convention `UserRequest.password` uses;
+            necessary because `GET`/list responses never echo the key back.
+            See `POST /keys/generate` for a convenience endpoint that
+            generates a fresh key pair without persisting anything.
+        pollIntervalSec:
+          type: integer
+          description: How often to sync, in seconds. Must be positive.
+        enabled:
+          type: boolean
+          description: Whether this remote's background sync worker should run. Defaults to false if omitted.
+
+    SyncRemote:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        baseUrl:
+          type: string
+        remoteApiKeyId:
+          type: string
+          format: uuid
+        pollIntervalSec:
+          type: integer
+        enabled:
+          type: boolean
+        lastSyncAt:
+          type: string
+          format: date-time
+        lastSyncStatus:
+          type: string
+          description: '"ok" or "error" after the most recent sync attempt; empty if it has never run.'
+        lastSyncError:
+          type: string
+          description: Error message from the most recent failed sync attempt, if any.
         createdAt:
           type: string
           format: date-time

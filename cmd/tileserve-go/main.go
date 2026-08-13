@@ -10,10 +10,14 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"nilswitt.dev/tileserve-go/internal/handler"
 	"nilswitt.dev/tileserve-go/internal/store"
+	"nilswitt.dev/tileserve-go/internal/sync"
+	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
 
 // envOrDefault returns the value of the environment variable key, or
@@ -54,7 +58,12 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 
 	secret := []byte(jwtSecret)
 
-	ctx := context.Background()
+	// ctx is canceled on SIGINT/SIGTERM, giving the sync manager and the
+	// HTTP server a chance to shut down cleanly (see the goroutine after
+	// srv is constructed below) rather than being killed mid-request or
+	// mid-sync.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 
 	st, err := store.NewStore(ctx, dbDSN)
 	if err != nil {
@@ -76,10 +85,17 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 	// serving traffic (see EnsureTileIndexes) — run it in the background
 	// rather than delaying server startup on a full data-root filesystem walk.
 	go func() {
-		if err := handler.EnsureTileIndexes(dataRoot); err != nil {
+		if err := tilearchive.EnsureTileIndexes(dataRoot); err != nil {
 			log.Printf("backfill tile indexes: %v", err)
 		}
 	}()
+
+	// The sync manager starts/stops one background puller goroutine per
+	// enabled sync_remotes row (see internal/sync.Manager); it reconciles
+	// against the database periodically, so remotes added/edited/disabled
+	// via the /sync/remotes API take effect without a restart.
+	syncManager := sync.NewManager(st, dataRoot)
+	go syncManager.Start(ctx)
 
 	mux := http.NewServeMux()
 	// GET /healthz: liveness probe, always returns 200 "ok".
@@ -101,7 +117,10 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 	// GET /openapi.yaml: serves the OpenAPI 3.0 spec (public, unauthenticated).
 	mux.HandleFunc("/openapi.yaml", handler.OpenAPIHandler())
 	// GET /maps, POST /maps: list maps visible to the caller / create a map.
-	mux.Handle("/maps", handler.RequireAuth(secret, handler.MapsCollectionHandler(st)))
+	// RequireAuth/OptionalAuth accept both a login JWT and an API key JWT
+	// (see handler.parseBearerToken) — st satisfies
+	// handler.apiKeySigningKeyResolver.
+	mux.Handle("/maps", handler.RequireAuth(secret, st, handler.MapsCollectionHandler(st)))
 	// /maps/{id}, /maps/{id}/upload, /maps/{id}/versions,
 	// /maps/{id}/permissions[/{username}], /maps/{id}/version/{v}[/bounds|...]:
 	// see handler.MapsItemHandler for the full per-route breakdown.
@@ -109,11 +128,21 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 	// OptionalAuth, not RequireAuth: a map's version file serving route may
 	// be reachable without a token at all if that map has anonymousAllowed
 	// set — MapsItemHandler enforces auth itself on every other route.
-	mux.Handle("/maps/", handler.OptionalAuth(secret, handler.MapsItemHandler(st, dataRoot)))
+	mux.Handle("/maps/", handler.OptionalAuth(secret, st, handler.MapsItemHandler(st, dataRoot)))
 	// GET /users, POST /users: list users / create a user (admin-only).
-	mux.Handle("/users", handler.RequireAuth(secret, handler.UsersCollectionHandler(st)))
-	// PUT /users/{username}, DELETE /users/{username}: update / delete a user (admin-only).
-	mux.Handle("/users/", handler.RequireAuth(secret, handler.UserItemHandler(st)))
+	mux.Handle("/users", handler.RequireAuth(secret, st, handler.UsersCollectionHandler(st)))
+	// PUT /users/{username}, DELETE /users/{username}: update / delete a user
+	// (admin-only), plus /users/{username}/api-keys[/{id}] (also admin-only).
+	mux.Handle("/users/", handler.RequireAuth(secret, st, handler.UserItemHandler(st)))
+	// GET /sync/remotes, POST /sync/remotes: list / register remotes to
+	// pull a full mirror from (admin-only).
+	mux.Handle("/sync/remotes", handler.RequireAuth(secret, st, handler.SyncRemotesCollectionHandler(st)))
+	// GET/PUT/DELETE /sync/remotes/{id}, POST /sync/remotes/{id}/trigger
+	// (admin-only).
+	mux.Handle("/sync/remotes/", handler.RequireAuth(secret, st, handler.SyncRemoteItemHandler(st, syncManager)))
+	// POST /keys/generate: server-side RSA key pair generation convenience
+	// for the admin UI (admin-only, nothing persisted).
+	mux.Handle("/keys/generate", handler.RequireAuth(secret, st, handler.GenerateKeyPairHandler(st)))
 
 	addr := ":" + port
 	srv := &http.Server{
@@ -128,7 +157,24 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
+
+	// On shutdown (ctx canceled by SIGINT/SIGTERM), stop accepting new sync
+	// work and let the HTTP server drain in-flight requests before exiting.
+	// A sync worker's in-flight step is safe to abandon mid-way (see
+	// internal/sync.pullVersion's crash-safe ordering), so Stop need not be
+	// awaited before shutting down the server.
+	go func() {
+		<-ctx.Done()
+		syncManager.Stop()
+
+		_ = srv.Shutdown(context.Background())
+	}()
+
 	log.Printf("tileserve-go listening on %s", addr)
 
-	return srv.ListenAndServe()
+	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return fmt.Errorf("serve: %w", err)
+	}
+
+	return nil
 }

@@ -37,6 +37,7 @@ type Store struct {
 	permsCache          *ttlCache[string, Permissions]
 	mapPermCache        *ttlCache[mapPermKey, MapPermission]
 	mapAliasCache       *ttlCache[mapAliasKey, string]
+	apiKeyCache         *ttlCache[uuid.UUID, apiKeySigningKey]
 }
 
 // NewStore opens a connection pool to the postgres database at dsn and
@@ -71,6 +72,7 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 		permsCache:          newTTLCache[string, Permissions](cacheTTL),
 		mapPermCache:        newTTLCache[mapPermKey, MapPermission](cacheTTL),
 		mapAliasCache:       newTTLCache[mapAliasKey, string](cacheTTL),
+		apiKeyCache:         newTTLCache[uuid.UUID, apiKeySigningKey](cacheTTL),
 	}, nil
 }
 
@@ -233,6 +235,79 @@ var migrationSteps = []struct {
 				PRIMARY KEY (map_uuid, alias),
 				FOREIGN KEY (map_uuid, version) REFERENCES map_versions(map_uuid, version) ON DELETE CASCADE
 			)
+		`,
+	},
+	{
+		errContext: "migrate api_keys table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS api_keys (
+				id             UUID PRIMARY KEY,
+				public_key_pem TEXT NOT NULL DEFAULT '',
+				username       TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+				name           TEXT NOT NULL DEFAULT '',
+				created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+				created_by     TEXT NOT NULL,
+				last_used_at   TIMESTAMPTZ,
+				revoked_at     TIMESTAMPTZ
+			);
+			CREATE INDEX IF NOT EXISTS idx_api_keys_username ON api_keys (username);
+		`,
+	},
+	{
+		// Breaking-change replacement of the opaque-secret scheme with per-key
+		// RSA public keys (see api_keys.go): the server now only ever stores a
+		// caller-generated public key, never a secret of its own. Existing
+		// key_hash rows become permanently unusable (public_key_pem defaults
+		// to '', which fails to parse) — there is no migration path for
+		// pre-existing opaque keys, they must be recreated.
+		errContext: "migrate api_keys public key columns",
+		sql: `
+			ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS public_key_pem TEXT NOT NULL DEFAULT '';
+			ALTER TABLE api_keys DROP COLUMN IF EXISTS key_hash;
+		`,
+	},
+	{
+		// private_key_pem is this (local) server's own RSA private key, used
+		// to sign short-lived JWTs presented to the remote — stored in
+		// plaintext (unlike every other secret in this schema, which is
+		// one-way hashed) because it must be read back to sign each outbound
+		// request. remote_api_key_id is not secret: it's the id of the
+		// api_keys row the matching public key was registered as *on the
+		// remote*, so it isn't a local foreign key.
+		errContext: "migrate sync_remotes table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS sync_remotes (
+				id                UUID PRIMARY KEY,
+				name              TEXT NOT NULL,
+				base_url          TEXT NOT NULL,
+				remote_api_key_id UUID,
+				private_key_pem   TEXT NOT NULL DEFAULT '',
+				poll_interval_sec INTEGER NOT NULL DEFAULT 300,
+				enabled           BOOLEAN NOT NULL DEFAULT true,
+				last_sync_at      TIMESTAMPTZ,
+				last_sync_status  TEXT NOT NULL DEFAULT '',
+				last_sync_error   TEXT NOT NULL DEFAULT '',
+				created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+				updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+				created_by        TEXT NOT NULL,
+				updated_by        TEXT NOT NULL
+			)
+		`,
+	},
+	{
+		// As with api_keys: existing api_key plaintext rows become inert (the
+		// column is dropped outright) — no migration path, by design.
+		errContext: "migrate sync_remotes key columns",
+		sql: `
+			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS remote_api_key_id UUID;
+			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS private_key_pem TEXT NOT NULL DEFAULT '';
+			ALTER TABLE sync_remotes DROP COLUMN IF EXISTS api_key;
+		`,
+	},
+	{
+		errContext: "migrate maps sync_remote_id column",
+		sql: `
+			ALTER TABLE maps ADD COLUMN IF NOT EXISTS sync_remote_id UUID REFERENCES sync_remotes(id) ON DELETE SET NULL;
 		`,
 	},
 }

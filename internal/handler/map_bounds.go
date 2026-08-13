@@ -13,6 +13,8 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+
+	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
 
 // tileBounds describes the real-world extent of a version's tile pyramid,
@@ -40,7 +42,7 @@ func mapVersionBoundsHandler(dataRoot string, id uuid.UUID, version string) http
 			return
 		}
 
-		if !numericSegmentRE.MatchString(version) {
+		if !tilearchive.NumericSegmentRE.MatchString(version) {
 			http.Error(w, "invalid version", http.StatusBadRequest)
 			return
 		}
@@ -87,7 +89,7 @@ func cachedTileBounds(dataRoot string, id uuid.UUID, version string) (*tileBound
 		return b, nil
 	}
 
-	b, err := computeTileBounds(mapVersionDir(dataRoot, id, version))
+	b, err := computeTileBounds(tilearchive.MapVersionDir(dataRoot, id, version))
 	if err != nil {
 		return nil, err
 	}

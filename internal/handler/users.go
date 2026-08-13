@@ -105,16 +105,31 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 
 // UserItemHandler serves the /users/{username} item route (admin-only): PUT
 // updates the user's cn/permissions (and password, if given), DELETE removes
-// the user (an admin may not delete their own account).
+// the user (an admin may not delete their own account). It also dispatches
+// the nested /users/{username}/api-keys[/{id}] sub-resource, mirroring
+// MapsItemHandler's path-segment dispatch style.
 func UserItemHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		username := strings.Trim(strings.TrimPrefix(r.URL.Path, "/users/"), "/")
-		if username == "" || strings.Contains(username, "/") {
+		path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/users/"), "/")
+		segments := strings.Split(path, "/")
+
+		username := segments[0]
+		if username == "" {
 			http.Error(w, "invalid username", http.StatusBadRequest)
 			return
 		}
 
 		if !requireAdmin(w, r, st) {
+			return
+		}
+
+		if len(segments) >= 2 && segments[1] == "api-keys" {
+			routeUserAPIKeys(w, r, st, username, segments)
+			return
+		}
+
+		if len(segments) != 1 {
+			http.NotFound(w, r)
 			return
 		}
 
