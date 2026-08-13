@@ -135,9 +135,10 @@ func knownLocallyMapSet(ctx context.Context, st *store.Store, maps []store.MapRe
 // remote's selective-sync policy (see mapsToSync) unless SyncAllMaps is
 // set, in which case every map visible to the API key is returned
 // unfiltered and no extra store lookups are made.
-func mapsForRemote(ctx context.Context, st *store.Store, client *Client, remote store.SyncRemote) ([]store.MapRecord, error) {
+func mapsForRemote(ctx context.Context, st *store.Store, client *Client, remote store.SyncRemote, logs *LogStore) ([]store.MapRecord, error) {
 	maps, err := client.ListMaps(ctx)
 	if err != nil {
+		logs.errf(remote.ID, "sync remote %s (%s): list remote maps: %v", remote.Name, remote.ID, err)
 		return nil, fmt.Errorf("list remote maps: %w", err)
 	}
 
@@ -147,11 +148,13 @@ func mapsForRemote(ctx context.Context, st *store.Store, client *Client, remote 
 
 	selected, err := selectedMapSet(ctx, st, remote.ID)
 	if err != nil {
+		logs.errf(remote.ID, "sync remote %s (%s): %v", remote.Name, remote.ID, err)
 		return nil, err
 	}
 
 	known, err := knownLocallyMapSet(ctx, st, maps)
 	if err != nil {
+		logs.errf(remote.ID, "sync remote %s (%s): %v", remote.Name, remote.ID, err)
 		return nil, err
 	}
 
@@ -164,7 +167,7 @@ func mapsForRemote(ctx context.Context, st *store.Store, client *Client, remote 
 // present locally. Maps are synced concurrently, bounded by
 // maxConcurrentMapSyncs.
 func syncRemoteOnce(ctx context.Context, st *store.Store, dataRoot string, client *Client, remote store.SyncRemote, logs *LogStore) error {
-	maps, err := mapsForRemote(ctx, st, client, remote)
+	maps, err := mapsForRemote(ctx, st, client, remote, logs)
 	if err != nil {
 		return err
 	}
@@ -179,7 +182,14 @@ func syncRemoteOnce(ctx context.Context, st *store.Store, dataRoot string, clien
 	for _, rm := range maps {
 		g.Go(func() error {
 			if err := syncMap(gctx, st, dataRoot, client, remote, rm, actor, logs); err != nil {
-				return fmt.Errorf("sync map %s: %w", rm.UUID, err)
+				err = fmt.Errorf("sync map %s: %w", rm.UUID, err)
+				// errgroup.Wait only ever returns the first error from a
+				// batch of concurrent map syncs — log every one here, at
+				// the point it happens, so a failure in one map isn't
+				// silently dropped just because another map failed first.
+				logs.errf(remote.ID, "sync remote %s (%s): %v", remote.Name, remote.ID, err)
+
+				return err
 			}
 
 			return nil
@@ -198,16 +208,19 @@ func syncRemoteOnce(ctx context.Context, st *store.Store, dataRoot string, clien
 // that's picked up on a later tick rather than treated as an error now.
 func syncMap(ctx context.Context, st *store.Store, dataRoot string, client *Client, remote store.SyncRemote, rm store.MapRecord, actor string, logs *LogStore) error {
 	if _, err := st.UpsertSyncedMap(ctx, rm.UUID, rm.Name, rm.VisibleToAll, rm.AnonymousAllowed, remote.ID, actor); err != nil {
+		logs.errf(remote.ID, "sync map %s (%s): upsert local map: %v", rm.Name, rm.UUID, err)
 		return fmt.Errorf("upsert local map: %w", err)
 	}
 
 	remoteVersions, err := client.ListVersions(ctx, rm.UUID)
 	if err != nil {
+		logs.errf(remote.ID, "sync map %s (%s): list remote versions: %v", rm.Name, rm.UUID, err)
 		return fmt.Errorf("list remote versions: %w", err)
 	}
 
 	alreadyLocal, err := localVersionSet(ctx, st, rm.UUID, remoteVersions)
 	if err != nil {
+		logs.errf(remote.ID, "sync map %s (%s): %v", rm.Name, rm.UUID, err)
 		return err
 	}
 
@@ -218,12 +231,18 @@ func syncMap(ctx context.Context, st *store.Store, dataRoot string, client *Clie
 
 	for _, v := range toPull {
 		if err := pullVersion(ctx, st, dataRoot, client, rm.UUID, v, remote.ID, logs); err != nil {
-			return fmt.Errorf("pull version %s: %w", v.Version, err)
+			err = fmt.Errorf("pull version %s: %w", v.Version, err)
+			logs.errf(remote.ID, "sync map %s (%s): %v", rm.Name, rm.UUID, err)
+
+			return err
 		}
 	}
 
 	if err := reconcileMapAliases(ctx, st, client, rm.UUID, actor, remote.ID, logs); err != nil {
-		return fmt.Errorf("reconcile aliases: %w", err)
+		err = fmt.Errorf("reconcile aliases: %w", err)
+		logs.errf(remote.ID, "sync map %s (%s): %v", rm.Name, rm.UUID, err)
+
+		return err
 	}
 
 	if rm.CurrentVersion == "" {
@@ -231,7 +250,10 @@ func syncMap(ctx context.Context, st *store.Store, dataRoot string, client *Clie
 	}
 
 	if err := st.SetSyncedCurrentVersion(ctx, rm.UUID, rm.CurrentVersion); err != nil && !errors.Is(err, store.ErrSyncedVersionNotRecorded) {
-		return fmt.Errorf("set current version: %w", err)
+		err = fmt.Errorf("set current version: %w", err)
+		logs.errf(remote.ID, "sync map %s (%s): %v", rm.Name, rm.UUID, err)
+
+		return err
 	}
 
 	return nil
@@ -261,11 +283,13 @@ func localVersionSet(ctx context.Context, st *store.Store, mapID uuid.UUID, remo
 func reconcileMapAliases(ctx context.Context, st *store.Store, client *Client, mapID uuid.UUID, actor string, remoteID uuid.UUID, logs *LogStore) error {
 	remoteAliases, err := client.ListAliases(ctx, mapID)
 	if err != nil {
+		logs.errf(remoteID, "sync map %s: list remote aliases: %v", mapID, err)
 		return fmt.Errorf("list remote aliases: %w", err)
 	}
 
 	localAliases, err := st.ListMapVersionAliases(ctx, mapID)
 	if err != nil {
+		logs.errf(remoteID, "sync map %s: list local aliases: %v", mapID, err)
 		return fmt.Errorf("list local aliases: %w", err)
 	}
 
@@ -277,6 +301,7 @@ func reconcileMapAliases(ctx context.Context, st *store.Store, client *Client, m
 	for _, a := range toSet {
 		has, err := st.HasMapVersion(ctx, mapID, a.Version)
 		if err != nil {
+			logs.errf(remoteID, "sync map %s: check alias target version %s: %v", mapID, a.Version, err)
 			return fmt.Errorf("check alias target version %s: %w", a.Version, err)
 		}
 
@@ -285,12 +310,14 @@ func reconcileMapAliases(ctx context.Context, st *store.Store, client *Client, m
 		}
 
 		if _, err := st.SetMapVersionAlias(ctx, mapID, a.Alias, a.Version, actor); err != nil {
+			logs.errf(remoteID, "sync map %s: set alias %s: %v", mapID, a.Alias, err)
 			return fmt.Errorf("set alias %s: %w", a.Alias, err)
 		}
 	}
 
 	for _, alias := range toDelete {
 		if err := st.DeleteMapVersionAlias(ctx, mapID, alias); err != nil {
+			logs.errf(remoteID, "sync map %s: delete alias %s: %v", mapID, alias, err)
 			return fmt.Errorf("delete alias %s: %w", alias, err)
 		}
 	}
@@ -321,6 +348,7 @@ func reconcileMapAliases(ctx context.Context, st *store.Store, client *Client, m
 func pullVersion(ctx context.Context, st *store.Store, dataRoot string, client *Client, mapID uuid.UUID, v store.MapVersionRecord, remoteID uuid.UUID, logs *LogStore) error {
 	has, err := st.HasMapVersion(ctx, mapID, v.Version)
 	if err != nil {
+		logs.errf(remoteID, "sync map %s: check existing version %s: %v", mapID, v.Version, err)
 		return fmt.Errorf("check existing version: %w", err)
 	}
 
@@ -332,6 +360,7 @@ func pullVersion(ctx context.Context, st *store.Store, dataRoot string, client *
 
 	tmpPath, err := client.DownloadArchive(ctx, mapID, v.Version)
 	if err != nil {
+		logs.errf(remoteID, "sync map %s: download archive for version %s: %v", mapID, v.Version, err)
 		return fmt.Errorf("download archive: %w", err)
 	}
 	defer func() { _ = os.Remove(tmpPath) }()
@@ -340,25 +369,30 @@ func pullVersion(ctx context.Context, st *store.Store, dataRoot string, client *
 
 	stagingDir, err := tilearchive.ExtractArchive(tmpPath, dir)
 	if err != nil {
+		logs.errf(remoteID, "sync map %s: extract archive for version %s: %v", mapID, v.Version, err)
 		return fmt.Errorf("extract archive: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(stagingDir) }()
 
 	if err := tilearchive.WriteTileIndex(stagingDir); err != nil {
+		logs.errf(remoteID, "sync map %s: write tile index for version %s: %v", mapID, v.Version, err)
 		return fmt.Errorf("write tile index: %w", err)
 	}
 
 	destDir := filepath.Join(dir, v.Version)
 
 	if err := os.RemoveAll(destDir); err != nil {
+		logs.errf(remoteID, "sync map %s: clear orphaned dir for version %s: %v", mapID, v.Version, err)
 		return fmt.Errorf("clear orphaned version dir: %w", err)
 	}
 
 	if err := os.Rename(stagingDir, destDir); err != nil {
+		logs.errf(remoteID, "sync map %s: store version %s: %v", mapID, v.Version, err)
 		return fmt.Errorf("store version: %w", err)
 	}
 
 	if err := st.RecordSyncedMapVersion(ctx, mapID, v.Version, v.CreatedBy, v.CreatedAt); err != nil {
+		logs.errf(remoteID, "sync map %s: record version %s: %v", mapID, v.Version, err)
 		return fmt.Errorf("record version: %w", err)
 	}
 

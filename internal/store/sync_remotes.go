@@ -65,6 +65,7 @@ type SyncRemote struct {
 // in internal/handler/sync_remotes.go).
 type SyncLogEntry struct {
 	Time    time.Time `json:"time"`
+	Level   string    `json:"level"`
 	Message string    `json:"message"`
 }
 

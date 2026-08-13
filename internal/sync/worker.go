@@ -61,19 +61,19 @@ func runOnce(ctx context.Context, st *store.Store, dataRoot string, remote store
 	client, err := NewClient(remote.BaseURL, remote.RemoteAPIKeyID, remote.PrivateKeyPEM)
 	if err != nil {
 		status, errMsg = "error", err.Error()
-		logs.logf(remote.ID, "sync remote %s (%s): build client: %v", remote.Name, remote.ID, err)
+		logs.errf(remote.ID, "sync remote %s (%s): build client: %v", remote.Name, remote.ID, err)
 	} else if err := syncRemoteOnce(ctx, st, dataRoot, client, remote, logs); err != nil {
 		status, errMsg = "error", err.Error()
-		logs.logf(remote.ID, "sync remote %s (%s): %v", remote.Name, remote.ID, err)
+		logs.errf(remote.ID, "sync remote %s (%s): sync pass failed: %v", remote.Name, remote.ID, err)
 	}
 
 	if status == "ok" {
 		logs.logf(remote.ID, "sync remote %s (%s): sync pass complete in %s", remote.Name, remote.ID, time.Since(start).Round(time.Millisecond))
 	} else {
-		logs.logf(remote.ID, "sync remote %s (%s): sync pass failed after %s", remote.Name, remote.ID, time.Since(start).Round(time.Millisecond))
+		logs.errf(remote.ID, "sync remote %s (%s): sync pass failed after %s", remote.Name, remote.ID, time.Since(start).Round(time.Millisecond))
 	}
 
 	if err := st.SetSyncRemoteStatus(ctx, remote.ID, status, errMsg, time.Now()); err != nil {
-		logs.logf(remote.ID, "sync remote %s (%s): record status: %v", remote.Name, remote.ID, err)
+		logs.errf(remote.ID, "sync remote %s (%s): record status: %v", remote.Name, remote.ID, err)
 	}
 }
