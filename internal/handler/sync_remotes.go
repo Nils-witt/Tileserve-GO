@@ -50,7 +50,7 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
-			if !validateSyncRemoteRequest(w, req) {
+			if !validateSyncRemoteRequest(w, req, true) {
 				return
 			}
 
@@ -69,10 +69,19 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 }
 
 // validateSyncRemoteRequest checks req's required fields, writing a 400 and
-// returning false if invalid.
-func validateSyncRemoteRequest(w http.ResponseWriter, req syncRemoteRequest) bool {
-	if req.Name == "" || req.BaseURL == "" || req.APIKey == "" {
-		http.Error(w, "name, baseUrl, and apiKey are required", http.StatusBadRequest)
+// returning false if invalid. requireAPIKey is true for POST (a new remote
+// must be given a key) and false for PUT (an empty apiKey there means "keep
+// the current one" — see store.UpdateSyncRemote — since GET/list responses
+// never echo the key back for the UI to resubmit unchanged).
+func validateSyncRemoteRequest(w http.ResponseWriter, req syncRemoteRequest, requireAPIKey bool) bool {
+	if req.Name == "" || req.BaseURL == "" || (requireAPIKey && req.APIKey == "") {
+		msg := "name and baseUrl are required"
+		if requireAPIKey {
+			msg = "name, baseUrl, and apiKey are required"
+		}
+
+		http.Error(w, msg, http.StatusBadRequest)
+
 		return false
 	}
 
@@ -161,7 +170,7 @@ func updateSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 		return
 	}
 
-	if !validateSyncRemoteRequest(w, req) {
+	if !validateSyncRemoteRequest(w, req, false) {
 		return
 	}
 

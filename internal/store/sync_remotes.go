@@ -85,15 +85,34 @@ func (s *Store) GetSyncRemote(ctx context.Context, id uuid.UUID) (SyncRemote, er
 	return sr, nil
 }
 
-// UpdateSyncRemote overwrites a sync remote's configuration. It returns
-// ErrSyncRemoteNotFound if id doesn't exist.
+// UpdateSyncRemote overwrites a sync remote's configuration. If apiKey is
+// empty, the existing key is left unchanged — mirroring UpdateUser's
+// optional-password semantics — which matters because GET/list responses
+// never echo the key back (see SyncRemote.APIKey's json:"-" tag), so a
+// caller that only wants to flip e.g. `enabled` has no other value to send.
+// It returns ErrSyncRemoteNotFound if id doesn't exist.
 func (s *Store) UpdateSyncRemote(ctx context.Context, id uuid.UUID, name, baseURL, apiKey string, pollIntervalSec int, enabled bool, updatedBy string) (SyncRemote, error) {
-	sr, err := scanSyncRemote(s.pool.QueryRow(ctx, `
-		UPDATE sync_remotes
-		SET name = $2, base_url = $3, api_key = $4, poll_interval_sec = $5, enabled = $6, updated_by = $7, updated_at = now()
-		WHERE id = $1
-		RETURNING `+syncRemoteColumns,
-		id, name, baseURL, apiKey, pollIntervalSec, enabled, updatedBy))
+	var (
+		sr  SyncRemote
+		err error
+	)
+
+	if apiKey != "" {
+		sr, err = scanSyncRemote(s.pool.QueryRow(ctx, `
+			UPDATE sync_remotes
+			SET name = $2, base_url = $3, api_key = $4, poll_interval_sec = $5, enabled = $6, updated_by = $7, updated_at = now()
+			WHERE id = $1
+			RETURNING `+syncRemoteColumns,
+			id, name, baseURL, apiKey, pollIntervalSec, enabled, updatedBy))
+	} else {
+		sr, err = scanSyncRemote(s.pool.QueryRow(ctx, `
+			UPDATE sync_remotes
+			SET name = $2, base_url = $3, poll_interval_sec = $4, enabled = $5, updated_by = $6, updated_at = now()
+			WHERE id = $1
+			RETURNING `+syncRemoteColumns,
+			id, name, baseURL, pollIntervalSec, enabled, updatedBy))
+	}
+
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SyncRemote{}, ErrSyncRemoteNotFound
 	}

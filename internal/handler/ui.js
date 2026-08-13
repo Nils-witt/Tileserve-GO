@@ -14,8 +14,13 @@
     const usersErrorEl = document.getElementById('users-error');
     const tabMapsBtn = document.getElementById('tab-maps-btn');
     const tabUsersBtn = document.getElementById('tab-users-btn');
+    const tabSyncBtn = document.getElementById('tab-sync-btn');
     const tabMaps = document.getElementById('tab-maps');
     const tabUsers = document.getElementById('tab-users');
+    const tabSync = document.getElementById('tab-sync');
+    const syncBody = document.getElementById('sync-body');
+    const syncEmptyEl = document.getElementById('sync-empty');
+    const syncErrorEl = document.getElementById('sync-error');
 
     let isAdmin = false;
     let allUsers = [];
@@ -63,28 +68,33 @@
       loadMaps();
 
       // GET /users itself doubles as the "am I admin" check: only admins are
-      // allowed to call it, so a 403 here just means "hide the Users tab".
+      // allowed to call it, so a 403 here just means "hide the Users/Sync
+      // tabs" (sync remote configuration is admin-only, same as user
+      // management).
       try {
         const res = await api('/users');
         const users = await res.json();
         isAdmin = true;
         allUsers = users;
         tabUsersBtn.classList.remove('hidden');
+        tabSyncBtn.classList.remove('hidden');
         renderUsers(users);
       } catch (err) {
         isAdmin = false;
         allUsers = [];
         tabUsersBtn.classList.add('hidden');
+        tabSyncBtn.classList.add('hidden');
         showTab('maps');
       }
     }
 
     function showTab(name) {
-      const showMaps = name === 'maps';
-      tabMaps.classList.toggle('hidden', !showMaps);
-      tabUsers.classList.toggle('hidden', showMaps);
-      tabMapsBtn.classList.toggle('active', showMaps);
-      tabUsersBtn.classList.toggle('active', !showMaps);
+      tabMaps.classList.toggle('hidden', name !== 'maps');
+      tabUsers.classList.toggle('hidden', name !== 'users');
+      tabSync.classList.toggle('hidden', name !== 'sync');
+      tabMapsBtn.classList.toggle('active', name === 'maps');
+      tabUsersBtn.classList.toggle('active', name === 'users');
+      tabSyncBtn.classList.toggle('active', name === 'sync');
     }
 
     function fmtDate(iso) {
@@ -909,6 +919,11 @@
         password: passwordInput.value,
       });
 
+      const apikeyBtn = document.createElement('button');
+      apikeyBtn.className = 'secondary';
+      apikeyBtn.textContent = 'API keys';
+      apikeyBtn.onclick = () => openAPIKeys(u.username);
+
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'danger';
       deleteBtn.textContent = 'Delete';
@@ -919,7 +934,7 @@
       const actionsTd = document.createElement('td');
       const actions = document.createElement('div');
       actions.className = 'actions';
-      actions.append(saveBtn, deleteBtn);
+      actions.append(saveBtn, apikeyBtn, deleteBtn);
       actionsTd.append(actions);
 
       const passwordTd = document.createElement('td');
@@ -983,6 +998,321 @@
         if (err.message !== 'unauthorized') usersError(err.message);
       }
     }
+
+    const apikeyOverlay = document.getElementById('apikey-overlay');
+    const apikeyTitle = document.getElementById('apikey-title');
+    const apikeyBody = document.getElementById('apikey-body');
+    const apikeyEmptyEl = document.getElementById('apikey-empty');
+    const apikeyErrorEl = document.getElementById('apikey-error');
+    const apikeyClose = document.getElementById('apikey-close');
+    const apikeyAddName = document.getElementById('apikey-add-name');
+    const apikeyAddBtn = document.getElementById('apikey-add-btn');
+    let apikeyUsername = null;
+
+    function apikeyError(message) {
+      if (!message) {
+        apikeyErrorEl.classList.add('hidden');
+        return;
+      }
+      apikeyErrorEl.textContent = message;
+      apikeyErrorEl.classList.remove('hidden');
+    }
+
+    async function openAPIKeys(username) {
+      apikeyUsername = username;
+      apikeyTitle.textContent = 'API keys — ' + username;
+      apikeyError(null);
+      apikeyAddName.value = '';
+      apikeyOverlay.classList.remove('hidden');
+      await loadAPIKeys();
+    }
+
+    function closeAPIKeys() {
+      apikeyOverlay.classList.add('hidden');
+      apikeyUsername = null;
+    }
+
+    async function loadAPIKeys() {
+      apikeyError(null);
+      try {
+        const res = await api('/users/' + encodeURIComponent(apikeyUsername) + '/api-keys');
+        renderAPIKeys(await res.json());
+      } catch (err) {
+        if (err.message !== 'unauthorized') apikeyError(err.message);
+      }
+    }
+
+    function renderAPIKeys(keys) {
+      apikeyBody.innerHTML = '';
+      apikeyEmptyEl.classList.toggle('hidden', keys.length > 0);
+      for (const k of keys) {
+        apikeyBody.appendChild(renderAPIKeyRow(k));
+      }
+    }
+
+    function renderAPIKeyRow(k) {
+      const tr = document.createElement('tr');
+
+      const nameTd = document.createElement('td');
+      nameTd.textContent = k.name || '-';
+
+      const createdTd = document.createElement('td');
+      createdTd.innerHTML = fmtDate(k.createdAt) + '<br><span class="muted">by ' + k.createdBy + '</span>';
+
+      const lastUsedTd = document.createElement('td');
+      lastUsedTd.textContent = k.lastUsedAt ? fmtDate(k.lastUsedAt) : 'never';
+
+      const revokeBtn = document.createElement('button');
+      revokeBtn.className = 'danger';
+      revokeBtn.textContent = 'Revoke';
+      revokeBtn.onclick = () => revokeAPIKey(k.id);
+
+      const actionsTd = document.createElement('td');
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      actions.append(revokeBtn);
+      actionsTd.append(actions);
+
+      tr.append(nameTd, createdTd, lastUsedTd, actionsTd);
+      return tr;
+    }
+
+    async function createAPIKey(name) {
+      apikeyError(null);
+      try {
+        const res = await api('/users/' + encodeURIComponent(apikeyUsername) + '/api-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const created = await res.json();
+        apikeyAddName.value = '';
+        await loadAPIKeys();
+        // The plaintext key is only ever returned here, once — a blocking
+        // prompt (pre-filled, selectable) is the simplest way to give the
+        // admin a chance to copy it before the value is gone for good.
+        prompt('API key created — copy it now, it will not be shown again:', created.key);
+      } catch (err) {
+        if (err.message !== 'unauthorized') apikeyError(err.message);
+      }
+    }
+
+    async function revokeAPIKey(id) {
+      if (!confirm('Revoke this API key? Anything still using it will lose access immediately.')) return;
+      apikeyError(null);
+      try {
+        await api('/users/' + encodeURIComponent(apikeyUsername) + '/api-keys/' + id, { method: 'DELETE' });
+        await loadAPIKeys();
+      } catch (err) {
+        if (err.message !== 'unauthorized') apikeyError(err.message);
+      }
+    }
+
+    apikeyClose.addEventListener('click', closeAPIKeys);
+    apikeyOverlay.addEventListener('click', (e) => {
+      if (e.target === apikeyOverlay) closeAPIKeys();
+    });
+    apikeyAddBtn.addEventListener('click', () => {
+      if (!apikeyAddName.value.trim()) return;
+      createAPIKey(apikeyAddName.value.trim());
+    });
+
+    function syncError(message) {
+      if (!message) {
+        syncErrorEl.classList.add('hidden');
+        return;
+      }
+      syncErrorEl.textContent = message;
+      syncErrorEl.classList.remove('hidden');
+    }
+
+    async function loadSyncRemotes() {
+      syncError(null);
+      try {
+        const res = await api('/sync/remotes');
+        renderSyncRemotes(await res.json());
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncError(err.message);
+      }
+    }
+
+    function renderSyncRemotes(remotes) {
+      syncBody.innerHTML = '';
+      syncEmptyEl.classList.toggle('hidden', remotes.length > 0);
+      for (const r of remotes) {
+        syncBody.appendChild(renderSyncRemoteRow(r));
+      }
+    }
+
+    // fmtSyncStatus renders a remote's last sync outcome: never-synced,
+    // ok, or error (with the error message truncated inline — the full
+    // text is still available via the title tooltip).
+    function fmtSyncStatus(r) {
+      if (!r.lastSyncAt) return '<span class="muted">never synced</span>';
+      const status = r.lastSyncStatus === 'error'
+        ? '<span style="color:#dc2626">error</span>'
+        : (r.lastSyncStatus || '-');
+      let html = status + '<br><span class="muted">' + fmtDate(r.lastSyncAt) + '</span>';
+      if (r.lastSyncError) {
+        const short = r.lastSyncError.length > 60 ? r.lastSyncError.slice(0, 60) + '…' : r.lastSyncError;
+        const esc = r.lastSyncError.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+        html += '<br><span class="muted" title="' + esc + '">' + short + '</span>';
+      }
+      return html;
+    }
+
+    function renderSyncRemoteRow(r) {
+      const tr = document.createElement('tr');
+
+      const nameTd = document.createElement('td');
+      nameTd.textContent = r.name;
+
+      const urlTd = document.createElement('td');
+      urlTd.textContent = r.baseUrl;
+
+      const intervalTd = document.createElement('td');
+      intervalTd.textContent = r.pollIntervalSec + 's';
+
+      const enabledTd = document.createElement('td');
+      enabledTd.className = 'checkbox-cell';
+      const enabledCb = document.createElement('input');
+      enabledCb.type = 'checkbox';
+      enabledCb.checked = r.enabled;
+      enabledCb.onchange = () => updateSyncRemote(r, { enabled: enabledCb.checked });
+      enabledTd.appendChild(enabledCb);
+
+      const statusTd = document.createElement('td');
+      statusTd.innerHTML = fmtSyncStatus(r);
+
+      const editBtn = document.createElement('button');
+      editBtn.className = 'secondary';
+      editBtn.textContent = 'Edit';
+      editBtn.onclick = () => editSyncRemote(r);
+
+      const triggerBtn = document.createElement('button');
+      triggerBtn.className = 'secondary';
+      triggerBtn.textContent = 'Sync now';
+      triggerBtn.onclick = () => triggerSyncRemote(r.id);
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'danger';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.onclick = () => deleteSyncRemote(r.id);
+
+      const actionsTd = document.createElement('td');
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      actions.append(editBtn, triggerBtn, deleteBtn);
+      actionsTd.append(actions);
+
+      tr.append(nameTd, urlTd, intervalTd, enabledTd, statusTd, actionsTd);
+      return tr;
+    }
+
+    async function createSyncRemote(payload) {
+      syncError(null);
+      try {
+        await api('/sync/remotes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        await loadSyncRemotes();
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncError(err.message);
+      }
+    }
+
+    // updateSyncRemote PUTs the full remote configuration, merging patch
+    // over r's current fields — mirrors updateMapFlag's pattern for
+    // toggling a single boolean via a full-replace endpoint. apiKey is
+    // deliberately omitted: PUT /sync/remotes/{id} treats a missing/empty
+    // apiKey as "keep the current one" (see store.UpdateSyncRemote), since
+    // GET /sync/remotes never echoes it back for this code to resend.
+    async function updateSyncRemote(r, patch) {
+      syncError(null);
+      try {
+        await api('/sync/remotes/' + r.id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(Object.assign({
+            name: r.name,
+            baseUrl: r.baseUrl,
+            pollIntervalSec: r.pollIntervalSec,
+            enabled: r.enabled,
+          }, patch)),
+        });
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncError(err.message);
+      }
+      await loadSyncRemotes();
+    }
+
+    async function editSyncRemote(r) {
+      const name = prompt('Name', r.name);
+      if (name === null) return;
+      const baseUrl = prompt('Base URL', r.baseUrl);
+      if (baseUrl === null) return;
+      const apiKey = prompt('New API key (leave blank to keep the current one)', '');
+      if (apiKey === null) return;
+      const pollIntervalSec = prompt('Poll interval (seconds)', r.pollIntervalSec);
+      if (pollIntervalSec === null) return;
+      syncError(null);
+      try {
+        await api('/sync/remotes/' + r.id, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name,
+            baseUrl,
+            apiKey,
+            pollIntervalSec: parseInt(pollIntervalSec, 10),
+            enabled: r.enabled,
+          }),
+        });
+        await loadSyncRemotes();
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncError(err.message);
+      }
+    }
+
+    async function triggerSyncRemote(id) {
+      syncError(null);
+      try {
+        await api('/sync/remotes/' + id + '/trigger', { method: 'POST' });
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncError(err.message);
+      }
+    }
+
+    async function deleteSyncRemote(id) {
+      if (!confirm('Remove this sync remote? Already-mirrored maps keep their local data.')) return;
+      syncError(null);
+      try {
+        await api('/sync/remotes/' + id, { method: 'DELETE' });
+        await loadSyncRemotes();
+      } catch (err) {
+        if (err.message !== 'unauthorized') syncError(err.message);
+      }
+    }
+
+    document.getElementById('create-sync-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const payload = {
+        name: document.getElementById('sync-name').value,
+        baseUrl: document.getElementById('sync-base-url').value,
+        apiKey: document.getElementById('sync-api-key').value,
+        pollIntervalSec: parseInt(document.getElementById('sync-interval').value, 10),
+        enabled: document.getElementById('sync-enabled').checked,
+      };
+      createSyncRemote(payload).then(() => {
+        e.target.reset();
+        document.getElementById('sync-interval').value = 300;
+        document.getElementById('sync-enabled').checked = true;
+      });
+    });
+
+    tabSyncBtn.addEventListener('click', () => { showTab('sync'); loadSyncRemotes(); });
 
     loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();

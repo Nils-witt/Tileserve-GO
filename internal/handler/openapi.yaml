@@ -797,14 +797,14 @@ paths:
       tags: [sync]
       summary: Register a remote to pull a full mirror from
       description: >-
-        Requires the acting user's `is_admin` permission. Once created and
-        enabled, this server periodically (every `pollIntervalSec`) pulls
-        every map visible to `apiKey` on the remote — including every
-        version and alias, mirrored under the same map UUIDs — via `GET
-        /maps`, `GET /maps/{id}/versions`, `GET
-        /maps/{id}/version/{version}/archive`, and `GET
-        /maps/{id}/aliases` on the remote. `apiKey` should be one issued by
-        `POST /users/{username}/api-keys` on the remote instance.
+        Requires the acting user's `is_admin` permission. `apiKey` is
+        required here (unlike on `PUT`). Once created and enabled, this
+        server periodically (every `pollIntervalSec`) pulls every map
+        visible to `apiKey` on the remote — including every version and
+        alias, mirrored under the same map UUIDs — via `GET /maps`, `GET
+        /maps/{id}/versions`, `GET /maps/{id}/version/{version}/archive`,
+        and `GET /maps/{id}/aliases` on the remote. `apiKey` should be one
+        issued by `POST /users/{username}/api-keys` on the remote instance.
       requestBody:
         required: true
         content:
@@ -1621,7 +1621,7 @@ components:
 
     SyncRemoteRequest:
       type: object
-      required: [name, baseUrl, apiKey, pollIntervalSec]
+      required: [name, baseUrl, pollIntervalSec]
       properties:
         name:
           type: string
@@ -1632,7 +1632,11 @@ components:
           type: string
           description: >-
             The API key this server presents to the remote, as issued by
-            `POST /users/{username}/api-keys` on that instance.
+            `POST /users/{username}/api-keys` on that instance. Required
+            when creating a remote (`POST /sync/remotes`). On update (`PUT
+            /sync/remotes/{id}`), optional — omit or leave empty to keep the
+            current key, the same convention `UserRequest.password` uses;
+            necessary because `GET`/list responses never echo the key back.
         pollIntervalSec:
           type: integer
           description: How often to sync, in seconds. Must be positive.
