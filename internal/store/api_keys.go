@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
+	"crypto/sha3"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -53,12 +53,13 @@ func newAPIKeyValue() (string, error) {
 	return APIKeyPrefix + base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// hashAPIKey returns the hex-encoded SHA-256 digest of key. Only this digest
-// is ever persisted, matching hashRefreshToken's rationale: SHA-256 (rather
-// than bcrypt) is fine here because the input is high-entropy random data,
-// not a low-entropy user password.
+// hashAPIKey returns the hex-encoded SHA3-256 digest of key. Only this
+// digest is ever persisted, matching hashRefreshToken's rationale: a fast
+// hash (rather than bcrypt) is fine here because the input is high-entropy
+// random data, not a low-entropy user password, and it must support
+// exact-match lookup in the database.
 func hashAPIKey(key string) string {
-	sum := sha256.Sum256([]byte(key))
+	sum := sha3.Sum256([]byte(key))
 	return hex.EncodeToString(sum[:])
 }
 

@@ -3,7 +3,7 @@ package store
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
+	"crypto/sha3"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -30,12 +30,13 @@ func newRefreshTokenValue() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-// hashRefreshToken returns the hex-encoded SHA-256 digest of token. Only
+// hashRefreshToken returns the hex-encoded SHA3-256 digest of token. Only
 // this digest is ever persisted, so a database leak alone doesn't hand out
-// usable refresh tokens; SHA-256 (rather than bcrypt) is fine here because
-// the input is high-entropy random data, not a low-entropy user password.
+// usable refresh tokens; a fast hash (rather than bcrypt) is fine here
+// because the input is high-entropy random data, not a low-entropy user
+// password, and it must support exact-match lookup in the database.
 func hashRefreshToken(token string) string {
-	sum := sha256.Sum256([]byte(token))
+	sum := sha3.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }
 
