@@ -292,6 +292,7 @@
                 <th>Name</th>
                 <th>Base URL</th>
                 <th>Interval</th>
+                <th>Maps synced</th>
                 <th class="checkbox-cell">Enabled</th>
                 <th>Last sync</th>
                 <th>Actions</th>
@@ -393,6 +394,61 @@
           </div>
           <button id="alias-add-btn">Save</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="sync-log-overlay" class="modal-overlay hidden">
+    <div class="modal" style="height:auto; max-height:88vh;">
+      <div class="modal-header">
+        <h2 id="sync-log-title">Sync log</h2>
+        <div class="actions">
+          <button class="secondary" id="sync-log-refresh">Refresh</button>
+          <button class="secondary" id="sync-log-close">Close</button>
+        </div>
+      </div>
+      <div style="padding:1rem; overflow:auto;">
+        <p id="sync-log-error" class="hidden" style="color:#dc2626"></p>
+        <pre id="sync-log-body" style="white-space:pre-wrap; font-family:monospace; font-size:0.8em; margin:0"></pre>
+        <p id="sync-log-empty" class="muted hidden">No log entries yet.</p>
+      </div>
+    </div>
+  </div>
+
+  <div id="sync-maps-overlay" class="modal-overlay hidden">
+    <div class="modal" style="height:auto; max-height:88vh;">
+      <div class="modal-header">
+        <h2 id="sync-maps-title">Select maps to sync</h2>
+        <div class="actions">
+          <button id="sync-maps-save">Save</button>
+          <button class="secondary" id="sync-maps-close">Close</button>
+        </div>
+      </div>
+      <div style="padding:1rem; overflow:auto;">
+        <p id="sync-maps-error" class="hidden" style="color:#dc2626"></p>
+        <div class="row">
+          <div class="field">
+            <label><input type="checkbox" id="sync-maps-all"> Sync all maps</label>
+          </div>
+          <div class="field">
+            <label><input type="checkbox" id="sync-maps-new"> Automatically sync new maps</label>
+          </div>
+        </div>
+        <p class="muted" style="margin-top:0">
+          With "Sync all maps" off, only the maps checked below are mirrored. "Automatically sync new maps" additionally
+          mirrors any map first noticed on the remote from then on, even if it isn't checked.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th class="checkbox-cell">Sync</th>
+              <th>Name</th>
+              <th>UUID</th>
+            </tr>
+          </thead>
+          <tbody id="sync-maps-body"></tbody>
+        </table>
+        <p id="sync-maps-empty" class="muted hidden">No maps visible to this remote's API key.</p>
       </div>
     </div>
   </div>

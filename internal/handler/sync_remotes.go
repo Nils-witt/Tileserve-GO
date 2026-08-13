@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -10,13 +11,18 @@ import (
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
-// syncTrigger lets a sync remote's manual trigger route ask the running
-// sync.Manager to kick off an immediate sync, outside its poll interval.
-// Declared as its own interface (rather than depending on package sync
-// directly) so internal/handler doesn't need to import internal/sync, which
-// itself imports internal/store — keeping the dependency direction one-way.
-type syncTrigger interface {
+// syncManager is what SyncRemoteItemHandler needs from the running
+// sync.Manager: triggering a manual sync, and reading back a remote's recent
+// activity log. Declared as its own interface (rather than depending on
+// package sync directly) so internal/handler doesn't need to import
+// internal/sync, which itself imports internal/store — keeping the
+// dependency direction one-way. Logs returns store.SyncLogEntry (rather than
+// a type of its own) for the same reason: that type already lives in
+// package store, which both internal/handler and internal/sync depend on.
+type syncManager interface {
 	Trigger(id uuid.UUID) error
+	Logs(id uuid.UUID) []store.SyncLogEntry
+	ListRemoteMaps(ctx context.Context, id uuid.UUID) ([]store.MapRecord, error)
 }
 
 type syncRemoteRequest struct {
@@ -26,6 +32,14 @@ type syncRemoteRequest struct {
 	PrivateKeyPEM   string `json:"privateKeyPem"`
 	PollIntervalSec int    `json:"pollIntervalSec"`
 	Enabled         bool   `json:"enabled"`
+	SyncAllMaps     bool   `json:"syncAllMaps"`
+	SyncNewMaps     bool   `json:"syncNewMaps"`
+	// SelectedMapIDs is a pointer so a request that omits it (e.g. a PUT
+	// that only means to toggle `enabled`) leaves the saved selection
+	// untouched, distinct from one that explicitly sends an empty list to
+	// clear it — a plain []string can't tell those two apart, since both
+	// decode to a nil slice.
+	SelectedMapIDs *[]string `json:"selectedMapUuids,omitempty"`
 }
 
 // SyncRemotesCollectionHandler serves the /sync/remotes collection route
@@ -57,7 +71,17 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
-			sr, err := st.CreateSyncRemote(r.Context(), req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, usernameFromContext(r.Context()))
+			var rawSelection []string
+			if req.SelectedMapIDs != nil {
+				rawSelection = *req.SelectedMapIDs
+			}
+
+			selectedMapIDs, ok := parseUUIDList(w, rawSelection)
+			if !ok {
+				return
+			}
+
+			sr, err := st.CreateSyncRemote(r.Context(), req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, usernameFromContext(r.Context()))
 			if err != nil {
 				if errors.Is(err, store.ErrInvalidPrivateKeyPEM) {
 					http.Error(w, err.Error(), http.StatusBadRequest)
@@ -66,6 +90,11 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 
 				http.Error(w, "failed to create sync remote", http.StatusInternalServerError)
 
+				return
+			}
+
+			if err := st.SetSyncRemoteSelectedMaps(r.Context(), sr.ID, selectedMapIDs); err != nil {
+				http.Error(w, "failed to save selected maps", http.StatusInternalServerError)
 				return
 			}
 
@@ -111,10 +140,35 @@ func validateSyncRemoteRequest(w http.ResponseWriter, req syncRemoteRequest, req
 	return remoteAPIKeyID, true
 }
 
-// SyncRemoteItemHandler serves /sync/remotes/{id}[/trigger] (admin-only):
-// GET fetches, PUT updates, DELETE removes a sync remote; POST .../trigger
-// asks mgr to run an immediate sync for it, outside its poll interval.
-func SyncRemoteItemHandler(st *store.Store, mgr syncTrigger) http.HandlerFunc {
+// parseUUIDList parses raw as a list of UUID strings, writing a 400 and
+// returning ok=false on the first invalid one. Used for
+// syncRemoteRequest.SelectedMapIDs, the admin's explicit selective-sync map
+// selection.
+func parseUUIDList(w http.ResponseWriter, raw []string) ([]uuid.UUID, bool) {
+	ids := make([]uuid.UUID, 0, len(raw))
+
+	for _, s := range raw {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			http.Error(w, "selectedMapUuids must be valid uuids", http.StatusBadRequest)
+			return nil, false
+		}
+
+		ids = append(ids, id)
+	}
+
+	return ids, true
+}
+
+// SyncRemoteItemHandler serves
+// /sync/remotes/{id}[/trigger|/logs|/remote-maps|/selected-maps]
+// (admin-only): GET fetches, PUT updates, DELETE removes a sync remote;
+// POST .../trigger asks mgr to run an immediate sync for it, outside its
+// poll interval; GET .../logs returns its recent in-memory activity log;
+// GET .../remote-maps proxies a live map listing from the remote instance
+// itself, for the selective-sync map picker; GET .../selected-maps returns
+// the admin's already-saved selection.
+func SyncRemoteItemHandler(st *store.Store, mgr syncManager) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireAdmin(w, r, st) {
 			return
@@ -125,12 +179,22 @@ func SyncRemoteItemHandler(st *store.Store, mgr syncTrigger) http.HandlerFunc {
 			return
 		}
 
-		if rest == "trigger" {
+		switch rest {
+		case "trigger":
 			triggerSyncRemote(w, r, mgr, id)
 			return
-		}
-
-		if rest != "" {
+		case "logs":
+			getSyncRemoteLogs(w, r, mgr, id)
+			return
+		case "remote-maps":
+			getSyncRemoteRemoteMaps(w, r, mgr, id)
+			return
+		case "selected-maps":
+			getSyncRemoteSelectedMaps(w, r, st, id)
+			return
+		case "":
+			// falls through to the collection-item switch below
+		default:
 			http.NotFound(w, r)
 			return
 		}
@@ -193,7 +257,18 @@ func updateSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 		return
 	}
 
-	sr, err := st.UpdateSyncRemote(r.Context(), id, req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, usernameFromContext(r.Context()))
+	var selectedMapIDs []uuid.UUID
+
+	if req.SelectedMapIDs != nil {
+		var ok bool
+
+		selectedMapIDs, ok = parseUUIDList(w, *req.SelectedMapIDs)
+		if !ok {
+			return
+		}
+	}
+
+	sr, err := st.UpdateSyncRemote(r.Context(), id, req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, usernameFromContext(r.Context()))
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidPrivateKeyPEM) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -203,6 +278,16 @@ func updateSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 		writeStoreError(w, err, store.ErrSyncRemoteNotFound, http.StatusNotFound, "sync remote not found", "failed to update sync remote")
 
 		return
+	}
+
+	// req.SelectedMapIDs == nil means the caller didn't intend to touch the
+	// selection (e.g. a PUT that only flips `enabled`) — see its doc
+	// comment — so the saved one is left as-is rather than being cleared.
+	if req.SelectedMapIDs != nil {
+		if err := st.SetSyncRemoteSelectedMaps(r.Context(), sr.ID, selectedMapIDs); err != nil {
+			http.Error(w, "failed to save selected maps", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, sr)
@@ -221,7 +306,7 @@ func deleteSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func triggerSyncRemote(w http.ResponseWriter, r *http.Request, mgr syncTrigger, id uuid.UUID) {
+func triggerSyncRemote(w http.ResponseWriter, r *http.Request, mgr syncManager, id uuid.UUID) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -232,4 +317,59 @@ func triggerSyncRemote(w http.ResponseWriter, r *http.Request, mgr syncTrigger, 
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// getSyncRemoteLogs returns id's recent in-memory sync activity log, oldest
+// first. It doesn't check whether id names an existing remote — an unknown
+// or never-synced id simply has no entries yet, same as a freshly created
+// one, so there's nothing useful a 404 would add here.
+func getSyncRemoteLogs(w http.ResponseWriter, r *http.Request, mgr syncManager, id uuid.UUID) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	writeJSON(w, http.StatusOK, mgr.Logs(id))
+}
+
+// getSyncRemoteRemoteMaps proxies a live GET .../maps call to id's remote
+// instance, for the admin UI's selective-sync map picker — distinct from
+// getSyncRemoteSelectedMaps, which returns what's already been chosen to
+// sync, not what's available to choose from. Failure reaching the remote is
+// reported as a 502, since it reflects the remote's availability, not this
+// server's.
+func getSyncRemoteRemoteMaps(w http.ResponseWriter, r *http.Request, mgr syncManager, id uuid.UUID) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	maps, err := mgr.ListRemoteMaps(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, store.ErrSyncRemoteNotFound) {
+			http.Error(w, "sync remote not found", http.StatusNotFound)
+			return
+		}
+
+		http.Error(w, "failed to list remote maps: "+err.Error(), http.StatusBadGateway)
+
+		return
+	}
+
+	writeJSON(w, http.StatusOK, maps)
+}
+
+// getSyncRemoteSelectedMaps returns id's saved explicit map selection
+// (used when its sync_all_maps is false), for the admin UI to pre-check the
+// right boxes in the selective-sync map picker.
+func getSyncRemoteSelectedMaps(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) {
+	if !requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	ids, err := st.ListSyncRemoteSelectedMaps(r.Context(), id)
+	if err != nil {
+		http.Error(w, "failed to list selected maps", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, ids)
 }

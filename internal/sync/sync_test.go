@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
@@ -96,5 +98,59 @@ func TestReconcileAliasesEmptyBothSides(t *testing.T) {
 
 	if len(toSet) != 0 || len(toDelete) != 0 {
 		t.Fatalf("reconcileAliases(nil, nil) = (%+v, %+v), want (nil, nil)", toSet, toDelete)
+	}
+}
+
+func TestMapsToSyncSelectedOnly(t *testing.T) {
+	t.Parallel()
+
+	selectedID := uuid.New()
+	unselectedID := uuid.New()
+
+	maps := []store.MapRecord{
+		{UUID: selectedID, Name: "selected"},
+		{UUID: unselectedID, Name: "unselected"},
+	}
+
+	selected := map[uuid.UUID]bool{selectedID: true}
+
+	got := mapsToSync(maps, false, selected, nil)
+
+	if len(got) != 1 || got[0].UUID != selectedID {
+		t.Fatalf("mapsToSync() = %+v, want only the selected map", got)
+	}
+}
+
+func TestMapsToSyncNewMapsAutoIncluded(t *testing.T) {
+	t.Parallel()
+
+	newID := uuid.New()
+	knownID := uuid.New()
+
+	maps := []store.MapRecord{
+		{UUID: newID, Name: "new"},
+		{UUID: knownID, Name: "known-but-unselected"},
+	}
+
+	known := map[uuid.UUID]bool{knownID: true}
+
+	got := mapsToSync(maps, true, nil, known)
+
+	if len(got) != 1 || got[0].UUID != newID {
+		t.Fatalf("mapsToSync() = %+v, want only the new (not-yet-known) map", got)
+	}
+}
+
+func TestMapsToSyncNewMapsDisabledExcludesUnselected(t *testing.T) {
+	t.Parallel()
+
+	maps := []store.MapRecord{
+		{UUID: uuid.New(), Name: "unselected"},
+	}
+
+	got := mapsToSync(maps, false, nil, nil)
+
+	if len(got) != 0 {
+		t.Fatalf("mapsToSync() = %+v, want empty when nothing is selected and syncNewMaps is false", got)
 	}
 }
