@@ -1424,13 +1424,18 @@
     }
 
     // renderSyncLog shows the newest entry first, since that's the one an
-    // admin checking on a sync is almost always looking for.
+    // admin checking on a sync is almost always looking for. Error-level
+    // entries are highlighted so a failure stands out among routine lines.
     function renderSyncLog(entries) {
       syncLogEmptyEl.classList.toggle('hidden', entries.length > 0);
-      syncLogBody.textContent = entries
+      syncLogBody.innerHTML = entries
         .slice()
         .reverse()
-        .map((e) => '[' + fmtDate(e.time) + '] ' + e.message)
+        .map((e) => {
+          const line = '[' + fmtDate(e.time) + '] ' + e.message;
+          const esc = line.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+          return e.level === 'error' ? '<span style="color:#dc2626">' + esc + '</span>' : esc;
+        })
         .join('\n');
     }
 

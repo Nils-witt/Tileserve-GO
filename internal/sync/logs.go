@@ -30,11 +30,29 @@ func newLogStore() *LogStore {
 	return &LogStore{entries: make(map[uuid.UUID][]store.SyncLogEntry)}
 }
 
-// logf formats a message, writes it to the process log, and appends it to
-// remoteID's buffer, trimming the oldest entry once maxLogEntriesPerRemote
-// is exceeded.
+// logf formats an informational message, writes it to the process log, and
+// appends it to remoteID's buffer, trimming the oldest entry once
+// maxLogEntriesPerRemote is exceeded.
 func (s *LogStore) logf(remoteID uuid.UUID, format string, args ...any) {
-	msg := fmt.Sprintf(format, args...)
+	s.record(remoteID, "info", fmt.Sprintf(format, args...))
+}
+
+// errf formats an error message, writes it to the process log prefixed so
+// it's easy to grep for, and appends it to remoteID's buffer with
+// Level "error" so the admin UI can call it out. Every error a sync pass
+// encounters — not just the one that ultimately fails a pass — should be
+// reported through this method, since map syncs run concurrently and an
+// errgroup only ever surfaces the first of several concurrent failures to
+// the caller; recording each one here at the point it occurs is what makes
+// the rest observable.
+func (s *LogStore) errf(remoteID uuid.UUID, format string, args ...any) {
+	s.record(remoteID, "error", "ERROR: "+fmt.Sprintf(format, args...))
+}
+
+// record writes msg to the process log and appends it to remoteID's buffer
+// with the given level, trimming the oldest entry once
+// maxLogEntriesPerRemote is exceeded.
+func (s *LogStore) record(remoteID uuid.UUID, level, msg string) {
 	log.Print(msg)
 
 	s.mu.Lock()
@@ -43,7 +61,7 @@ func (s *LogStore) logf(remoteID uuid.UUID, format string, args ...any) {
 	existing := s.entries[remoteID]
 	entries := make([]store.SyncLogEntry, len(existing), len(existing)+1)
 	copy(entries, existing)
-	entries = append(entries, store.SyncLogEntry{Time: time.Now(), Message: msg})
+	entries = append(entries, store.SyncLogEntry{Time: time.Now(), Level: level, Message: msg})
 
 	if len(entries) > maxLogEntriesPerRemote {
 		entries = entries[len(entries)-maxLogEntriesPerRemote:]

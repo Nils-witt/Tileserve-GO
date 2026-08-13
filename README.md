@@ -27,6 +27,15 @@ go run ./cmd/tileserve-go \
 The `users` table is created automatically on startup if it doesn't exist. `-seed-username`/`-seed-password`
 create that account if it isn't already present (no-op otherwise) — useful for bootstrapping the first user.
 
+### Status check
+
+```sh
+go run ./cmd/tileserve-go status -port 8085
+```
+
+Hits `/healthz` on the given (or default) port and reports whether a local server is up, exiting `0` if so and `1`
+otherwise. It doesn't touch the database or any other server dependency.
+
 ## Usage
 
 ```sh

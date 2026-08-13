@@ -29,6 +29,7 @@ type runningWorker struct {
 	cancel  context.CancelFunc
 	trigger chan struct{}
 	config  store.SyncRemote
+	done    chan struct{} // closed when the worker goroutine returns
 }
 
 // Manager starts, stops, and restarts one background sync worker
@@ -92,7 +93,7 @@ func (m *Manager) Start(ctx context.Context) {
 func (m *Manager) reconcile(ctx context.Context) {
 	remotes, err := m.st.ListSyncRemotes(ctx)
 	if err != nil {
-		log.Printf("sync manager: list remotes: %v", err)
+		log.Printf("sync manager: ERROR: list remotes: %v", err)
 		return
 	}
 
@@ -105,7 +106,10 @@ func (m *Manager) reconcile(ctx context.Context) {
 	}
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
+
+	var stopped []*runningWorker
+
+	restart := make(map[uuid.UUID]store.SyncRemote)
 
 	for id, w := range m.workers {
 		r, ok := desired[id]
@@ -113,12 +117,36 @@ func (m *Manager) reconcile(ctx context.Context) {
 		case !ok:
 			m.logs.logf(id, "sync manager: stopping worker for remote %s (%s): removed or disabled", w.config.Name, id)
 			w.cancel()
+			stopped = append(stopped, w)
+
 			delete(m.workers, id)
 		case configChanged(w.config, r):
 			m.logs.logf(id, "sync manager: restarting worker for remote %s (%s): configuration changed", w.config.Name, id)
 			w.cancel()
+			stopped = append(stopped, w)
+			restart[id] = r
+
 			delete(m.workers, id)
 		}
+	}
+
+	m.mu.Unlock()
+
+	// Wait for every canceled worker to fully exit before starting its
+	// replacement. cancel() only takes effect the next time the worker
+	// checks its context, so without this a restarted remote could briefly
+	// have its old and new workers both mid-sync, racing on the same
+	// on-disk map directories.
+	for _, w := range stopped {
+		<-w.done
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for id, r := range restart {
+		m.logs.logf(id, "sync manager: starting worker for remote %s (%s)", r.Name, id)
+		m.startWorkerLocked(ctx, r)
 	}
 
 	for id, r := range desired {
@@ -149,10 +177,15 @@ func configChanged(running, current store.SyncRemote) bool {
 func (m *Manager) startWorkerLocked(ctx context.Context, remote store.SyncRemote) {
 	workerCtx, cancel := context.WithCancel(ctx)
 	trigger := make(chan struct{}, 1)
+	done := make(chan struct{})
 
-	m.workers[remote.ID] = &runningWorker{cancel: cancel, trigger: trigger, config: remote}
+	m.workers[remote.ID] = &runningWorker{cancel: cancel, trigger: trigger, config: remote, done: done}
 
-	go runRemote(workerCtx, m.st, m.dataRoot, remote, trigger, m.logs)
+	go func() {
+		defer close(done)
+
+		runRemote(workerCtx, m.st, m.dataRoot, remote, trigger, m.logs)
+	}()
 }
 
 // Stop cancels every running worker. It does not wait for them to exit —
