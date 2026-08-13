@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 
 	"nilswitt.dev/tileserve-go/internal/store"
+	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
 
 // mapAliasRequest is the PUT body for creating/updating an alias.
@@ -27,7 +28,7 @@ func validateAliasName(w http.ResponseWriter, alias string) bool {
 		return false
 	}
 
-	if numericSegmentRE.MatchString(alias) {
+	if tilearchive.NumericSegmentRE.MatchString(alias) {
 		http.Error(w, "alias may not be purely numeric (would be ambiguous with a real version)", http.StatusBadRequest)
 		return false
 	}

@@ -1,4 +1,4 @@
-package handler
+package tilearchive
 
 import (
 	"archive/tar"
@@ -270,8 +270,8 @@ func TestWriteTileIndex(t *testing.T) {
 		t.Fatalf("extractZip: %v", err)
 	}
 
-	if err := writeTileIndex(destDir); err != nil {
-		t.Fatalf("writeTileIndex: %v", err)
+	if err := WriteTileIndex(destDir); err != nil {
+		t.Fatalf("WriteTileIndex: %v", err)
 	}
 
 	data, err := os.ReadFile(filepath.Join(destDir, "index.json"))

@@ -19,6 +19,10 @@ tags:
     description: CRUD for geo objects (addresses/points of interest) tied to a map version
   - name: users
     description: Admin-only user account management
+  - name: api-keys
+    description: Admin-only API key management, for server-to-server authentication
+  - name: sync
+    description: Admin-only configuration and control of pulling a full mirror from remote tileserve-go instances
   - name: files
     description: Serving extracted map/tile files
   - name: ui
@@ -678,6 +682,270 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorMessage"
 
+  /users/{username}/api-keys:
+    parameters:
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      tags: [api-keys]
+      summary: List a user's API keys
+      description: >-
+        Requires the acting user's `is_admin` permission. Never includes the
+        plaintext key — that's returned only once, at creation.
+      responses:
+        "200":
+          description: Array of API keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIKey"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [api-keys]
+      summary: Create an API key for a user
+      description: >-
+        Requires the acting user's `is_admin` permission. The created key
+        authenticates as the target user (their full global and per-map
+        permissions apply) — intended for a service account used by a
+        remote tileserve-go instance's sync puller (see `POST
+        /sync/remotes`), not for human login. The plaintext key is returned
+        exactly once, in this response; it cannot be recovered afterward.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APIKeyRequest"
+      responses:
+        "201":
+          description: API key created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APIKeyCreated"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: User not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
+  /users/{username}/api-keys/{id}:
+    parameters:
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [api-keys]
+      summary: Revoke an API key
+      description: Requires the acting user's `is_admin` permission.
+      responses:
+        "204":
+          description: API key revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: API key not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
+  /sync/remotes:
+    get:
+      tags: [sync]
+      summary: List configured sync remotes
+      description: >-
+        Requires the acting user's `is_admin` permission. Never includes
+        `apiKey` — the credential this server presents to the remote.
+      responses:
+        "200":
+          description: Array of sync remotes
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SyncRemote"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      tags: [sync]
+      summary: Register a remote to pull a full mirror from
+      description: >-
+        Requires the acting user's `is_admin` permission. Once created and
+        enabled, this server periodically (every `pollIntervalSec`) pulls
+        every map visible to `apiKey` on the remote — including every
+        version and alias, mirrored under the same map UUIDs — via `GET
+        /maps`, `GET /maps/{id}/versions`, `GET
+        /maps/{id}/version/{version}/archive`, and `GET
+        /maps/{id}/aliases` on the remote. `apiKey` should be one issued by
+        `POST /users/{username}/api-keys` on the remote instance.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncRemoteRequest"
+      responses:
+        "201":
+          description: Sync remote created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncRemote"
+        "400":
+          description: Invalid request body
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /sync/remotes/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [sync]
+      summary: Get a sync remote
+      description: Requires the acting user's `is_admin` permission.
+      responses:
+        "200":
+          description: The sync remote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncRemote"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Sync remote not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+    put:
+      tags: [sync]
+      summary: Replace a sync remote's configuration
+      description: >-
+        Requires the acting user's `is_admin` permission. Changing
+        `baseUrl`, `apiKey`, or `pollIntervalSec` on a currently-running
+        remote restarts its background sync worker with the new
+        configuration (within ~30s).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SyncRemoteRequest"
+      responses:
+        "200":
+          description: Updated sync remote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncRemote"
+        "400":
+          description: Invalid request body
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Sync remote not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+    delete:
+      tags: [sync]
+      summary: Remove a sync remote
+      description: >-
+        Requires the acting user's `is_admin` permission. Stops future
+        syncing from this remote; maps already mirrored from it keep their
+        local data.
+      responses:
+        "204":
+          description: Sync remote deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Sync remote not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
+  /sync/remotes/{id}/trigger:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [sync]
+      summary: Trigger an immediate sync
+      description: >-
+        Requires the acting user's `is_admin` permission. Asks the remote's
+        running background worker to sync now, outside its regular
+        `pollIntervalSec` interval. Returns 409 if the remote has no active
+        worker (it doesn't exist, or is disabled).
+      responses:
+        "202":
+          description: Sync triggered
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Sync remote is not currently running
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
   /maps/{id}/version/{version}/bounds:
     parameters:
       - $ref: "#/components/parameters/MapId"
@@ -714,6 +982,44 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           description: Version not found or has no tiles
+
+  /maps/{id}/version/{version}/archive:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - name: version
+        in: path
+        required: true
+        schema:
+          type: string
+        description: >-
+          A real (numeric) version identifier, the literal keyword
+          "current" (resolves to the map's currentVersion), or a
+          user-defined alias created via `PUT /maps/{id}/aliases/{alias}`.
+    get:
+      tags: [files, sync]
+      summary: Download a whole map version as a zip archive
+      description: >-
+        Streams every file under `<data-root>/<id>/<version>/` (tiles plus
+        `index.json`) as a single zip, so a puller can fetch a whole version
+        in one request instead of one per tile file. This is the endpoint a
+        remote tileserve-go instance calls when another instance configures
+        it as a sync source (see `POST /sync/remotes`). Requires view access
+        to this map (see `GET /maps`); unlike the raw tile-file route, this
+        is never reachable anonymously even if `anonymousAllowed` is set.
+      responses:
+        "200":
+          description: Zip archive of the version's contents
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Map or version not found
 
   /maps/{id}/version/{version}/geo-objects:
     parameters:
@@ -1263,6 +1569,100 @@ components:
           type: string
         version:
           type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        updatedBy:
+          type: string
+
+    APIKeyRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Human-readable label for this key (e.g. "edge-server-01 sync").
+
+    APIKey:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        lastUsedAt:
+          type: string
+          format: date-time
+
+    APIKeyCreated:
+      allOf:
+        - $ref: "#/components/schemas/APIKey"
+        - type: object
+          properties:
+            key:
+              type: string
+              description: >-
+                The plaintext API key, prefixed `tsk_`. Returned exactly
+                once, here; it cannot be recovered afterward. Pass it as a
+                bearer token (`Authorization: Bearer tsk_...`) — accepted
+                anywhere a login JWT is.
+
+    SyncRemoteRequest:
+      type: object
+      required: [name, baseUrl, apiKey, pollIntervalSec]
+      properties:
+        name:
+          type: string
+        baseUrl:
+          type: string
+          description: Base URL of the remote tileserve-go instance, e.g. "https://source.example.com".
+        apiKey:
+          type: string
+          description: >-
+            The API key this server presents to the remote, as issued by
+            `POST /users/{username}/api-keys` on that instance.
+        pollIntervalSec:
+          type: integer
+          description: How often to sync, in seconds. Must be positive.
+        enabled:
+          type: boolean
+          description: Whether this remote's background sync worker should run. Defaults to false if omitted.
+
+    SyncRemote:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        baseUrl:
+          type: string
+        pollIntervalSec:
+          type: integer
+        enabled:
+          type: boolean
+        lastSyncAt:
+          type: string
+          format: date-time
+        lastSyncStatus:
+          type: string
+          description: '"ok" or "error" after the most recent sync attempt; empty if it has never run.'
+        lastSyncError:
+          type: string
+          description: Error message from the most recent failed sync attempt, if any.
         createdAt:
           type: string
           format: date-time

@@ -5,52 +5,37 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
 
 	"nilswitt.dev/tileserve-go/internal/store"
+	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
-
-// numericSegmentRE matches a purely numeric path segment. It's shared by
-// mapVersionBoundsHandler below (validating a version path segment) and
-// validateExtractedEntryName in upload.go (validating a z/x/y tile pyramid
-// entry's directory segments during archive extraction).
-var numericSegmentRE = regexp.MustCompile(`^[0-9]+$`)
 
 // Path segments used when routing /maps/{id}/... requests in MapsItemHandler.
 const (
 	versionPathSegment    = "version"
 	boundsPathSegment     = "bounds"
 	geoObjectsPathSegment = "geo-objects"
+	archivePathSegment    = "archive"
 	// currentVersionKeyword, used in place of a literal version segment,
 	// resolves to the map's MapRecord.CurrentVersion.
 	currentVersionKeyword = "current"
 )
 
-// mapDir returns a map's storage directory under dataRoot.
-func mapDir(dataRoot string, id uuid.UUID) string {
-	return filepath.Join(dataRoot, id.String())
-}
-
-// mapVersionDir returns a specific version's extracted-tiles directory under dataRoot.
-func mapVersionDir(dataRoot string, id uuid.UUID, version string) string {
-	return filepath.Join(mapDir(dataRoot, id), version)
-}
-
 // isVersionSubResourcePath reports whether segments (the /maps/{id}/...
-// path, split on "/") addresses one of the JSON sub-resources nested under a
-// map version — .../version/{version}/bounds or
-// .../version/{version}/geo-objects[/{uuid}] — rather than a raw extracted
-// tile file. Reserving these path segments is safe: uploaded tile entries
-// are validated at extraction time to be purely numeric directories or
-// <number>.png files, so a real extracted path can never start with
-// "bounds" or "geo-objects".
+// path, split on "/") addresses one of the JSON/binary sub-resources nested
+// under a map version — .../version/{version}/bounds,
+// .../version/{version}/geo-objects[/{uuid}], or
+// .../version/{version}/archive — rather than a raw extracted tile file.
+// Reserving these path segments is safe: uploaded tile entries are validated
+// at extraction time to be purely numeric directories or <number>.png
+// files, so a real extracted path can never start with "bounds",
+// "geo-objects", or "archive".
 func isVersionSubResourcePath(segments []string) bool {
 	return len(segments) >= 4 && segments[1] == versionPathSegment &&
-		(segments[3] == boundsPathSegment || segments[3] == geoObjectsPathSegment)
+		(segments[3] == boundsPathSegment || segments[3] == geoObjectsPathSegment || segments[3] == archivePathSegment)
 }
 
 type mapRequest struct {
@@ -398,7 +383,7 @@ func serveMapVersionFile(w http.ResponseWriter, r *http.Request, st *store.Store
 		return
 	}
 
-	versionDir := mapVersionDir(dataRoot, id, version)
+	versionDir := tilearchive.MapVersionDir(dataRoot, id, version)
 	prefix := "/maps/" + strings.Join(segments[:3], "/") + "/"
 	// A map version's directory is never modified in place after upload
 	// (uploadMapVersionHandler extracts into a staging dir and atomically
@@ -474,7 +459,7 @@ func routeMapPermissions(w http.ResponseWriter, r *http.Request, st *store.Store
 // resolveCurrentVersion fetches m for id and returns its current version,
 // writing a 404 and returning ok=false if the map doesn't exist or has no
 // current version yet (an empty CurrentVersion must never be used as a path
-// segment — mapVersionDir would silently resolve to the map's root
+// segment — tilearchive.MapVersionDir would silently resolve to the map's root
 // directory, exposing every version).
 func resolveCurrentVersion(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) (version string, ok bool) {
 	version, err := st.GetCurrentVersion(r.Context(), id)
@@ -509,7 +494,7 @@ func classifyVersionSegment(segment string) versionSegmentKind {
 	switch {
 	case segment == currentVersionKeyword:
 		return versionSegmentCurrent
-	case numericSegmentRE.MatchString(segment):
+	case tilearchive.NumericSegmentRE.MatchString(segment):
 		return versionSegmentNumeric
 	default:
 		return versionSegmentAlias
@@ -545,9 +530,10 @@ func resolveVersionSegment(w http.ResponseWriter, r *http.Request, st *store.Sto
 	return "", false
 }
 
-// routeMapVersionSubResource dispatches .../version/{v}/bounds and
-// .../version/{v}/geo-objects[/{uuid}]. {v} may be currentVersionKeyword or
-// a user-defined alias, resolved via resolveVersionSegment.
+// routeMapVersionSubResource dispatches .../version/{v}/bounds,
+// .../version/{v}/geo-objects[/{uuid}], and .../version/{v}/archive to their
+// respective sub-routers below. {v} may be currentVersionKeyword or a
+// user-defined alias, resolved via resolveVersionSegment.
 func routeMapVersionSubResource(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, segments []string) bool {
 	if len(segments) < 4 {
 		return false
@@ -558,16 +544,51 @@ func routeMapVersionSubResource(w http.ResponseWriter, r *http.Request, st *stor
 		return true
 	}
 
-	switch {
-	case len(segments) == 4 && segments[3] == boundsPathSegment:
-		if _, ok := getViewableMap(w, r, st, id); ok {
-			mapVersionBoundsHandler(dataRoot, id, version)(w, r)
-		}
+	switch segments[3] {
+	case boundsPathSegment:
+		return routeMapVersionBounds(w, r, st, dataRoot, id, version, segments)
+	case archivePathSegment:
+		return routeMapVersionArchive(w, r, st, dataRoot, id, version, segments)
+	case geoObjectsPathSegment:
+		return routeMapVersionGeoObjects(w, r, st, id, version, segments)
+	default:
+		return false
+	}
+}
 
-	case len(segments) == 4 && segments[3] == geoObjectsPathSegment:
+// routeMapVersionBounds dispatches .../version/{v}/bounds.
+func routeMapVersionBounds(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, version string, segments []string) bool {
+	if len(segments) != 4 {
+		return false
+	}
+
+	if _, ok := getViewableMap(w, r, st, id); ok {
+		mapVersionBoundsHandler(dataRoot, id, version)(w, r)
+	}
+
+	return true
+}
+
+// routeMapVersionArchive dispatches .../version/{v}/archive.
+func routeMapVersionArchive(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, version string, segments []string) bool {
+	if len(segments) != 4 {
+		return false
+	}
+
+	if _, ok := getViewableMap(w, r, st, id); ok {
+		mapVersionArchiveHandler(dataRoot, id, version)(w, r)
+	}
+
+	return true
+}
+
+// routeMapVersionGeoObjects dispatches .../version/{v}/geo-objects[/{uuid}].
+func routeMapVersionGeoObjects(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID, version string, segments []string) bool {
+	switch len(segments) {
+	case 4:
 		geoObjectsCollectionHandler(st, id, version)(w, r)
 
-	case len(segments) == 5 && segments[3] == geoObjectsPathSegment:
+	case 5:
 		geoObjID, err := uuid.Parse(segments[4])
 		if err != nil {
 			http.Error(w, "invalid geo object id", http.StatusBadRequest)

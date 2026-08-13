@@ -37,6 +37,7 @@ type Store struct {
 	permsCache          *ttlCache[string, Permissions]
 	mapPermCache        *ttlCache[mapPermKey, MapPermission]
 	mapAliasCache       *ttlCache[mapAliasKey, string]
+	apiKeyCache         *ttlCache[string, string]
 }
 
 // NewStore opens a connection pool to the postgres database at dsn and
@@ -71,6 +72,7 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 		permsCache:          newTTLCache[string, Permissions](cacheTTL),
 		mapPermCache:        newTTLCache[mapPermKey, MapPermission](cacheTTL),
 		mapAliasCache:       newTTLCache[mapAliasKey, string](cacheTTL),
+		apiKeyCache:         newTTLCache[string, string](cacheTTL),
 	}, nil
 }
 
@@ -233,6 +235,52 @@ var migrationSteps = []struct {
 				PRIMARY KEY (map_uuid, alias),
 				FOREIGN KEY (map_uuid, version) REFERENCES map_versions(map_uuid, version) ON DELETE CASCADE
 			)
+		`,
+	},
+	{
+		errContext: "migrate api_keys table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS api_keys (
+				id            UUID PRIMARY KEY,
+				key_hash      TEXT NOT NULL UNIQUE,
+				username      TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+				name          TEXT NOT NULL DEFAULT '',
+				created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+				created_by    TEXT NOT NULL,
+				last_used_at  TIMESTAMPTZ,
+				revoked_at    TIMESTAMPTZ
+			);
+			CREATE INDEX IF NOT EXISTS idx_api_keys_username ON api_keys (username);
+		`,
+	},
+	{
+		// api_key is stored in plaintext (unlike every other secret in this
+		// schema, which is one-way hashed): this server must read it back to
+		// present it as a bearer token when calling the remote — an accepted
+		// MVP trade-off, not an oversight.
+		errContext: "migrate sync_remotes table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS sync_remotes (
+				id                UUID PRIMARY KEY,
+				name              TEXT NOT NULL,
+				base_url          TEXT NOT NULL,
+				api_key           TEXT NOT NULL,
+				poll_interval_sec INTEGER NOT NULL DEFAULT 300,
+				enabled           BOOLEAN NOT NULL DEFAULT true,
+				last_sync_at      TIMESTAMPTZ,
+				last_sync_status  TEXT NOT NULL DEFAULT '',
+				last_sync_error   TEXT NOT NULL DEFAULT '',
+				created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+				updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+				created_by        TEXT NOT NULL,
+				updated_by        TEXT NOT NULL
+			)
+		`,
+	},
+	{
+		errContext: "migrate maps sync_remote_id column",
+		sql: `
+			ALTER TABLE maps ADD COLUMN IF NOT EXISTS sync_remote_id UUID REFERENCES sync_remotes(id) ON DELETE SET NULL;
 		`,
 	},
 }

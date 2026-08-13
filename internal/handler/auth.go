@@ -175,11 +175,24 @@ func RefreshHandler(secret []byte, st *store.Store) http.HandlerFunc {
 	}
 }
 
-// parseBearerToken extracts and validates a JWT from the request's
-// Authorization header or ?token= query parameter. hadToken is false if the
-// request supplied no token at all (distinct from supplying an invalid one),
-// so callers can tell "anonymous" apart from "bad credentials".
-func parseBearerToken(secret []byte, r *http.Request) (username string, hadToken, valid bool) {
+// apiKeyLookup resolves an API key to the username it authenticates as.
+// *store.Store satisfies this automatically via LookupAPIKey; it's declared
+// as its own interface here (rather than depending on *store.Store
+// directly) so tests can exercise the JWT-only paths of parseBearerToken/
+// authMiddleware by passing nil — a JWT-shaped token never reaches the
+// lookup, so nil is never dereferenced.
+type apiKeyLookup interface {
+	LookupAPIKey(ctx context.Context, key string) (username string, err error)
+}
+
+// parseBearerToken extracts and validates a bearer credential from the
+// request's Authorization header or ?token= query parameter. A token
+// prefixed with the API-key prefix ("tsk_", see store.CreateAPIKey) is
+// resolved via lookup; anything else is parsed as a JWT, same as before API
+// keys existed. hadToken is false if the request supplied no token at all
+// (distinct from supplying an invalid one), so callers can tell "anonymous"
+// apart from "bad credentials".
+func parseBearerToken(secret []byte, lookup apiKeyLookup, r *http.Request) (username string, hadToken, valid bool) {
 	tokenString, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || tokenString == "" {
 		tokenString = r.URL.Query().Get("token")
@@ -187,6 +200,15 @@ func parseBearerToken(secret []byte, r *http.Request) (username string, hadToken
 
 	if tokenString == "" {
 		return "", false, false
+	}
+
+	if strings.HasPrefix(tokenString, store.APIKeyPrefix) {
+		username, err := lookup.LookupAPIKey(r.Context(), tokenString)
+		if err != nil {
+			return "", true, false
+		}
+
+		return username, true, true
 	}
 
 	claims := &jwt.RegisteredClaims{}
@@ -210,9 +232,9 @@ func parseBearerToken(secret []byte, r *http.Request) (username string, hadToken
 // in the request context for next to read via usernameFromContext. A token
 // that IS present but invalid/expired is always rejected with 401; whether a
 // missing token is also rejected depends on requireToken.
-func authMiddleware(secret []byte, next http.Handler, requireToken bool) http.Handler {
+func authMiddleware(secret []byte, lookup apiKeyLookup, next http.Handler, requireToken bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		username, hadToken, valid := parseBearerToken(secret, r)
+		username, hadToken, valid := parseBearerToken(secret, lookup, r)
 		if requireToken && !hadToken {
 			http.Error(w, "missing bearer token", http.StatusUnauthorized)
 			return
@@ -230,9 +252,10 @@ func authMiddleware(secret []byte, next http.Handler, requireToken bool) http.Ha
 
 // RequireAuth is HTTP middleware that rejects any request without a valid
 // bearer token (401) and otherwise stores the token's subject (username) in
-// the request context for next to read via usernameFromContext.
-func RequireAuth(secret []byte, next http.Handler) http.Handler {
-	return authMiddleware(secret, next, true)
+// the request context for next to read via usernameFromContext. The bearer
+// token may be a login JWT or an API key (see parseBearerToken).
+func RequireAuth(secret []byte, lookup apiKeyLookup, next http.Handler) http.Handler {
+	return authMiddleware(secret, lookup, next, true)
 }
 
 // OptionalAuth is like RequireAuth but lets a request with no bearer token
@@ -242,6 +265,6 @@ func RequireAuth(secret []byte, next http.Handler) http.Handler {
 // map's anonymousAllowed setting) — everything else on such a route must
 // still call requireAuthenticated itself. A token that IS present but
 // invalid/expired is still rejected with 401, same as RequireAuth.
-func OptionalAuth(secret []byte, next http.Handler) http.Handler {
-	return authMiddleware(secret, next, false)
+func OptionalAuth(secret []byte, lookup apiKeyLookup, next http.Handler) http.Handler {
+	return authMiddleware(secret, lookup, next, false)
 }

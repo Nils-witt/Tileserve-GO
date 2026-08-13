@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,6 +13,10 @@ import (
 
 // testUsername is the JWT subject used throughout this file's test tokens.
 const testUsername = "alice"
+
+// testAPIKeyUsername is the username an API-key-authenticated test request
+// resolves to.
+const testAPIKeyUsername = "sync-bot"
 
 // signToken returns a signed JWT for subject, valid for ttl, using secret.
 func signToken(t *testing.T, secret []byte, subject string, ttl time.Duration) string {
@@ -30,6 +36,23 @@ func signToken(t *testing.T, secret []byte, subject string, ttl time.Duration) s
 	return token
 }
 
+// fakeAPIKeyLookup is a minimal apiKeyLookup for tests that don't need a
+// live Postgres connection: it resolves exactly one key to one username.
+type fakeAPIKeyLookup struct {
+	key      string
+	username string
+}
+
+func (f fakeAPIKeyLookup) LookupAPIKey(_ context.Context, key string) (string, error) {
+	if f.key != "" && key == f.key {
+		return f.username, nil
+	}
+
+	return "", errInvalidAPIKeyForTest
+}
+
+var errInvalidAPIKeyForTest = errors.New("invalid or revoked api key")
+
 func TestParseBearerToken(t *testing.T) {
 	t.Parallel()
 
@@ -37,6 +60,7 @@ func TestParseBearerToken(t *testing.T) {
 	validToken := signToken(t, secret, testUsername, time.Hour)
 	expiredToken := signToken(t, secret, testUsername, -time.Hour)
 	wrongSecretToken := signToken(t, []byte("other-secret"), testUsername, time.Hour)
+	lookup := fakeAPIKeyLookup{key: "tsk_valid-key", username: testAPIKeyUsername}
 
 	tests := []struct {
 		name         string
@@ -94,6 +118,20 @@ func TestParseBearerToken(t *testing.T) {
 			wantHadToken: false,
 			wantValid:    false,
 		},
+		{
+			name:         "valid api key",
+			authHeader:   "Bearer tsk_valid-key",
+			wantUsername: testAPIKeyUsername,
+			wantHadToken: true,
+			wantValid:    true,
+		},
+		{
+			name:         "revoked or unknown api key",
+			authHeader:   "Bearer tsk_unknown-key",
+			wantUsername: "",
+			wantHadToken: true,
+			wantValid:    false,
+		},
 	}
 
 	for _, tc := range tests {
@@ -111,7 +149,7 @@ func TestParseBearerToken(t *testing.T) {
 				r.URL.RawQuery = q.Encode()
 			}
 
-			username, hadToken, valid := parseBearerToken(secret, r)
+			username, hadToken, valid := parseBearerToken(secret, lookup, r)
 			if username != tc.wantUsername || hadToken != tc.wantHadToken || valid != tc.wantValid {
 				t.Fatalf("parseBearerToken() = (%q, %v, %v), want (%q, %v, %v)",
 					username, hadToken, valid, tc.wantUsername, tc.wantHadToken, tc.wantValid)
@@ -136,11 +174,11 @@ func (p *authProbe) handler() http.Handler {
 	})
 }
 
-// assertInvalidTokenRejected checks that wrap(secret, next) rejects a
-// garbage bearer token with a 401 without ever calling next. Shared by
+// assertInvalidTokenRejected checks that wrap(secret, lookup, next) rejects
+// a garbage bearer token with a 401 without ever calling next. Shared by
 // TestRequireAuth and TestOptionalAuth, since both middlewares reject an
 // invalid token identically.
-func assertInvalidTokenRejected(t *testing.T, secret []byte, wrap func([]byte, http.Handler) http.Handler) {
+func assertInvalidTokenRejected(t *testing.T, secret []byte, lookup apiKeyLookup, wrap func([]byte, apiKeyLookup, http.Handler) http.Handler) {
 	t.Helper()
 
 	probe := &authProbe{}
@@ -148,7 +186,7 @@ func assertInvalidTokenRejected(t *testing.T, secret []byte, wrap func([]byte, h
 	r.Header.Set("Authorization", "Bearer garbage")
 
 	w := httptest.NewRecorder()
-	wrap(secret, probe.handler()).ServeHTTP(w, r)
+	wrap(secret, lookup, probe.handler()).ServeHTTP(w, r)
 
 	if probe.called {
 		t.Fatal("next should not be called with an invalid token")
@@ -164,6 +202,7 @@ func TestRequireAuth(t *testing.T) {
 
 	secret := []byte("test-secret")
 	validToken := signToken(t, secret, testUsername, time.Hour)
+	lookup := fakeAPIKeyLookup{}
 
 	t.Run("missing token is rejected", func(t *testing.T) {
 		t.Parallel()
@@ -171,7 +210,7 @@ func TestRequireAuth(t *testing.T) {
 		probe := &authProbe{}
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/maps", nil)
 		w := httptest.NewRecorder()
-		RequireAuth(secret, probe.handler()).ServeHTTP(w, r)
+		RequireAuth(secret, lookup, probe.handler()).ServeHTTP(w, r)
 
 		if probe.called {
 			t.Fatal("next should not be called without a token")
@@ -184,7 +223,7 @@ func TestRequireAuth(t *testing.T) {
 
 	t.Run("invalid token is rejected", func(t *testing.T) {
 		t.Parallel()
-		assertInvalidTokenRejected(t, secret, RequireAuth)
+		assertInvalidTokenRejected(t, secret, lookup, RequireAuth)
 	})
 
 	t.Run("valid token passes through with username in context", func(t *testing.T) {
@@ -195,7 +234,7 @@ func TestRequireAuth(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+validToken)
 
 		w := httptest.NewRecorder()
-		RequireAuth(secret, probe.handler()).ServeHTTP(w, r)
+		RequireAuth(secret, lookup, probe.handler()).ServeHTTP(w, r)
 
 		if !probe.called {
 			t.Fatal("next should be called with a valid token")
@@ -209,6 +248,27 @@ func TestRequireAuth(t *testing.T) {
 			t.Fatalf("username in context = %q, want %q", probe.username, testUsername)
 		}
 	})
+
+	t.Run("valid api key passes through with username in context", func(t *testing.T) {
+		t.Parallel()
+
+		keyLookup := fakeAPIKeyLookup{key: "tsk_valid-key", username: testAPIKeyUsername}
+
+		probe := &authProbe{}
+		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/maps", nil)
+		r.Header.Set("Authorization", "Bearer tsk_valid-key")
+
+		w := httptest.NewRecorder()
+		RequireAuth(secret, keyLookup, probe.handler()).ServeHTTP(w, r)
+
+		if !probe.called {
+			t.Fatal("next should be called with a valid api key")
+		}
+
+		if probe.username != testAPIKeyUsername {
+			t.Fatalf("username in context = %q, want %q", probe.username, testAPIKeyUsername)
+		}
+	})
 }
 
 func TestOptionalAuth(t *testing.T) {
@@ -216,6 +276,7 @@ func TestOptionalAuth(t *testing.T) {
 
 	secret := []byte("test-secret")
 	validToken := signToken(t, secret, testUsername, time.Hour)
+	lookup := fakeAPIKeyLookup{}
 
 	t.Run("missing token passes through anonymously", func(t *testing.T) {
 		t.Parallel()
@@ -223,7 +284,7 @@ func TestOptionalAuth(t *testing.T) {
 		probe := &authProbe{}
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/maps/some-id/version/1/0/0.png", nil)
 		w := httptest.NewRecorder()
-		OptionalAuth(secret, probe.handler()).ServeHTTP(w, r)
+		OptionalAuth(secret, lookup, probe.handler()).ServeHTTP(w, r)
 
 		if !probe.called {
 			t.Fatal("next should be called even without a token")
@@ -240,7 +301,7 @@ func TestOptionalAuth(t *testing.T) {
 
 	t.Run("invalid token is still rejected", func(t *testing.T) {
 		t.Parallel()
-		assertInvalidTokenRejected(t, secret, OptionalAuth)
+		assertInvalidTokenRejected(t, secret, lookup, OptionalAuth)
 	})
 
 	t.Run("valid token passes through with username in context", func(t *testing.T) {
@@ -251,7 +312,7 @@ func TestOptionalAuth(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+validToken)
 
 		w := httptest.NewRecorder()
-		OptionalAuth(secret, probe.handler()).ServeHTTP(w, r)
+		OptionalAuth(secret, lookup, probe.handler()).ServeHTTP(w, r)
 
 		if !probe.called {
 			t.Fatal("next should be called with a valid token")
