@@ -19,12 +19,24 @@ import (
 
 type contextKey string
 
-const usernameContextKey contextKey = "username"
+const (
+	usernameContextKey contextKey = "username"
+	apiKeyIDContextKey contextKey = "apiKeyID"
+)
 
 // usernameFromContext returns the JWT subject stored by RequireAuth, or "" if absent.
 func usernameFromContext(ctx context.Context) string {
 	username, _ := ctx.Value(usernameContextKey).(string)
 	return username
+}
+
+// apiKeyIDFromContext returns the id of the API key that authenticated this
+// request, if any. It's absent for a human login/refresh token session (see
+// authMiddleware) — scoping (internal/store's api_key_scopes) only ever
+// restricts an API key's own access, never a human session's.
+func apiKeyIDFromContext(ctx context.Context) (uuid.UUID, bool) {
+	id, ok := ctx.Value(apiKeyIDContextKey).(uuid.UUID)
+	return id, ok
 }
 
 const (
@@ -201,10 +213,10 @@ type apiKeySigningKeyResolver interface {
 // public key registered for that key id via resolver. A keyfunc has no way
 // to report anything beyond the signing key itself, so on a successful
 // API-key resolution it records the DB-resolved identity into
-// *resolvedUsername/*isAPIKeyToken for parseBearerToken to use afterward —
-// that identity, not the token's own `sub` claim, is what a caller
-// ultimately authenticates as (see parseBearerToken's doc comment).
-func resolveTokenKey(ctx context.Context, secret []byte, resolver apiKeySigningKeyResolver, resolvedUsername *string, isAPIKeyToken *bool) jwt.Keyfunc {
+// *resolvedUsername/*isAPIKeyToken/*resolvedAPIKeyID for parseBearerToken to
+// use afterward — that identity, not the token's own `sub` claim, is what a
+// caller ultimately authenticates as (see parseBearerToken's doc comment).
+func resolveTokenKey(ctx context.Context, secret []byte, resolver apiKeySigningKeyResolver, resolvedUsername *string, isAPIKeyToken *bool, resolvedAPIKeyID *uuid.UUID) jwt.Keyfunc {
 	return func(t *jwt.Token) (any, error) {
 		kidRaw, hasKid := t.Header["kid"]
 		if !hasKid {
@@ -241,6 +253,7 @@ func resolveTokenKey(ctx context.Context, secret []byte, resolver apiKeySigningK
 
 		*isAPIKeyToken = true
 		*resolvedUsername = uname
+		*resolvedAPIKeyID = keyID
 
 		return publicKey, nil
 	}
@@ -271,39 +284,42 @@ func apiKeyTokenWithinLifetime(claims *jwt.RegisteredClaims) bool {
 // maxAPIKeyTokenLifetime regardless of what they claim (see
 // apiKeyTokenWithinLifetime). hadToken is false if the request supplied no
 // token at all (distinct from supplying an invalid one), so callers can
-// tell "anonymous" apart from "bad credentials".
-func parseBearerToken(secret []byte, resolver apiKeySigningKeyResolver, r *http.Request) (username string, hadToken, valid bool) {
+// tell "anonymous" apart from "bad credentials". apiKeyID is the zero UUID
+// for a human login/refresh token (which never carries one); it is only
+// ever non-zero alongside a successfully validated API-key token.
+func parseBearerToken(secret []byte, resolver apiKeySigningKeyResolver, r *http.Request) (username string, apiKeyID uuid.UUID, hadToken, valid bool) {
 	tokenString, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || tokenString == "" {
 		tokenString = r.URL.Query().Get("token")
 	}
 
 	if tokenString == "" {
-		return "", false, false
+		return "", uuid.Nil, false, false
 	}
 
 	var (
 		resolvedUsername string
 		isAPIKeyToken    bool
+		resolvedAPIKeyID uuid.UUID
 	)
 
 	claims := &jwt.RegisteredClaims{}
-	keyfunc := resolveTokenKey(r.Context(), secret, resolver, &resolvedUsername, &isAPIKeyToken)
+	keyfunc := resolveTokenKey(r.Context(), secret, resolver, &resolvedUsername, &isAPIKeyToken, &resolvedAPIKeyID)
 
 	token, err := jwt.ParseWithClaims(tokenString, claims, keyfunc, jwt.WithExpirationRequired())
 	if err != nil || !token.Valid {
-		return "", true, false
+		return "", uuid.Nil, true, false
 	}
 
 	if !isAPIKeyToken {
-		return claims.Subject, true, true
+		return claims.Subject, uuid.Nil, true, true
 	}
 
 	if !apiKeyTokenWithinLifetime(claims) {
-		return "", true, false
+		return "", uuid.Nil, true, false
 	}
 
-	return resolvedUsername, true, true
+	return resolvedUsername, resolvedAPIKeyID, true, true
 }
 
 // authMiddleware is the shared core of RequireAuth and OptionalAuth: it
@@ -313,7 +329,7 @@ func parseBearerToken(secret []byte, resolver apiKeySigningKeyResolver, r *http.
 // missing token is also rejected depends on requireToken.
 func authMiddleware(secret []byte, resolver apiKeySigningKeyResolver, next http.Handler, requireToken bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		username, hadToken, valid := parseBearerToken(secret, resolver, r)
+		username, apiKeyID, hadToken, valid := parseBearerToken(secret, resolver, r)
 		if requireToken && !hadToken {
 			http.Error(w, "missing bearer token", http.StatusUnauthorized)
 			return
@@ -325,6 +341,10 @@ func authMiddleware(secret []byte, resolver apiKeySigningKeyResolver, next http.
 		}
 
 		ctx := context.WithValue(r.Context(), usernameContextKey, username)
+		if apiKeyID != uuid.Nil {
+			ctx = context.WithValue(ctx, apiKeyIDContextKey, apiKeyID)
+		}
+
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }

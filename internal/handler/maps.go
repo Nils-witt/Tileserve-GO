@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -129,11 +130,63 @@ func requirePermission(w http.ResponseWriter, r *http.Request, st *store.Store, 
 	return true
 }
 
+// apiKeyMapAllowed reports whether the API key (if any) authenticating this
+// request may access mapID at all. A request authenticated by a human login
+// token (no API key in context) always passes — scoping only ever restricts
+// an API key's own access, never a user's login session.
+func apiKeyMapAllowed(ctx context.Context, st *store.Store, mapID uuid.UUID) (bool, error) {
+	apiKeyID, ok := apiKeyIDFromContext(ctx)
+	if !ok {
+		return true, nil
+	}
+
+	return st.APIKeyCanAccessMap(ctx, apiKeyID, mapID)
+}
+
+// apiKeyMapVersionAllowed reports whether the API key (if any) authenticating
+// this request may access version of mapID. See apiKeyMapAllowed.
+func apiKeyMapVersionAllowed(ctx context.Context, st *store.Store, mapID uuid.UUID, version string) (bool, error) {
+	apiKeyID, ok := apiKeyIDFromContext(ctx)
+	if !ok {
+		return true, nil
+	}
+
+	return st.APIKeyCanAccessMapVersion(ctx, apiKeyID, mapID, version)
+}
+
+// filterMapsByAPIKeyScope drops any map outside the scope of the API key (if
+// any) authenticating this request, preserving order. It's a no-op — maps
+// returned unchanged — for a request with no API key in context.
+func filterMapsByAPIKeyScope(ctx context.Context, st *store.Store, maps []store.MapRecord) ([]store.MapRecord, error) {
+	apiKeyID, ok := apiKeyIDFromContext(ctx)
+	if !ok {
+		return maps, nil
+	}
+
+	filtered := make([]store.MapRecord, 0, len(maps))
+
+	for _, m := range maps {
+		allowed, err := st.APIKeyCanAccessMap(ctx, apiKeyID, m.UUID)
+		if err != nil {
+			return nil, err
+		}
+
+		if allowed {
+			filtered = append(filtered, m)
+		}
+	}
+
+	return filtered, nil
+}
+
 // requireMapPermission checks whether the acting user may perform an action
 // on a specific map: it passes if their global permissions allow it (admins
 // always pass), or failing that, if they hold a matching per-map grant. A
 // per-map grant only ever adds capability on top of the global flags, never
-// removes it.
+// removes it. Regardless of that outcome, an API-key-authenticated request
+// additionally requires mapID to be within the key's scope (see
+// apiKeyMapAllowed) — scope only ever narrows what the request could
+// otherwise do.
 func requireMapPermission(w http.ResponseWriter, r *http.Request, st *store.Store, mapID uuid.UUID, globalAllowed func(store.Permissions) bool, mapAllowed func(store.MapPermission) bool) bool {
 	username := usernameFromContext(r.Context())
 
@@ -142,17 +195,26 @@ func requireMapPermission(w http.ResponseWriter, r *http.Request, st *store.Stor
 		return false
 	}
 
-	if perms.IsAdmin || globalAllowed(perms) {
-		return true
+	if !perms.IsAdmin && !globalAllowed(perms) {
+		mp, err := st.GetMapPermission(r.Context(), mapID, username)
+		if err != nil {
+			http.Error(w, "failed to check permissions", http.StatusInternalServerError)
+			return false
+		}
+
+		if !mapAllowed(mp) {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return false
+		}
 	}
 
-	mp, err := st.GetMapPermission(r.Context(), mapID, username)
+	allowed, err := apiKeyMapAllowed(r.Context(), st, mapID)
 	if err != nil {
 		http.Error(w, "failed to check permissions", http.StatusInternalServerError)
 		return false
 	}
 
-	if !mapAllowed(mp) {
+	if !allowed {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return false
 	}
@@ -166,8 +228,21 @@ func requireMapPermission(w http.ResponseWriter, r *http.Request, st *store.Stor
 // global permission letting them modify any map (can_edit/can_delete —
 // hiding a map from someone who can already act on it would be
 // nonsensical), or because they hold a per-map grant (view, edit, or
-// delete — any of the three implies visibility).
+// delete — any of the three implies visibility). Regardless of that
+// outcome, an API-key-authenticated request additionally requires m to be
+// within the key's scope (see apiKeyMapAllowed).
 func canViewMap(ctx context.Context, st *store.Store, m store.MapRecord, username string) (bool, error) {
+	visible, err := userCanViewMap(ctx, st, m, username)
+	if err != nil || !visible {
+		return false, err
+	}
+
+	return apiKeyMapAllowed(ctx, st, m.UUID)
+}
+
+// userCanViewMap is canViewMap's check of the acting user's own
+// visibility, without regard to any API-key scope restriction.
+func userCanViewMap(ctx context.Context, st *store.Store, m store.MapRecord, username string) (bool, error) {
 	if m.VisibleToAll || m.CreatedBy == username {
 		return true, nil
 	}
@@ -223,6 +298,52 @@ func getViewableMap(w http.ResponseWriter, r *http.Request, st *store.Store, id 
 	return m, true
 }
 
+// listMaps serves the GET branch of the /maps collection route: it lists the
+// maps visible to the caller, filtered further by query params, then by the
+// scope of the API key (if any) authenticating the request (see
+// filterMapsByAPIKeyScope).
+func listMaps(w http.ResponseWriter, r *http.Request, st *store.Store) {
+	username := usernameFromContext(r.Context())
+
+	perms, ok := getPermissionsOrFail(w, r, st)
+	if !ok {
+		return
+	}
+
+	bypassVisibility := perms.IsAdmin || perms.CanEdit || perms.CanDelete
+
+	visibleToAll, ok := queryBoolParam(w, r, "visibleToAll")
+	if !ok {
+		return
+	}
+
+	anonymousAllowed, ok := queryBoolParam(w, r, "anonymousAllowed")
+	if !ok {
+		return
+	}
+
+	filter := store.MapFilter{
+		Name:             r.URL.Query().Get("name"),
+		CreatedBy:        r.URL.Query().Get("createdBy"),
+		VisibleToAll:     visibleToAll,
+		AnonymousAllowed: anonymousAllowed,
+	}
+
+	maps, err := st.ListMaps(r.Context(), username, bypassVisibility, filter)
+	if err != nil {
+		http.Error(w, "failed to list maps", http.StatusInternalServerError)
+		return
+	}
+
+	maps, err = filterMapsByAPIKeyScope(r.Context(), st, maps)
+	if err != nil {
+		http.Error(w, "failed to list maps", http.StatusInternalServerError)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, maps)
+}
+
 // MapsCollectionHandler serves the /maps collection route: GET lists the
 // maps visible to the caller, POST creates a new map (requires the
 // can_create global permission).
@@ -230,39 +351,7 @@ func MapsCollectionHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
-			username := usernameFromContext(r.Context())
-
-			perms, ok := getPermissionsOrFail(w, r, st)
-			if !ok {
-				return
-			}
-
-			bypassVisibility := perms.IsAdmin || perms.CanEdit || perms.CanDelete
-
-			visibleToAll, ok := queryBoolParam(w, r, "visibleToAll")
-			if !ok {
-				return
-			}
-
-			anonymousAllowed, ok := queryBoolParam(w, r, "anonymousAllowed")
-			if !ok {
-				return
-			}
-
-			filter := store.MapFilter{
-				Name:             r.URL.Query().Get("name"),
-				CreatedBy:        r.URL.Query().Get("createdBy"),
-				VisibleToAll:     visibleToAll,
-				AnonymousAllowed: anonymousAllowed,
-			}
-
-			maps, err := st.ListMaps(r.Context(), username, bypassVisibility, filter)
-			if err != nil {
-				http.Error(w, "failed to list maps", http.StatusInternalServerError)
-				return
-			}
-
-			writeJSON(w, http.StatusOK, maps)
+			listMaps(w, r, st)
 
 		case http.MethodPost:
 			if !requirePermission(w, r, st, func(p store.Permissions) bool { return p.CanCreate }) {
@@ -508,14 +597,18 @@ func classifyVersionSegment(segment string) versionSegmentKind {
 // user-defined alias for id. It writes the appropriate error response (404
 // for an unknown map/alias/missing current version, 500 on lookup failure)
 // and returns ok=false if resolution fails; the caller must stop handling
-// the request in that case.
+// the request in that case. Once resolved, an API-key-authenticated request
+// additionally requires the resulting version to be within the key's scope
+// for id (see apiKeyMapVersionAllowed) — this is the single chokepoint
+// behind every version-scoped route (tile file serving, bounds, archive,
+// geo-objects), so version-level scope restriction is enforced here once.
 func resolveVersionSegment(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID, segment string) (version string, ok bool) {
 	switch classifyVersionSegment(segment) {
 	case versionSegmentCurrent:
-		return resolveCurrentVersion(w, r, st, id)
+		version, ok = resolveCurrentVersion(w, r, st, id)
 
 	case versionSegmentNumeric:
-		return segment, true
+		version, ok = segment, true
 
 	case versionSegmentAlias:
 		resolved, err := st.GetMapVersionAlias(r.Context(), id, segment)
@@ -524,10 +617,25 @@ func resolveVersionSegment(w http.ResponseWriter, r *http.Request, st *store.Sto
 			return "", false
 		}
 
-		return resolved, true
+		version, ok = resolved, true
 	}
 
-	return "", false
+	if !ok {
+		return "", false
+	}
+
+	allowed, err := apiKeyMapVersionAllowed(r.Context(), st, id, version)
+	if err != nil {
+		http.Error(w, "failed to check permissions", http.StatusInternalServerError)
+		return "", false
+	}
+
+	if !allowed {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return "", false
+	}
+
+	return version, true
 }
 
 // routeMapVersionSubResource dispatches .../version/{v}/bounds,
@@ -668,7 +776,11 @@ func deleteMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// mapVersionsHandler returns the upload history for a map.
+// mapVersionsHandler returns the upload history for a map. If the request is
+// authenticated by a scoped API key that carries a version whitelist for id,
+// the result is filtered down to just those versions (see
+// store.APIKeyScopedVersions) — getViewableMap has already rejected the
+// request outright if id itself isn't within the key's scope.
 func mapVersionsHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {
@@ -679,6 +791,20 @@ func mapVersionsHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
 		if err != nil {
 			writeStoreError(w, err, store.ErrMapNotFound, http.StatusNotFound, "map not found", "failed to list map versions")
 			return
+		}
+
+		if apiKeyID, ok := apiKeyIDFromContext(r.Context()); ok {
+			allowed, restricted, err := st.APIKeyScopedVersions(r.Context(), apiKeyID, id)
+			if err != nil {
+				http.Error(w, "failed to list map versions", http.StatusInternalServerError)
+				return
+			}
+
+			if restricted {
+				versions = slices.DeleteFunc(versions, func(v store.MapVersionRecord) bool {
+					return !slices.Contains(allowed, v.Version)
+				})
+			}
 		}
 
 		writeJSON(w, http.StatusOK, versions)
