@@ -94,6 +94,36 @@ func mapsToSync(maps []store.MapRecord, syncNewMaps bool, selected, knownLocally
 	return toSync
 }
 
+// reconcileGeoObjects compares local against remote geo-object state for one
+// map version and reports what's needed to make local match: objects to
+// create or overwrite (toUpsert — new, or whose UpdatedAt differs from the
+// local copy, so an unchanged remote object isn't rewritten every tick for
+// nothing) and ids to delete (present locally, absent remotely — handles
+// remote-side edits/deletes, since geo objects, unlike map versions, are
+// mutable in place). Pure and DB-free so it's directly unit-testable.
+func reconcileGeoObjects(local, remote []store.GeoObjectRecord) (toUpsert []store.GeoObjectRecord, toDelete []uuid.UUID) {
+	localByID := make(map[uuid.UUID]store.GeoObjectRecord, len(local))
+	for _, l := range local {
+		localByID[l.UUID] = l
+	}
+
+	remoteByID := make(map[uuid.UUID]bool, len(remote))
+	for _, r := range remote {
+		remoteByID[r.UUID] = true
+		if l, ok := localByID[r.UUID]; !ok || !l.UpdatedAt.Equal(r.UpdatedAt) {
+			toUpsert = append(toUpsert, r)
+		}
+	}
+
+	for _, l := range local {
+		if !remoteByID[l.UUID] {
+			toDelete = append(toDelete, l.UUID)
+		}
+	}
+
+	return toUpsert, toDelete
+}
+
 // selectedMapSet fetches remote's explicit map selection from the store as
 // a set, for use by mapsToSync.
 func selectedMapSet(ctx context.Context, st *store.Store, remoteID uuid.UUID) (map[uuid.UUID]bool, error) {
@@ -245,6 +275,10 @@ func syncMap(ctx context.Context, st *store.Store, dataRoot string, client *Clie
 		return err
 	}
 
+	if err := syncMapGeoObjects(ctx, st, client, remote, rm, remoteVersions, logs); err != nil {
+		return err
+	}
+
 	if rm.CurrentVersion == "" {
 		return nil
 	}
@@ -319,6 +353,64 @@ func reconcileMapAliases(ctx context.Context, st *store.Store, client *Client, m
 		if err := st.DeleteMapVersionAlias(ctx, mapID, alias); err != nil {
 			logs.errf(remoteID, "sync map %s: delete alias %s: %v", mapID, alias, err)
 			return fmt.Errorf("delete alias %s: %w", alias, err)
+		}
+	}
+
+	return nil
+}
+
+// syncMapGeoObjects reconciles rm's geo objects for every one of
+// remoteVersions, if remote.SyncGeoObjects is enabled — a no-op otherwise.
+// Split out of syncMap purely to keep that function's branching manageable;
+// see syncGeoObjectsForVersion for the per-version reconciliation itself.
+func syncMapGeoObjects(ctx context.Context, st *store.Store, client *Client, remote store.SyncRemote, rm store.MapRecord, remoteVersions []store.MapVersionRecord, logs *LogStore) error {
+	if !remote.SyncGeoObjects {
+		return nil
+	}
+
+	for _, v := range remoteVersions {
+		if err := syncGeoObjectsForVersion(ctx, st, client, rm.UUID, v.Version, remote.ID, logs); err != nil {
+			err = fmt.Errorf("sync geo objects for version %s: %w", v.Version, err)
+			logs.errf(remote.ID, "sync map %s (%s): %v", rm.Name, rm.UUID, err)
+
+			return err
+		}
+	}
+
+	return nil
+}
+
+// syncGeoObjectsForVersion reconciles mapID's geo objects for version against
+// the remote, via reconcileGeoObjects.
+func syncGeoObjectsForVersion(ctx context.Context, st *store.Store, client *Client, mapID uuid.UUID, version string, remoteID uuid.UUID, logs *LogStore) error {
+	remoteObjs, err := client.ListGeoObjects(ctx, mapID, version)
+	if err != nil {
+		logs.errf(remoteID, "sync map %s: list remote geo objects for version %s: %v", mapID, version, err)
+		return fmt.Errorf("list remote geo objects: %w", err)
+	}
+
+	localObjs, err := st.ListGeoObjects(ctx, mapID, version, store.GeoObjectFilter{})
+	if err != nil {
+		logs.errf(remoteID, "sync map %s: list local geo objects for version %s: %v", mapID, version, err)
+		return fmt.Errorf("list local geo objects: %w", err)
+	}
+
+	toUpsert, toDelete := reconcileGeoObjects(localObjs, remoteObjs)
+	if len(toUpsert) > 0 || len(toDelete) > 0 {
+		logs.logf(remoteID, "sync map %s: upserting %d geo object(s), deleting %d geo object(s) for version %s", mapID, len(toUpsert), len(toDelete), version)
+	}
+
+	for _, g := range toUpsert {
+		if _, err := st.UpsertSyncedGeoObject(ctx, g); err != nil {
+			logs.errf(remoteID, "sync map %s: upsert geo object %s: %v", mapID, g.UUID, err)
+			return fmt.Errorf("upsert geo object %s: %w", g.UUID, err)
+		}
+	}
+
+	for _, id := range toDelete {
+		if err := st.DeleteGeoObject(ctx, mapID, version, id); err != nil && !errors.Is(err, store.ErrGeoObjectNotFound) {
+			logs.errf(remoteID, "sync map %s: delete geo object %s: %v", mapID, id, err)
+			return fmt.Errorf("delete geo object %s: %w", id, err)
 		}
 	}
 

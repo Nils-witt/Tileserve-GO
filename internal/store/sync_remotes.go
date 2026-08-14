@@ -46,7 +46,12 @@ type SyncRemote struct {
 	// whether a remote map never seen locally before is mirrored
 	// automatically the first time it's noticed, without needing to be
 	// added to the explicit selection first.
-	SyncNewMaps    bool       `json:"syncNewMaps"`
+	SyncNewMaps bool `json:"syncNewMaps"`
+	// SyncGeoObjects, if true, additionally mirrors every geo object
+	// attached to each synced map's versions (see internal/sync). It's
+	// independent of SyncAllMaps/SyncNewMaps, which only decide which maps
+	// are synced at all.
+	SyncGeoObjects bool       `json:"syncGeoObjects"`
 	LastSyncAt     *time.Time `json:"lastSyncAt,omitempty"`
 	LastSyncStatus string     `json:"lastSyncStatus"`
 	LastSyncError  string     `json:"lastSyncError,omitempty"`
@@ -69,13 +74,13 @@ type SyncLogEntry struct {
 	Message string    `json:"message"`
 }
 
-const syncRemoteColumns = `id, name, base_url, remote_api_key_id, private_key_pem, poll_interval_sec, enabled, sync_all_maps, sync_new_maps, last_sync_at, last_sync_status, last_sync_error, created_at, updated_at, created_by, updated_by`
+const syncRemoteColumns = `id, name, base_url, remote_api_key_id, private_key_pem, poll_interval_sec, enabled, sync_all_maps, sync_new_maps, sync_geo_objects, last_sync_at, last_sync_status, last_sync_error, created_at, updated_at, created_by, updated_by`
 
 func scanSyncRemote(row pgx.Row) (SyncRemote, error) {
 	var sr SyncRemote
 
 	err := row.Scan(&sr.ID, &sr.Name, &sr.BaseURL, &sr.RemoteAPIKeyID, &sr.PrivateKeyPEM, &sr.PollIntervalSec, &sr.Enabled,
-		&sr.SyncAllMaps, &sr.SyncNewMaps,
+		&sr.SyncAllMaps, &sr.SyncNewMaps, &sr.SyncGeoObjects,
 		&sr.LastSyncAt, &sr.LastSyncStatus, &sr.LastSyncError, &sr.CreatedAt, &sr.UpdatedAt, &sr.CreatedBy, &sr.UpdatedBy)
 
 	return sr, err
@@ -115,20 +120,20 @@ func validateRSAPrivateKeyPEM(pemStr string) error {
 // this server's own key, used to sign requests to the remote; remoteAPIKeyID
 // is the id of the API key the matching public half was registered as on
 // that remote. syncAllMaps and syncNewMaps set the remote's initial
-// selective-sync policy (see SyncRemote.SyncAllMaps/SyncNewMaps); the
-// explicit map selection itself is set separately via
-// SetSyncRemoteSelectedMaps, once this call has returned an id to attach it
-// to.
-func (s *Store) CreateSyncRemote(ctx context.Context, name, baseURL string, remoteAPIKeyID uuid.UUID, privateKeyPEM string, pollIntervalSec int, enabled, syncAllMaps, syncNewMaps bool, createdBy string) (SyncRemote, error) {
+// selective-sync policy (see SyncRemote.SyncAllMaps/SyncNewMaps);
+// syncGeoObjects sets SyncRemote.SyncGeoObjects. The explicit map selection
+// itself is set separately via SetSyncRemoteSelectedMaps, once this call has
+// returned an id to attach it to.
+func (s *Store) CreateSyncRemote(ctx context.Context, name, baseURL string, remoteAPIKeyID uuid.UUID, privateKeyPEM string, pollIntervalSec int, enabled, syncAllMaps, syncNewMaps, syncGeoObjects bool, createdBy string) (SyncRemote, error) {
 	if err := validateRSAPrivateKeyPEM(privateKeyPEM); err != nil {
 		return SyncRemote{}, err
 	}
 
 	sr, err := scanSyncRemote(s.pool.QueryRow(ctx, `
-		INSERT INTO sync_remotes (id, name, base_url, remote_api_key_id, private_key_pem, poll_interval_sec, enabled, sync_all_maps, sync_new_maps, created_by, updated_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $10)
+		INSERT INTO sync_remotes (id, name, base_url, remote_api_key_id, private_key_pem, poll_interval_sec, enabled, sync_all_maps, sync_new_maps, sync_geo_objects, created_by, updated_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
 		RETURNING `+syncRemoteColumns,
-		uuid.New(), name, baseURL, remoteAPIKeyID, privateKeyPEM, pollIntervalSec, enabled, syncAllMaps, syncNewMaps, createdBy))
+		uuid.New(), name, baseURL, remoteAPIKeyID, privateKeyPEM, pollIntervalSec, enabled, syncAllMaps, syncNewMaps, syncGeoObjects, createdBy))
 	if err != nil {
 		return SyncRemote{}, fmt.Errorf("create sync remote: %w", err)
 	}
@@ -172,7 +177,7 @@ func (s *Store) GetSyncRemote(ctx context.Context, id uuid.UUID) (SyncRemote, er
 // send. It returns ErrSyncRemoteNotFound if id doesn't exist. As with
 // CreateSyncRemote, the explicit map selection is updated separately via
 // SetSyncRemoteSelectedMaps.
-func (s *Store) UpdateSyncRemote(ctx context.Context, id uuid.UUID, name, baseURL string, remoteAPIKeyID uuid.UUID, privateKeyPEM string, pollIntervalSec int, enabled, syncAllMaps, syncNewMaps bool, updatedBy string) (SyncRemote, error) {
+func (s *Store) UpdateSyncRemote(ctx context.Context, id uuid.UUID, name, baseURL string, remoteAPIKeyID uuid.UUID, privateKeyPEM string, pollIntervalSec int, enabled, syncAllMaps, syncNewMaps, syncGeoObjects bool, updatedBy string) (SyncRemote, error) {
 	var (
 		sr  SyncRemote
 		err error
@@ -185,17 +190,17 @@ func (s *Store) UpdateSyncRemote(ctx context.Context, id uuid.UUID, name, baseUR
 
 		sr, err = scanSyncRemote(s.pool.QueryRow(ctx, `
 			UPDATE sync_remotes
-			SET name = $2, base_url = $3, remote_api_key_id = $4, private_key_pem = $5, poll_interval_sec = $6, enabled = $7, sync_all_maps = $8, sync_new_maps = $9, updated_by = $10, updated_at = now()
+			SET name = $2, base_url = $3, remote_api_key_id = $4, private_key_pem = $5, poll_interval_sec = $6, enabled = $7, sync_all_maps = $8, sync_new_maps = $9, sync_geo_objects = $10, updated_by = $11, updated_at = now()
 			WHERE id = $1
 			RETURNING `+syncRemoteColumns,
-			id, name, baseURL, remoteAPIKeyID, privateKeyPEM, pollIntervalSec, enabled, syncAllMaps, syncNewMaps, updatedBy))
+			id, name, baseURL, remoteAPIKeyID, privateKeyPEM, pollIntervalSec, enabled, syncAllMaps, syncNewMaps, syncGeoObjects, updatedBy))
 	} else {
 		sr, err = scanSyncRemote(s.pool.QueryRow(ctx, `
 			UPDATE sync_remotes
-			SET name = $2, base_url = $3, remote_api_key_id = $4, poll_interval_sec = $5, enabled = $6, sync_all_maps = $7, sync_new_maps = $8, updated_by = $9, updated_at = now()
+			SET name = $2, base_url = $3, remote_api_key_id = $4, poll_interval_sec = $5, enabled = $6, sync_all_maps = $7, sync_new_maps = $8, sync_geo_objects = $9, updated_by = $10, updated_at = now()
 			WHERE id = $1
 			RETURNING `+syncRemoteColumns,
-			id, name, baseURL, remoteAPIKeyID, pollIntervalSec, enabled, syncAllMaps, syncNewMaps, updatedBy))
+			id, name, baseURL, remoteAPIKeyID, pollIntervalSec, enabled, syncAllMaps, syncNewMaps, syncGeoObjects, updatedBy))
 	}
 
 	if errors.Is(err, pgx.ErrNoRows) {

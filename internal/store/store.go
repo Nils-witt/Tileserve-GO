@@ -333,6 +333,16 @@ var migrationSteps = []struct {
 		`,
 	},
 	{
+		// sync_geo_objects defaults to false (opt-in): unlike
+		// sync_all_maps, there's no pre-existing behavior to preserve —
+		// this is a wholly new capability, so existing remotes shouldn't
+		// suddenly incur new pull volume without an admin turning it on.
+		errContext: "migrate sync_remotes geo objects column",
+		sql: `
+			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS sync_geo_objects BOOLEAN NOT NULL DEFAULT false;
+		`,
+	},
+	{
 		// Holds the admin's explicit map selection for a remote whose
 		// sync_all_maps is false (see internal/sync.mapsToSync). map_uuid
 		// isn't a foreign key into maps(uuid): a selected map may not be

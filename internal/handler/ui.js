@@ -1379,6 +1379,14 @@
       enabledCb.onchange = () => updateSyncRemote(r, { enabled: enabledCb.checked });
       enabledTd.appendChild(enabledCb);
 
+      const geoObjectsTd = document.createElement('td');
+      geoObjectsTd.className = 'checkbox-cell';
+      const geoObjectsCb = document.createElement('input');
+      geoObjectsCb.type = 'checkbox';
+      geoObjectsCb.checked = r.syncGeoObjects;
+      geoObjectsCb.onchange = () => updateSyncRemote(r, { syncGeoObjects: geoObjectsCb.checked });
+      geoObjectsTd.appendChild(geoObjectsCb);
+
       const statusTd = document.createElement('td');
       statusTd.innerHTML = fmtSyncStatus(r);
 
@@ -1413,7 +1421,7 @@
       actions.append(editBtn, mapsBtn, triggerBtn, logBtn, deleteBtn);
       actionsTd.append(actions);
 
-      tr.append(nameTd, urlTd, intervalTd, scopeTd, enabledTd, statusTd, actionsTd);
+      tr.append(nameTd, urlTd, intervalTd, scopeTd, enabledTd, geoObjectsTd, statusTd, actionsTd);
       return tr;
     }
 
@@ -1452,6 +1460,7 @@
             enabled: r.enabled,
             syncAllMaps: r.syncAllMaps,
             syncNewMaps: r.syncNewMaps,
+            syncGeoObjects: r.syncGeoObjects,
           }, patch)),
         });
       } catch (err) {
@@ -1511,6 +1520,7 @@
             enabled: r.enabled,
             syncAllMaps: r.syncAllMaps,
             syncNewMaps: r.syncNewMaps,
+            syncGeoObjects: r.syncGeoObjects,
             // selectedMapUuids deliberately omitted, same reasoning as
             // updateSyncRemote: it's edited via the "Select maps" modal,
             // not this prompt-based flow, and omitting it here leaves the
@@ -1688,6 +1698,7 @@
             enabled: r.enabled,
             syncAllMaps: syncMapsAllCb.checked,
             syncNewMaps: syncMapsNewCb.checked,
+            syncGeoObjects: r.syncGeoObjects,
             selectedMapUuids,
           }),
         });
@@ -1732,6 +1743,9 @@
         // use the "Select maps" button afterwards to narrow it down.
         syncAllMaps: true,
         syncNewMaps: false,
+        // Geo-object syncing starts opted out too; toggle it on afterwards
+        // via the table's "Geo objects" checkbox.
+        syncGeoObjects: false,
       };
       createSyncRemote(payload).then(() => {
         e.target.reset();

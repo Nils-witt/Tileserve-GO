@@ -34,6 +34,7 @@ type syncRemoteRequest struct {
 	Enabled         bool   `json:"enabled"`
 	SyncAllMaps     bool   `json:"syncAllMaps"`
 	SyncNewMaps     bool   `json:"syncNewMaps"`
+	SyncGeoObjects  bool   `json:"syncGeoObjects"`
 	// SelectedMapIDs is a pointer so a request that omits it (e.g. a PUT
 	// that only means to toggle `enabled`) leaves the saved selection
 	// untouched, distinct from one that explicitly sends an empty list to
@@ -81,7 +82,7 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
-			sr, err := st.CreateSyncRemote(r.Context(), req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, usernameFromContext(r.Context()))
+			sr, err := st.CreateSyncRemote(r.Context(), req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, req.SyncGeoObjects, usernameFromContext(r.Context()))
 			if err != nil {
 				if errors.Is(err, store.ErrInvalidPrivateKeyPEM) {
 					http.Error(w, err.Error(), http.StatusBadRequest)
@@ -268,7 +269,7 @@ func updateSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 		}
 	}
 
-	sr, err := st.UpdateSyncRemote(r.Context(), id, req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, usernameFromContext(r.Context()))
+	sr, err := st.UpdateSyncRemote(r.Context(), id, req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, req.SyncGeoObjects, usernameFromContext(r.Context()))
 	if err != nil {
 		if errors.Is(err, store.ErrInvalidPrivateKeyPEM) {
 			http.Error(w, err.Error(), http.StatusBadRequest)

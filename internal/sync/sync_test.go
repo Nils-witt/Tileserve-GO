@@ -101,6 +101,89 @@ func TestReconcileAliasesEmptyBothSides(t *testing.T) {
 	}
 }
 
+func TestReconcileGeoObjectsUpsertNew(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	remoteOnly := store.GeoObjectRecord{UUID: uuid.New(), Name: "remote-only", UpdatedAt: now}
+
+	toUpsert, toDelete := reconcileGeoObjects(nil, []store.GeoObjectRecord{remoteOnly})
+
+	if len(toUpsert) != 1 || toUpsert[0].UUID != remoteOnly.UUID {
+		t.Fatalf("toUpsert = %+v, want [remoteOnly]", toUpsert)
+	}
+
+	if len(toDelete) != 0 {
+		t.Fatalf("toDelete = %+v, want empty", toDelete)
+	}
+}
+
+func TestReconcileGeoObjectsUpsertChanged(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	now := time.Now()
+
+	local := []store.GeoObjectRecord{{UUID: id, Name: "old-name", UpdatedAt: now}}
+	remote := []store.GeoObjectRecord{{UUID: id, Name: "new-name", UpdatedAt: now.Add(time.Second)}}
+
+	toUpsert, toDelete := reconcileGeoObjects(local, remote)
+
+	if len(toUpsert) != 1 || toUpsert[0].Name != "new-name" {
+		t.Fatalf("toUpsert = %+v, want [new-name]", toUpsert)
+	}
+
+	if len(toDelete) != 0 {
+		t.Fatalf("toDelete = %+v, want empty", toDelete)
+	}
+}
+
+func TestReconcileGeoObjectsUnchangedSkipped(t *testing.T) {
+	t.Parallel()
+
+	id := uuid.New()
+	now := time.Now()
+
+	local := []store.GeoObjectRecord{{UUID: id, Name: "same", UpdatedAt: now}}
+	remote := []store.GeoObjectRecord{{UUID: id, Name: "same", UpdatedAt: now}}
+
+	toUpsert, toDelete := reconcileGeoObjects(local, remote)
+
+	if len(toUpsert) != 0 {
+		t.Fatalf("toUpsert = %+v, want empty (unchanged)", toUpsert)
+	}
+
+	if len(toDelete) != 0 {
+		t.Fatalf("toDelete = %+v, want empty", toDelete)
+	}
+}
+
+func TestReconcileGeoObjectsDeleteStale(t *testing.T) {
+	t.Parallel()
+
+	localOnly := store.GeoObjectRecord{UUID: uuid.New(), Name: "local-only", UpdatedAt: time.Now()}
+
+	toUpsert, toDelete := reconcileGeoObjects([]store.GeoObjectRecord{localOnly}, nil)
+
+	if len(toUpsert) != 0 {
+		t.Fatalf("toUpsert = %+v, want empty", toUpsert)
+	}
+
+	if len(toDelete) != 1 || toDelete[0] != localOnly.UUID {
+		t.Fatalf("toDelete = %+v, want [%s]", toDelete, localOnly.UUID)
+	}
+}
+
+func TestReconcileGeoObjectsEmptyBothSides(t *testing.T) {
+	t.Parallel()
+
+	toUpsert, toDelete := reconcileGeoObjects(nil, nil)
+
+	if len(toUpsert) != 0 || len(toDelete) != 0 {
+		t.Fatalf("reconcileGeoObjects(nil, nil) = (%+v, %+v), want (nil, nil)", toUpsert, toDelete)
+	}
+}
+
 func TestMapsToSyncSelectedOnly(t *testing.T) {
 	t.Parallel()
 
