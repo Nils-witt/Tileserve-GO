@@ -29,6 +29,12 @@ type mapPermKey struct {
 	username string
 }
 
+// apiKeyScopeKey caches one API key's scope entry for one map.
+type apiKeyScopeKey struct {
+	apiKeyID uuid.UUID
+	mapUUID  uuid.UUID
+}
+
 // Store is the PostgreSQL-backed persistence layer for tileserve-go.
 type Store struct {
 	pool                *pgxpool.Pool
@@ -38,6 +44,7 @@ type Store struct {
 	mapPermCache        *ttlCache[mapPermKey, MapPermission]
 	mapAliasCache       *ttlCache[mapAliasKey, string]
 	apiKeyCache         *ttlCache[uuid.UUID, apiKeySigningKey]
+	apiKeyScopeCache    *ttlCache[apiKeyScopeKey, apiKeyScopeEntry]
 }
 
 // NewStore opens a connection pool to the postgres database at dsn and
@@ -73,6 +80,7 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 		mapPermCache:        newTTLCache[mapPermKey, MapPermission](cacheTTL),
 		mapAliasCache:       newTTLCache[mapAliasKey, string](cacheTTL),
 		apiKeyCache:         newTTLCache[uuid.UUID, apiKeySigningKey](cacheTTL),
+		apiKeyScopeCache:    newTTLCache[apiKeyScopeKey, apiKeyScopeEntry](cacheTTL),
 	}, nil
 }
 
@@ -325,6 +333,16 @@ var migrationSteps = []struct {
 		`,
 	},
 	{
+		// sync_geo_objects defaults to false (opt-in): unlike
+		// sync_all_maps, there's no pre-existing behavior to preserve —
+		// this is a wholly new capability, so existing remotes shouldn't
+		// suddenly incur new pull volume without an admin turning it on.
+		errContext: "migrate sync_remotes geo objects column",
+		sql: `
+			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS sync_geo_objects BOOLEAN NOT NULL DEFAULT false;
+		`,
+	},
+	{
 		// Holds the admin's explicit map selection for a remote whose
 		// sync_all_maps is false (see internal/sync.mapsToSync). map_uuid
 		// isn't a foreign key into maps(uuid): a selected map may not be
@@ -337,6 +355,34 @@ var migrationSteps = []struct {
 				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
 				PRIMARY KEY (remote_id, map_uuid)
 			)
+		`,
+	},
+	{
+		// scoped is an explicit on/off flag for api_key_scopes, deliberately
+		// independent of that table's row count: an admin removing the last
+		// individual map from a key's scope should leave it locked out of
+		// everything, not silently revert it to unrestricted. Only
+		// ClearAPIKeyScope resets it to false.
+		errContext: "migrate api_keys scoped column",
+		sql: `
+			ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scoped BOOLEAN NOT NULL DEFAULT false;
+		`,
+	},
+	{
+		// Per-key, per-map access grant restricting what a scoped API key
+		// (see api_keys.scoped) may see or act on -- most notably, what a
+		// server-sync remote's registered key may pull. versions NULL/empty
+		// means every version of that map is in scope.
+		errContext: "migrate api_key_scopes table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS api_key_scopes (
+				api_key_id UUID NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+				map_uuid   UUID NOT NULL REFERENCES maps(uuid) ON DELETE CASCADE,
+				versions   TEXT[],
+				granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+				PRIMARY KEY (api_key_id, map_uuid)
+			);
+			CREATE INDEX IF NOT EXISTS idx_api_key_scopes_api_key ON api_key_scopes (api_key_id);
 		`,
 	},
 }

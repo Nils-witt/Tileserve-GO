@@ -294,6 +294,7 @@
                 <th>Interval</th>
                 <th>Maps synced</th>
                 <th class="checkbox-cell">Enabled</th>
+                <th class="checkbox-cell">Geo objects</th>
                 <th>Last sync</th>
                 <th>Actions</th>
               </tr>
@@ -534,6 +535,7 @@
               <th>Name</th>
               <th>Created</th>
               <th>Last used</th>
+              <th>Scoped</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -552,11 +554,52 @@
           <button type="button" class="secondary" id="apikey-generate-btn">Generate key pair</button>
           <button id="apikey-add-btn">Create</button>
         </div>
-        <p class="muted">The key authenticates as this user (their full permissions apply). The caller generates
-          its own RSA key pair and signs short-lived JWTs with the private half — this server only ever stores
-          the public half. Click "Generate key pair" to have this server generate one for you (the private key is
-          shown exactly once, copy it immediately), or paste a public key generated elsewhere. Use the resulting
-          key's ID as the "Remote API key ID" when registering this server as a sync remote on another instance.
+        <p class="muted">The key authenticates as this user (their full permissions apply, narrowed by "Scopes"
+          below if any are set). The caller generates its own RSA key pair and signs short-lived JWTs with the
+          private half — this server only ever stores the public half. Click "Generate key pair" to have this
+          server generate one for you (the private key is shown exactly once, copy it immediately), or paste a
+          public key generated elsewhere. Use the resulting key's ID as the "Remote API key ID" when registering
+          this server as a sync remote on another instance.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div id="scope-overlay" class="modal-overlay hidden">
+    <div class="modal" style="height:auto; max-height:88vh;">
+      <div class="modal-header">
+        <h2 id="scope-title">Scopes</h2>
+        <button class="secondary" id="scope-close">Close</button>
+      </div>
+      <div style="padding:1rem; overflow:auto;">
+        <p id="scope-error" class="hidden" style="color:#dc2626"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Map</th>
+              <th>Versions</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="scope-body"></tbody>
+        </table>
+        <p id="scope-empty" class="muted hidden">No scope restrictions — this key can access every map its user can.</p>
+        <div class="row" style="margin-top:1rem">
+          <div class="field">
+            <label for="scope-add-map">Map</label>
+            <select id="scope-add-map"></select>
+          </div>
+          <div class="field">
+            <label for="scope-add-versions">Versions (comma-separated, blank = all)</label>
+            <input id="scope-add-versions" placeholder="e.g. 3,4">
+          </div>
+          <button id="scope-add-btn">Add</button>
+          <button type="button" class="danger" id="scope-clear-btn">Clear all (unrestrict)</button>
+        </div>
+        <p class="muted">Once this key has any scope entry, it can only access the maps listed here — and, where
+          a version list is given, only those versions of that map — regardless of what its user could otherwise
+          do. Removing entries one at a time only ever narrows access further; a key with an entry removed down
+          to zero remains locked out. Use "Clear all" to explicitly restore unrestricted access.
         </p>
       </div>
     </div>

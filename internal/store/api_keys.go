@@ -39,6 +39,11 @@ type APIKeyRecord struct {
 	CreatedAt  time.Time  `json:"createdAt"`
 	CreatedBy  string     `json:"createdBy"`
 	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+	// Scoped reports whether this key is restricted to a subset of maps/
+	// versions (see api_key_scopes.go). A key with no scopes set is
+	// unrestricted regardless of this flag; Scoped only ever narrows access
+	// once true, it never widens it.
+	Scoped bool `json:"scoped"`
 }
 
 // validateRSAPublicKeyPEM parses pemStr as a PKIX-encoded RSA public key
@@ -84,8 +89,8 @@ func (s *Store) CreateAPIKey(ctx context.Context, username, name, createdBy, pub
 	err := s.pool.QueryRow(ctx, `
 		INSERT INTO api_keys (id, public_key_pem, username, name, created_by)
 		VALUES ($1, $2, $3, $4, $5)
-		RETURNING created_at
-	`, rec.ID, publicKeyPEM, username, name, createdBy).Scan(&rec.CreatedAt)
+		RETURNING created_at, scoped
+	`, rec.ID, publicKeyPEM, username, name, createdBy).Scan(&rec.CreatedAt, &rec.Scoped)
 	if err != nil {
 		if isPgErrCode(err, "23503") {
 			return APIKeyRecord{}, ErrUserNotFound
@@ -101,14 +106,14 @@ func (s *Store) CreateAPIKey(ctx context.Context, username, name, createdBy, pub
 // recently created first.
 func (s *Store) ListAPIKeys(ctx context.Context, username string) ([]APIKeyRecord, error) {
 	return collectRows(ctx, s.pool, "list api keys", `
-		SELECT id, username, name, created_at, created_by, last_used_at
+		SELECT id, username, name, created_at, created_by, last_used_at, scoped
 		FROM api_keys
 		WHERE username = $1 AND revoked_at IS NULL
 		ORDER BY created_at DESC
 	`, func(rows pgx.Rows) (APIKeyRecord, error) {
 		var r APIKeyRecord
 
-		err := rows.Scan(&r.ID, &r.Username, &r.Name, &r.CreatedAt, &r.CreatedBy, &r.LastUsedAt)
+		err := rows.Scan(&r.ID, &r.Username, &r.Name, &r.CreatedAt, &r.CreatedBy, &r.LastUsedAt, &r.Scoped)
 
 		return r, err
 	}, username)
@@ -133,12 +138,17 @@ func (s *Store) RevokeAPIKey(ctx context.Context, username string, id uuid.UUID)
 }
 
 // apiKeySigningKey is the cached form of a resolved key: the username it
-// authenticates as, plus its registered public key PEM (parsing that PEM
-// into an *rsa.PublicKey happens in internal/handler, which owns all JWT
-// verification concerns and already depends on golang-jwt).
+// authenticates as, its registered public key PEM (parsing that PEM into an
+// *rsa.PublicKey happens in internal/handler, which owns all JWT
+// verification concerns and already depends on golang-jwt), and whether it's
+// scope-restricted (see api_key_scopes.go) — cached alongside the rest since
+// ResolveAPIKeySigningKey already fetches the row on every API-key-
+// authenticated request, letting apiKeyScopedFlag reuse this cache entry
+// instead of a second round trip.
 type apiKeySigningKey struct {
 	username     string
 	publicKeyPEM string
+	scoped       bool
 }
 
 // ResolveAPIKeySigningKey resolves keyID — a JWT's `kid` header, which IS
@@ -151,9 +161,11 @@ func (s *Store) ResolveAPIKeySigningKey(ctx context.Context, keyID uuid.UUID) (u
 		return v.username, v.publicKeyPEM, nil
 	}
 
+	var scoped bool
+
 	err = s.pool.QueryRow(ctx, `
-		SELECT username, public_key_pem FROM api_keys WHERE id = $1 AND revoked_at IS NULL
-	`, keyID).Scan(&username, &publicKeyPEM)
+		SELECT username, public_key_pem, scoped FROM api_keys WHERE id = $1 AND revoked_at IS NULL
+	`, keyID).Scan(&username, &publicKeyPEM, &scoped)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", "", ErrInvalidAPIKey
 	}
@@ -162,10 +174,35 @@ func (s *Store) ResolveAPIKeySigningKey(ctx context.Context, keyID uuid.UUID) (u
 		return "", "", fmt.Errorf("resolve api key signing key: %w", err)
 	}
 
-	s.apiKeyCache.set(keyID, apiKeySigningKey{username: username, publicKeyPEM: publicKeyPEM})
+	s.apiKeyCache.set(keyID, apiKeySigningKey{username: username, publicKeyPEM: publicKeyPEM, scoped: scoped})
 	s.TouchAPIKeyLastUsed(ctx, keyID)
 
 	return username, publicKeyPEM, nil
+}
+
+// apiKeyScopedFlag reports whether apiKeyID is scope-restricted, reusing the
+// apiKeyCache entry ResolveAPIKeySigningKey populates on every API-key-
+// authenticated request when available, falling back to a direct lookup
+// otherwise. It returns ErrInvalidAPIKey if keyID is unknown or revoked.
+func (s *Store) apiKeyScopedFlag(ctx context.Context, apiKeyID uuid.UUID) (bool, error) {
+	if v, ok := s.apiKeyCache.get(apiKeyID); ok {
+		return v.scoped, nil
+	}
+
+	var scoped bool
+
+	err := s.pool.QueryRow(ctx, `
+		SELECT scoped FROM api_keys WHERE id = $1 AND revoked_at IS NULL
+	`, apiKeyID).Scan(&scoped)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, ErrInvalidAPIKey
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("get api key scoped flag: %w", err)
+	}
+
+	return scoped, nil
 }
 
 // TouchAPIKeyLastUsed best-effort records that id was just used, logging

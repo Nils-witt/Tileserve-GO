@@ -160,6 +160,19 @@ func (c *Client) ListAliases(ctx context.Context, mapID uuid.UUID) ([]store.MapV
 	return aliases, nil
 }
 
+// ListGeoObjects returns every geo object tied to mapID's version on the
+// remote.
+func (c *Client) ListGeoObjects(ctx context.Context, mapID uuid.UUID, version string) ([]store.GeoObjectRecord, error) {
+	var objs []store.GeoObjectRecord
+
+	path := "/maps/" + mapID.String() + "/version/" + url.PathEscape(version) + "/geo-objects"
+	if err := c.getJSON(ctx, path, &objs); err != nil {
+		return nil, err
+	}
+
+	return objs, nil
+}
+
 // DownloadArchive streams mapID's version archive
 // (GET .../version/{version}/archive) from the remote to a fresh temp file,
 // returning its path. On success the caller is responsible for removing it.

@@ -170,7 +170,8 @@ func configChanged(running, current store.SyncRemote) bool {
 		running.PrivateKeyPEM != current.PrivateKeyPEM ||
 		running.PollIntervalSec != current.PollIntervalSec ||
 		running.SyncAllMaps != current.SyncAllMaps ||
-		running.SyncNewMaps != current.SyncNewMaps
+		running.SyncNewMaps != current.SyncNewMaps ||
+		running.SyncGeoObjects != current.SyncGeoObjects
 }
 
 // startWorkerLocked starts a worker goroutine for remote. Callers must hold m.mu.

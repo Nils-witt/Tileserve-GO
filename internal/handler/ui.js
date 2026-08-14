@@ -42,6 +42,7 @@
 
     let isAdmin = false;
     let allUsers = [];
+    let allMaps = [];
 
     function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
     function setSession(token, username) {
@@ -143,10 +144,19 @@
       try {
         const res = await api('/maps');
         const maps = await res.json();
+        allMaps = maps;
         renderMaps(maps);
       } catch (err) {
         if (err.message !== 'unauthorized') appError(err.message);
       }
+    }
+
+    // mapName looks up a map's display name by uuid from the maps list
+    // loaded on app start, falling back to the raw uuid if it isn't
+    // (or is no longer) in that list.
+    function mapName(uuid) {
+      const m = allMaps.find(x => x.uuid === uuid);
+      return m ? m.name : uuid;
     }
 
     function renderMaps(maps) {
@@ -1092,6 +1102,15 @@
       const lastUsedTd = document.createElement('td');
       lastUsedTd.textContent = k.lastUsedAt ? fmtDate(k.lastUsedAt) : 'never';
 
+      const scopedTd = document.createElement('td');
+      scopedTd.textContent = k.scoped ? 'Yes' : 'No';
+      if (!k.scoped) scopedTd.className = 'muted';
+
+      const scopesBtn = document.createElement('button');
+      scopesBtn.className = 'secondary';
+      scopesBtn.textContent = 'Scopes';
+      scopesBtn.onclick = () => openScopes(k);
+
       const revokeBtn = document.createElement('button');
       revokeBtn.className = 'danger';
       revokeBtn.textContent = 'Revoke';
@@ -1100,10 +1119,10 @@
       const actionsTd = document.createElement('td');
       const actions = document.createElement('div');
       actions.className = 'actions';
-      actions.append(revokeBtn);
+      actions.append(scopesBtn, revokeBtn);
       actionsTd.append(actions);
 
-      tr.append(nameTd, createdTd, lastUsedTd, actionsTd);
+      tr.append(nameTd, createdTd, lastUsedTd, scopedTd, actionsTd);
       return tr;
     }
 
@@ -1160,6 +1179,138 @@
       if (!apikeyAddName.value.trim() || !apikeyAddPubkey.value.trim()) return;
       createAPIKey(apikeyAddName.value.trim(), apikeyAddPubkey.value.trim());
     });
+
+    const scopeOverlay = document.getElementById('scope-overlay');
+    const scopeTitle = document.getElementById('scope-title');
+    const scopeBody = document.getElementById('scope-body');
+    const scopeEmptyEl = document.getElementById('scope-empty');
+    const scopeErrorEl = document.getElementById('scope-error');
+    const scopeClose = document.getElementById('scope-close');
+    const scopeAddMap = document.getElementById('scope-add-map');
+    const scopeAddVersions = document.getElementById('scope-add-versions');
+    const scopeAddBtn = document.getElementById('scope-add-btn');
+    const scopeClearBtn = document.getElementById('scope-clear-btn');
+    let scopeApiKeyId = null;
+
+    function scopeError(message) {
+      if (!message) {
+        scopeErrorEl.classList.add('hidden');
+        return;
+      }
+      scopeErrorEl.textContent = message;
+      scopeErrorEl.classList.remove('hidden');
+    }
+
+    // openScopes is only ever reached from a key row inside the (still open)
+    // API-keys modal, so it reuses apikeyUsername rather than taking its own
+    // username parameter.
+    async function openScopes(k) {
+      scopeApiKeyId = k.id;
+      scopeTitle.textContent = 'Scopes — ' + (k.name || k.id);
+      scopeError(null);
+      scopeAddMap.innerHTML = allMaps.map(m => '<option value="' + m.uuid + '">' + m.name + '</option>').join('');
+      scopeAddVersions.value = '';
+      scopeOverlay.classList.remove('hidden');
+      await loadScopes();
+    }
+
+    function closeScopes() {
+      scopeOverlay.classList.add('hidden');
+      scopeApiKeyId = null;
+    }
+
+    async function loadScopes() {
+      scopeError(null);
+      try {
+        const res = await api('/users/' + encodeURIComponent(apikeyUsername) + '/api-keys/' + scopeApiKeyId + '/scopes');
+        renderScopes(await res.json());
+      } catch (err) {
+        if (err.message !== 'unauthorized') scopeError(err.message);
+      }
+    }
+
+    function renderScopes(scopes) {
+      scopeBody.innerHTML = '';
+      scopeEmptyEl.classList.toggle('hidden', scopes.length > 0);
+      for (const s of scopes) {
+        scopeBody.appendChild(renderScopeRow(s));
+      }
+    }
+
+    function renderScopeRow(s) {
+      const tr = document.createElement('tr');
+
+      const mapTd = document.createElement('td');
+      mapTd.textContent = mapName(s.mapUuid);
+
+      const versionsTd = document.createElement('td');
+      versionsTd.textContent = (s.versions && s.versions.length) ? s.versions.join(', ') : 'all';
+
+      const removeBtn = document.createElement('button');
+      removeBtn.className = 'danger';
+      removeBtn.textContent = 'Remove';
+      removeBtn.onclick = () => removeScope(s.mapUuid);
+
+      const actionsTd = document.createElement('td');
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      actions.append(removeBtn);
+      actionsTd.append(actions);
+
+      tr.append(mapTd, versionsTd, actionsTd);
+      return tr;
+    }
+
+    async function addScope(mapId, versionsStr) {
+      scopeError(null);
+      try {
+        const versions = versionsStr.trim() ? versionsStr.split(',').map(v => v.trim()).filter(Boolean) : null;
+        await api('/users/' + encodeURIComponent(apikeyUsername) + '/api-keys/' + scopeApiKeyId + '/scopes/' + mapId, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ versions }),
+        });
+        scopeAddVersions.value = '';
+        await loadScopes();
+        await loadAPIKeys();
+      } catch (err) {
+        if (err.message !== 'unauthorized') scopeError(err.message);
+      }
+    }
+
+    async function removeScope(mapId) {
+      if (!confirm('Remove this map from the key\'s scope? If it\'s the last entry, the key will be locked out of every map until you add another entry or clear its scope entirely.')) return;
+      scopeError(null);
+      try {
+        await api('/users/' + encodeURIComponent(apikeyUsername) + '/api-keys/' + scopeApiKeyId + '/scopes/' + mapId, { method: 'DELETE' });
+        await loadScopes();
+        await loadAPIKeys();
+      } catch (err) {
+        if (err.message !== 'unauthorized') scopeError(err.message);
+      }
+    }
+
+    async function clearScope() {
+      if (!confirm('Clear all scope restrictions? This key will regain unrestricted access (same as its user).')) return;
+      scopeError(null);
+      try {
+        await api('/users/' + encodeURIComponent(apikeyUsername) + '/api-keys/' + scopeApiKeyId + '/scopes', { method: 'DELETE' });
+        await loadScopes();
+        await loadAPIKeys();
+      } catch (err) {
+        if (err.message !== 'unauthorized') scopeError(err.message);
+      }
+    }
+
+    scopeClose.addEventListener('click', closeScopes);
+    scopeOverlay.addEventListener('click', (e) => {
+      if (e.target === scopeOverlay) closeScopes();
+    });
+    scopeAddBtn.addEventListener('click', () => {
+      if (!scopeAddMap.value) return;
+      addScope(scopeAddMap.value, scopeAddVersions.value);
+    });
+    scopeClearBtn.addEventListener('click', clearScope);
 
     function syncError(message) {
       if (!message) {
@@ -1228,6 +1379,14 @@
       enabledCb.onchange = () => updateSyncRemote(r, { enabled: enabledCb.checked });
       enabledTd.appendChild(enabledCb);
 
+      const geoObjectsTd = document.createElement('td');
+      geoObjectsTd.className = 'checkbox-cell';
+      const geoObjectsCb = document.createElement('input');
+      geoObjectsCb.type = 'checkbox';
+      geoObjectsCb.checked = r.syncGeoObjects;
+      geoObjectsCb.onchange = () => updateSyncRemote(r, { syncGeoObjects: geoObjectsCb.checked });
+      geoObjectsTd.appendChild(geoObjectsCb);
+
       const statusTd = document.createElement('td');
       statusTd.innerHTML = fmtSyncStatus(r);
 
@@ -1262,7 +1421,7 @@
       actions.append(editBtn, mapsBtn, triggerBtn, logBtn, deleteBtn);
       actionsTd.append(actions);
 
-      tr.append(nameTd, urlTd, intervalTd, scopeTd, enabledTd, statusTd, actionsTd);
+      tr.append(nameTd, urlTd, intervalTd, scopeTd, enabledTd, geoObjectsTd, statusTd, actionsTd);
       return tr;
     }
 
@@ -1301,6 +1460,7 @@
             enabled: r.enabled,
             syncAllMaps: r.syncAllMaps,
             syncNewMaps: r.syncNewMaps,
+            syncGeoObjects: r.syncGeoObjects,
           }, patch)),
         });
       } catch (err) {
@@ -1360,6 +1520,7 @@
             enabled: r.enabled,
             syncAllMaps: r.syncAllMaps,
             syncNewMaps: r.syncNewMaps,
+            syncGeoObjects: r.syncGeoObjects,
             // selectedMapUuids deliberately omitted, same reasoning as
             // updateSyncRemote: it's edited via the "Select maps" modal,
             // not this prompt-based flow, and omitting it here leaves the
@@ -1537,6 +1698,7 @@
             enabled: r.enabled,
             syncAllMaps: syncMapsAllCb.checked,
             syncNewMaps: syncMapsNewCb.checked,
+            syncGeoObjects: r.syncGeoObjects,
             selectedMapUuids,
           }),
         });
@@ -1581,6 +1743,9 @@
         // use the "Select maps" button afterwards to narrow it down.
         syncAllMaps: true,
         syncNewMaps: false,
+        // Geo-object syncing starts opted out too; toggle it on afterwards
+        // via the table's "Geo objects" checkbox.
+        syncGeoObjects: false,
       };
       createSyncRemote(payload).then(() => {
         e.target.reset();

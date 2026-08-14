@@ -115,6 +115,7 @@ type parseBearerTokenCase struct {
 	authHeader   string
 	queryToken   string
 	wantUsername string
+	wantAPIKeyID uuid.UUID
 	wantHadToken bool
 	wantValid    bool
 }
@@ -139,10 +140,10 @@ func runParseBearerTokenCases(t *testing.T, secret []byte, resolver apiKeySignin
 				r.URL.RawQuery = q.Encode()
 			}
 
-			username, hadToken, valid := parseBearerToken(secret, resolver, r)
-			if username != tc.wantUsername || hadToken != tc.wantHadToken || valid != tc.wantValid {
-				t.Fatalf("parseBearerToken() = (%q, %v, %v), want (%q, %v, %v)",
-					username, hadToken, valid, tc.wantUsername, tc.wantHadToken, tc.wantValid)
+			username, apiKeyID, hadToken, valid := parseBearerToken(secret, resolver, r)
+			if username != tc.wantUsername || apiKeyID != tc.wantAPIKeyID || hadToken != tc.wantHadToken || valid != tc.wantValid {
+				t.Fatalf("parseBearerToken() = (%q, %s, %v, %v), want (%q, %s, %v, %v)",
+					username, apiKeyID, hadToken, valid, tc.wantUsername, tc.wantAPIKeyID, tc.wantHadToken, tc.wantValid)
 			}
 		})
 	}
@@ -232,6 +233,7 @@ func TestParseBearerTokenAPIKey(t *testing.T) {
 			name:         "valid api key token resolves to the registered username, not the claimed subject",
 			authHeader:   "Bearer " + validAPIKeyToken,
 			wantUsername: testAPIKeyUsername,
+			wantAPIKeyID: keyID,
 			wantHadToken: true,
 			wantValid:    true,
 		},
@@ -262,14 +264,17 @@ func TestParseBearerTokenAPIKey(t *testing.T) {
 // authProbe wraps an http.HandlerFunc with an isolated record of whether it
 // was invoked, and with which context username, for one subtest.
 type authProbe struct {
-	called   bool
-	username string
+	called      bool
+	username    string
+	apiKeyID    uuid.UUID
+	hasAPIKeyID bool
 }
 
 func (p *authProbe) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p.called = true
 		p.username = usernameFromContext(r.Context())
+		p.apiKeyID, p.hasAPIKeyID = apiKeyIDFromContext(r.Context())
 
 		w.WriteHeader(http.StatusOK)
 	})
@@ -348,9 +353,13 @@ func TestRequireAuth(t *testing.T) {
 		if probe.username != testUsername {
 			t.Fatalf("username in context = %q, want %q", probe.username, testUsername)
 		}
+
+		if probe.hasAPIKeyID {
+			t.Fatalf("apiKeyID in context = %v, want absent for a login token", probe.apiKeyID)
+		}
 	})
 
-	t.Run("valid api key token passes through with the registered username in context", func(t *testing.T) {
+	t.Run("valid api key token passes through with the registered username and key id in context", func(t *testing.T) {
 		t.Parallel()
 
 		apiKey := testRSAKeyPair(t)
@@ -371,6 +380,10 @@ func TestRequireAuth(t *testing.T) {
 
 		if probe.username != testAPIKeyUsername {
 			t.Fatalf("username in context = %q, want %q", probe.username, testAPIKeyUsername)
+		}
+
+		if !probe.hasAPIKeyID || probe.apiKeyID != keyID {
+			t.Fatalf("apiKeyID in context = (%v, %v), want (%v, true)", probe.apiKeyID, probe.hasAPIKeyID, keyID)
 		}
 	})
 }
