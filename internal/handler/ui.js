@@ -171,7 +171,12 @@
       const tr = document.createElement('tr');
 
       const nameTd = document.createElement('td');
-      nameTd.textContent = m.name;
+      nameTd.appendChild(document.createTextNode(m.name));
+      nameTd.appendChild(document.createElement('br'));
+      const uuidSpan = document.createElement('span');
+      uuidSpan.className = 'muted';
+      uuidSpan.textContent = m.uuid;
+      nameTd.appendChild(uuidSpan);
 
       const versionTd = document.createElement('td');
       versionTd.textContent = m.currentVersion || '-';
