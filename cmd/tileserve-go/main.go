@@ -45,10 +45,14 @@ func main() {
 	seedUsername := flag.String("seed-username", envOrDefault("SEED_USERNAME", "admin"), "username to create on startup if it doesn't already exist (env SEED_USERNAME)")
 	seedPassword := flag.String("seed-password", envOrDefault("SEED_PASSWORD", "admin"), "password for -seed-username (env SEED_PASSWORD)")
 	port := flag.String("port", envOrDefault("PORT", "80"), "port to listen on (env PORT)")
+	oidcIssuerURL := flag.String("oidc-issuer-url", envOrDefault("OIDC_ISSUER_URL", ""), "OpenID Connect issuer URL; set together with -oidc-client-id, -oidc-client-secret and -oidc-redirect-url to enable SSO login (env OIDC_ISSUER_URL)")
+	oidcClientID := flag.String("oidc-client-id", envOrDefault("OIDC_CLIENT_ID", ""), "OpenID Connect client id (env OIDC_CLIENT_ID)")
+	oidcClientSecret := flag.String("oidc-client-secret", envOrDefault("OIDC_CLIENT_SECRET", ""), "OpenID Connect client secret (env OIDC_CLIENT_SECRET)")
+	oidcRedirectURL := flag.String("oidc-redirect-url", envOrDefault("OIDC_REDIRECT_URL", ""), "OpenID Connect redirect URL, must exactly match what's registered with the provider, e.g. https://tiles.example.com/login/oidc/callback (env OIDC_REDIRECT_URL)")
 
 	flag.Parse()
 
-	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port); err != nil {
+	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -94,7 +98,7 @@ func statusCmd(args []string) {
 // run wires up storage and the HTTP server and blocks until the server
 // exits. It returns an error instead of calling log.Fatal directly so that
 // deferred cleanup (closing the store) always runs.
-func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) error {
+func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL string) error {
 	if jwtSecret == "" || dbDSN == "" {
 		return errors.New("jwt-secret and db-dsn are both required")
 	}
@@ -140,6 +144,11 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 	syncManager := sync.NewManager(st, dataRoot)
 	go syncManager.Start(ctx)
 
+	oidcAuth, err := newOIDCAuthenticator(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL)
+	if err != nil {
+		return fmt.Errorf("init oidc: %w", err)
+	}
+
 	mux := http.NewServeMux()
 	// GET /healthz: liveness probe, always returns 200 "ok".
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -155,6 +164,17 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 	mux.HandleFunc("/login.js", handler.LoginScriptHandler())
 	// POST /refresh: exchanges a refresh token for a new JWT and refresh token.
 	mux.HandleFunc("/refresh", handler.RefreshHandler(secret, st))
+	// GET /auth/methods: reports which login methods are available (public),
+	// so the login pages' script knows whether to show the SSO button.
+	mux.HandleFunc("/auth/methods", handler.AuthMethodsHandler(oidcAuth != nil))
+
+	if oidcAuth != nil {
+		// GET /login/oidc: starts the OpenID Connect login redirect.
+		mux.HandleFunc("/login/oidc", handler.OIDCLoginHandler(oidcAuth))
+		// GET /login/oidc/callback: the provider's redirect back; on success
+		// issues a normal login JWT and refresh token, same as /login.
+		mux.HandleFunc("/login/oidc/callback", handler.OIDCCallbackHandler(oidcAuth, secret, st))
+	}
 	// GET /ui/: serves the self-contained management UI (public, unauthenticated).
 	mux.HandleFunc("/ui/", handler.UIHandler())
 	// GET /openapi.yaml: serves the OpenAPI 3.0 spec (public, unauthenticated).
@@ -220,4 +240,22 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port string) er
 	}
 
 	return nil
+}
+
+// newOIDCAuthenticator builds the OIDC authenticator from the four
+// -oidc-* settings. They must either all be empty (feature off — nil, nil is
+// returned and /login/oidc[/callback] aren't registered at all, see run
+// above) or all be set (feature on); a partial set is almost certainly a
+// misconfiguration, so it's rejected outright rather than silently running
+// with SSO half-enabled.
+func newOIDCAuthenticator(ctx context.Context, issuerURL, clientID, clientSecret, redirectURL string) (*handler.OIDCAuthenticator, error) {
+	if issuerURL == "" && clientID == "" && clientSecret == "" && redirectURL == "" {
+		return nil, nil
+	}
+
+	if issuerURL == "" || clientID == "" || clientSecret == "" || redirectURL == "" {
+		return nil, errors.New("oidc-issuer-url, oidc-client-id, oidc-client-secret, and oidc-redirect-url must all be set together to enable OpenID Connect login")
+	}
+
+	return handler.NewOIDCAuthenticator(ctx, issuerURL, clientID, clientSecret, redirectURL)
 }

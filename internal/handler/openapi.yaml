@@ -128,6 +128,98 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorMessage"
 
+  /auth/methods:
+    get:
+      tags: [auth]
+      summary: Available login methods
+      description: >-
+        Reports which login methods this server currently exposes, so a
+        client can decide whether to show an SSO sign-in option without
+        hardcoding whether OpenID Connect is configured.
+      security: []
+      responses:
+        "200":
+          description: Available login methods
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  oidc:
+                    type: boolean
+                    description: Whether /login/oidc is available.
+
+  /login/oidc:
+    get:
+      tags: [auth]
+      summary: Start OpenID Connect login
+      description: >-
+        Only present when OIDC is configured (see GET /auth/methods).
+        Redirects the browser to the configured provider's authorization
+        endpoint to begin the login flow; the provider redirects back to
+        GET /login/oidc/callback on completion.
+      security: []
+      parameters:
+        - name: redirect
+          in: query
+          required: false
+          description: >-
+            Same-origin absolute path to redirect back to after login,
+            defaulting to /ui/. Any other value (a full URL, a
+            protocol-relative path, etc.) is rejected in favor of the
+            default.
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Redirect to the provider's authorization endpoint
+
+  /login/oidc/callback:
+    get:
+      tags: [auth]
+      summary: OpenID Connect login callback
+      description: >-
+        Only present when OIDC is configured (see GET /auth/methods). The
+        provider redirects here after login; on success this resolves the
+        ID token to a local account — auto-provisioning one on first login
+        — issues a normal login JWT and refresh token, and redirects to the
+        target requested via GET /login/oidc's redirect parameter with
+        `#token=...&refresh_token=...&username=...` appended to its URL
+        fragment (never a query parameter, so it can't end up in a server
+        log or Referer header).
+      security: []
+      parameters:
+        - name: code
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: error
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Login succeeded; redirecting with a token in the URL fragment
+        "400":
+          description: Missing or invalid state/authorization code
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          description: Sign-in failed (provider error, or the ID token failed verification)
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
   /ui/:
     get:
       tags: [ui]

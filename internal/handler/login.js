@@ -4,6 +4,29 @@
     const resultEl = document.getElementById('result');
     const tokenEl = document.getElementById('token');
     const copyBtn = document.getElementById('copy');
+    const ssoBtn = document.getElementById('sso');
+
+    // If this page IS the OIDC callback's redirect target (started via the
+    // SSO button below, which points /login/oidc at ?redirect=/login), the
+    // token arrives in the URL fragment rather than a query parameter, so it
+    // never reaches the server in a request log or Referer header.
+    (function consumeOIDCRedirect() {
+      if (!location.hash) return;
+      const params = new URLSearchParams(location.hash.slice(1));
+      const token = params.get('token');
+      if (!token) return;
+      tokenEl.value = token;
+      resultEl.classList.remove('hidden');
+      history.replaceState(null, '', location.pathname + location.search);
+    })();
+
+    ssoBtn.addEventListener('click', () => {
+      location.href = '/login/oidc?redirect=' + encodeURIComponent('/login');
+    });
+
+    fetch('/auth/methods').then((res) => res.json()).then((info) => {
+      if (info.oidc) ssoBtn.classList.remove('hidden');
+    }).catch(() => {});
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();

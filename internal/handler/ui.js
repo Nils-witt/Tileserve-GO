@@ -5,6 +5,7 @@
     const app = document.getElementById('app');
     const loginForm = document.getElementById('login-form');
     const loginSubmit = document.getElementById('login-submit');
+    const ssoLoginBtn = document.getElementById('sso-login');
     const errorEl = document.getElementById('error');
     const appErrorEl = document.getElementById('app-error');
     const whoami = document.getElementById('whoami');
@@ -53,6 +54,20 @@
       sessionStorage.removeItem(TOKEN_KEY);
       sessionStorage.removeItem(USER_KEY);
     }
+
+    // If this page IS the OIDC callback's redirect target (the default for
+    // /login/oidc), the token arrives in the URL fragment rather than a
+    // query parameter, so it never reaches the server in a request log or
+    // Referer header.
+    (function consumeOIDCRedirect() {
+      if (!location.hash) return;
+      const params = new URLSearchParams(location.hash.slice(1));
+      const token = params.get('token');
+      const username = params.get('username');
+      if (!token || !username) return;
+      setSession(token, username);
+      history.replaceState(null, '', location.pathname + location.search);
+    })();
 
     async function api(path, options = {}) {
       const headers = Object.assign({}, options.headers, { Authorization: 'Bearer ' + getToken() });
@@ -1795,6 +1810,14 @@
       clearSession();
       showLogin();
     });
+
+    ssoLoginBtn.addEventListener('click', () => {
+      location.href = '/login/oidc';
+    });
+
+    fetch('/auth/methods').then((res) => res.json()).then((info) => {
+      if (info.oidc) ssoLoginBtn.classList.remove('hidden');
+    }).catch(() => {});
 
     document.getElementById('create-form').addEventListener('submit', (e) => {
       e.preventDefault();

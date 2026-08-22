@@ -75,6 +75,19 @@ func LoginScriptHandler() http.HandlerFunc {
 	}
 }
 
+// issueLoginToken signs and returns a human login JWT for username, valid
+// for ttl. Shared by LoginHandler, RefreshHandler, and the OIDC callback
+// (see oidc.go) — every path that hands a caller a fresh session ends here.
+func issueLoginToken(secret []byte, username string, ttl time.Duration) (string, error) {
+	claims := jwt.RegisteredClaims{
+		Subject:   username,
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
+		IssuedAt:  jwt.NewNumericDate(time.Now()),
+	}
+
+	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
+}
+
 type loginRequest struct {
 	Username   string `json:"username"`
 	Password   string `json:"password"`
@@ -121,13 +134,7 @@ func LoginHandler(secret []byte, st *store.Store) http.HandlerFunc {
 			ttl = min(time.Duration(req.TTLSeconds)*time.Second, maxTokenTTL)
 		}
 
-		claims := jwt.RegisteredClaims{
-			Subject:   req.Username,
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(ttl)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		}
-
-		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
+		token, err := issueLoginToken(secret, req.Username, ttl)
 		if err != nil {
 			http.Error(w, "failed to issue token", http.StatusInternalServerError)
 			return
@@ -177,13 +184,7 @@ func RefreshHandler(secret []byte, st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		claims := jwt.RegisteredClaims{
-			Subject:   username,
-			ExpiresAt: jwt.NewNumericDate(time.Now().Add(defaultTokenTTL)),
-			IssuedAt:  jwt.NewNumericDate(time.Now()),
-		}
-
-		token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(secret)
+		token, err := issueLoginToken(secret, username, defaultTokenTTL)
 		if err != nil {
 			http.Error(w, "failed to issue token", http.StatusInternalServerError)
 			return

@@ -52,6 +52,7 @@
   }
   #error { color: #dc2626; font-size: 0.85rem; margin-top: 0.75rem; }
   #copy { margin-top: 0.5rem; background: #444; }
+  #sso { margin-top: 0.75rem; background: #444; }
   .hidden { display: none; }
   footer {
     position: fixed;
@@ -77,6 +78,7 @@
       <input id="ttl" name="ttl" type="number" min="1" placeholder="default">
       <button type="submit" id="submit">Sign in</button>
     </form>
+    <button type="button" id="sso" class="hidden">Sign in with SSO</button>
     <p id="error" class="hidden"></p>
     <div id="result" class="hidden">
       <label for="token">JWT</label>

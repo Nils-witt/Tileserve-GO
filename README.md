@@ -243,10 +243,24 @@ curl -X DELETE localhost:8085/users/alice -H "Authorization: Bearer <token>"
 `PUT` always replaces all four permission flags (they're not optional/partial); `password` is the one optional
 field, left unchanged when omitted or empty.
 
+## OpenID Connect login
+
+Set all four of `-oidc-issuer-url`/`OIDC_ISSUER_URL`, `-oidc-client-id`/`OIDC_CLIENT_ID`,
+`-oidc-client-secret`/`OIDC_CLIENT_SECRET`, and `-oidc-redirect-url`/`OIDC_REDIRECT_URL` to enable SSO login
+alongside password login (they must all be set together, or not at all). `oidc-redirect-url` must exactly match
+what's registered with the provider, e.g. `https://tiles.example.com/login/oidc/callback`.
+
+When enabled, `GET /login/oidc` starts the provider's login flow and `GET /login/oidc/callback` completes it; both
+the `/login` and `/ui/` pages show a "Sign in with SSO" button once `GET /auth/methods` reports `oidc: true`. The
+first login from a given provider identity auto-creates a local account (linked to that identity for future
+logins) with no permissions at all — grant it whatever access is appropriate via the Users tab in `/ui/` or the
+`/users` API.
+
 ## Config
 
 Set via flags or matching env vars (`-data-root`/`DATA_ROOT`, `-jwt-secret`/`JWT_SECRET`, `-db-dsn`/`DATABASE_URL`,
-`-seed-username`/`SEED_USERNAME`, `-seed-password`/`SEED_PASSWORD`, `-port`/`PORT`, default port `8085`).
+`-seed-username`/`SEED_USERNAME`, `-seed-password`/`SEED_PASSWORD`, `-port`/`PORT`, default port `8085`, plus the
+`-oidc-*` settings above).
 `jwt-secret` and `db-dsn` are required.
 
 ## Docker

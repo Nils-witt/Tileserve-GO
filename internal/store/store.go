@@ -385,6 +385,21 @@ var migrationSteps = []struct {
 			CREATE INDEX IF NOT EXISTS idx_api_key_scopes_api_key ON api_key_scopes (api_key_id);
 		`,
 	},
+	{
+		// Links a local account to the OpenID Connect identity it was
+		// provisioned from (or later linked to), so a repeat login at the
+		// same provider resolves back to the same account (see
+		// FindUserByOIDCIdentity/CreateOIDCUser in oidc.go). Both columns
+		// are '' for a password-only account. The unique index is partial
+		// (WHERE oidc_subject <> '') so multiple password-only accounts
+		// don't collide on the shared '' default.
+		errContext: "migrate users oidc columns",
+		sql: `
+			ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_issuer  TEXT NOT NULL DEFAULT '';
+			ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_subject TEXT NOT NULL DEFAULT '';
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity ON users (oidc_issuer, oidc_subject) WHERE oidc_subject <> '';
+		`,
+	},
 }
 
 // Authenticate looks up username and verifies password against its bcrypt hash.
