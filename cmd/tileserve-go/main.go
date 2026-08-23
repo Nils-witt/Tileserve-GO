@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"nilswitt.dev/tileserve-go/internal/events"
 	"nilswitt.dev/tileserve-go/internal/handler"
 	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/sync"
@@ -49,10 +50,15 @@ func main() {
 	oidcClientID := flag.String("oidc-client-id", envOrDefault("OIDC_CLIENT_ID", ""), "OpenID Connect client id (env OIDC_CLIENT_ID)")
 	oidcClientSecret := flag.String("oidc-client-secret", envOrDefault("OIDC_CLIENT_SECRET", ""), "OpenID Connect client secret (env OIDC_CLIENT_SECRET)")
 	oidcRedirectURL := flag.String("oidc-redirect-url", envOrDefault("OIDC_REDIRECT_URL", ""), "OpenID Connect redirect URL, must exactly match what's registered with the provider, e.g. https://tiles.example.com/login/oidc/callback (env OIDC_REDIRECT_URL)")
+	mqttBrokerURL := flag.String("mqtt-broker-url", envOrDefault("MQTT_BROKER_URL", ""), "MQTT broker URL to publish data-change events to, e.g. tcp://localhost:1883; unset disables event publishing (env MQTT_BROKER_URL)")
+	mqttClientID := flag.String("mqtt-client-id", envOrDefault("MQTT_CLIENT_ID", ""), "MQTT client id; defaults to tileserve-go, set explicitly when running multiple instances against the same broker (env MQTT_CLIENT_ID)")
+	mqttUsername := flag.String("mqtt-username", envOrDefault("MQTT_USERNAME", ""), "username for MQTT broker authentication, if required (env MQTT_USERNAME)")
+	mqttPassword := flag.String("mqtt-password", envOrDefault("MQTT_PASSWORD", ""), "password for MQTT broker authentication, if required (env MQTT_PASSWORD)")
+	mqttTopicPrefix := flag.String("mqtt-topic-prefix", envOrDefault("MQTT_TOPIC_PREFIX", ""), "prefix prepended to every published MQTT topic; defaults to tileserve (env MQTT_TOPIC_PREFIX)")
 
 	flag.Parse()
 
-	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL); err != nil {
+	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL, *mqttBrokerURL, *mqttClientID, *mqttUsername, *mqttPassword, *mqttTopicPrefix); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -98,7 +104,7 @@ func statusCmd(args []string) {
 // run wires up storage and the HTTP server and blocks until the server
 // exits. It returns an error instead of calling log.Fatal directly so that
 // deferred cleanup (closing the store) always runs.
-func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL string) error {
+func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, mqttBrokerURL, mqttClientID, mqttUsername, mqttPassword, mqttTopicPrefix string) error {
 	if jwtSecret == "" || dbDSN == "" {
 		return errors.New("jwt-secret and db-dsn are both required")
 	}
@@ -122,10 +128,8 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 		return fmt.Errorf("migrate: %w", err)
 	}
 
-	if seedUsername != "" && seedPassword != "" {
-		if err := st.SeedUser(ctx, seedUsername, seedPassword); err != nil {
-			return fmt.Errorf("seed user: %w", err)
-		}
+	if err := seedUserIfConfigured(ctx, st, seedUsername, seedPassword); err != nil {
+		return fmt.Errorf("seed user: %w", err)
 	}
 
 	// Backfilling missing index.json files is best-effort and independent of
@@ -148,6 +152,12 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	if err != nil {
 		return fmt.Errorf("init oidc: %w", err)
 	}
+
+	mqttCleanup, err := wireMQTTPublisher(st, mqttBrokerURL, mqttClientID, mqttUsername, mqttPassword, mqttTopicPrefix)
+	if err != nil {
+		return fmt.Errorf("init mqtt: %w", err)
+	}
+	defer mqttCleanup()
 
 	mux := http.NewServeMux()
 	// GET /healthz: liveness probe, always returns 200 "ok".
@@ -242,6 +252,17 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	return nil
 }
 
+// seedUserIfConfigured creates seedUsername/seedPassword via st.SeedUser,
+// unless either is empty (seeding is optional; an empty pair means "don't
+// seed anything").
+func seedUserIfConfigured(ctx context.Context, st *store.Store, seedUsername, seedPassword string) error {
+	if seedUsername == "" || seedPassword == "" {
+		return nil
+	}
+
+	return st.SeedUser(ctx, seedUsername, seedPassword)
+}
+
 // newOIDCAuthenticator builds the OIDC authenticator from the four
 // -oidc-* settings. They must either all be empty (feature off — nil, nil is
 // returned and /login/oidc[/callback] aren't registered at all, see run
@@ -258,4 +279,34 @@ func newOIDCAuthenticator(ctx context.Context, issuerURL, clientID, clientSecret
 	}
 
 	return handler.NewOIDCAuthenticator(ctx, issuerURL, clientID, clientSecret, redirectURL)
+}
+
+// wireMQTTPublisher builds the MQTT event publisher from the -mqtt-* settings
+// and, if enabled, wires it into st. Unlike OIDC's all-or-nothing four flags,
+// only brokerURL gates the feature: clientID/username/password/topicPrefix
+// all have sane defaults (see events.Config), so leaving them unset is never
+// a misconfiguration. An empty brokerURL leaves event publishing disabled.
+// The returned cleanup func is always safe to defer, even when publishing is
+// disabled or NewPublisher fails.
+func wireMQTTPublisher(st *store.Store, brokerURL, clientID, username, password, topicPrefix string) (cleanup func(), err error) {
+	noop := func() {}
+
+	if brokerURL == "" {
+		return noop, nil
+	}
+
+	pub, err := events.NewPublisher(events.Config{
+		BrokerURL:   brokerURL,
+		ClientID:    clientID,
+		Username:    username,
+		Password:    password,
+		TopicPrefix: topicPrefix,
+	})
+	if err != nil {
+		return noop, err
+	}
+
+	st.SetEventPublisher(pub)
+
+	return pub.Close, nil
 }

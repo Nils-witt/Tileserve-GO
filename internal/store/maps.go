@@ -49,6 +49,10 @@ func (s *Store) CreateMap(ctx context.Context, name, currentVersion string, visi
 		return MapRecord{}, fmt.Errorf("create map: %w", err)
 	}
 
+	if s.events != nil {
+		s.events.MapCreated(m)
+	}
+
 	return m, nil
 }
 
@@ -265,6 +269,10 @@ func (s *Store) IncrementMapVersion(ctx context.Context, id uuid.UUID, updatedBy
 
 	s.mapCache.invalidate(id)
 	s.currentVersionCache.invalidate(id)
+
+	if s.events != nil {
+		s.events.MapVersionUpdated(m)
+	}
 
 	return m, nil
 }
