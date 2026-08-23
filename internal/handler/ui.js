@@ -443,6 +443,8 @@
     const permAddView = document.getElementById('perm-add-view');
     const permAddEdit = document.getElementById('perm-add-edit');
     const permAddDelete = document.getElementById('perm-add-delete');
+    const permAddEditGeo = document.getElementById('perm-add-edit-geo');
+    const permAddDeleteGeo = document.getElementById('perm-add-delete-geo');
     const permAddBtn = document.getElementById('perm-add-btn');
     let permMapId = null;
 
@@ -502,11 +504,17 @@
       const deleteCb = document.createElement('input');
       deleteCb.type = 'checkbox';
       deleteCb.checked = g.canDelete;
+      const editGeoCb = document.createElement('input');
+      editGeoCb.type = 'checkbox';
+      editGeoCb.checked = g.canEditGeoObjects;
+      const deleteGeoCb = document.createElement('input');
+      deleteGeoCb.type = 'checkbox';
+      deleteGeoCb.checked = g.canDeleteGeoObjects;
 
       const saveBtn = document.createElement('button');
       saveBtn.className = 'secondary';
       saveBtn.textContent = 'Save';
-      saveBtn.onclick = () => grantMapPermission(g.username, viewCb.checked, editCb.checked, deleteCb.checked);
+      saveBtn.onclick = () => grantMapPermission(g.username, viewCb.checked, editCb.checked, deleteCb.checked, editGeoCb.checked, deleteGeoCb.checked);
 
       const revokeBtn = document.createElement('button');
       revokeBtn.className = 'danger';
@@ -528,18 +536,24 @@
       const deleteTd = document.createElement('td');
       deleteTd.className = 'checkbox-cell';
       deleteTd.appendChild(deleteCb);
+      const editGeoTd = document.createElement('td');
+      editGeoTd.className = 'checkbox-cell';
+      editGeoTd.appendChild(editGeoCb);
+      const deleteGeoTd = document.createElement('td');
+      deleteGeoTd.className = 'checkbox-cell';
+      deleteGeoTd.appendChild(deleteGeoCb);
 
-      tr.append(userTd, viewTd, editTd, deleteTd, actionsTd);
+      tr.append(userTd, viewTd, editTd, deleteTd, editGeoTd, deleteGeoTd, actionsTd);
       return tr;
     }
 
-    async function grantMapPermission(username, canView, canEdit, canDelete) {
+    async function grantMapPermission(username, canView, canEdit, canDelete, canEditGeoObjects, canDeleteGeoObjects) {
       permError(null);
       try {
         await api('/maps/' + permMapId + '/permissions/' + encodeURIComponent(username), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ canView, canEdit, canDelete }),
+          body: JSON.stringify({ canView, canEdit, canDelete, canEditGeoObjects, canDeleteGeoObjects }),
         });
         await loadMapPermissions();
       } catch (err) {
@@ -563,7 +577,7 @@
     });
     permAddBtn.addEventListener('click', () => {
       if (!permAddUser.value) return;
-      grantMapPermission(permAddUser.value, permAddView.checked, permAddEdit.checked, permAddDelete.checked);
+      grantMapPermission(permAddUser.value, permAddView.checked, permAddEdit.checked, permAddDelete.checked, permAddEditGeo.checked, permAddDeleteGeo.checked);
     });
 
     const aliasOverlay = document.getElementById('alias-overlay');
@@ -952,6 +966,12 @@
       const deleteCb = document.createElement('input');
       deleteCb.type = 'checkbox';
       deleteCb.checked = u.canDelete;
+      const editGeoCb = document.createElement('input');
+      editGeoCb.type = 'checkbox';
+      editGeoCb.checked = u.canEditGeoObjects;
+      const deleteGeoCb = document.createElement('input');
+      deleteGeoCb.type = 'checkbox';
+      deleteGeoCb.checked = u.canDeleteGeoObjects;
       const adminCb = document.createElement('input');
       adminCb.type = 'checkbox';
       adminCb.checked = u.isAdmin;
@@ -972,6 +992,8 @@
         canCreate: createCb.checked,
         canEdit: editCb.checked,
         canDelete: deleteCb.checked,
+        canEditGeoObjects: editGeoCb.checked,
+        canDeleteGeoObjects: deleteGeoCb.checked,
         isAdmin: adminCb.checked,
         password: passwordInput.value,
       });
@@ -1009,11 +1031,17 @@
       const deleteTd = document.createElement('td');
       deleteTd.className = 'checkbox-cell';
       deleteTd.appendChild(deleteCb);
+      const editGeoTd = document.createElement('td');
+      editGeoTd.className = 'checkbox-cell';
+      editGeoTd.appendChild(editGeoCb);
+      const deleteGeoTd = document.createElement('td');
+      deleteGeoTd.className = 'checkbox-cell';
+      deleteGeoTd.appendChild(deleteGeoCb);
       const adminTd = document.createElement('td');
       adminTd.className = 'checkbox-cell';
       adminTd.appendChild(adminCb);
 
-      tr.append(usernameTd, cnTd, createTd, editTd, deleteTd, adminTd, passwordTd, createdTd, actionsTd);
+      tr.append(usernameTd, cnTd, createTd, editTd, deleteTd, editGeoTd, deleteGeoTd, adminTd, passwordTd, createdTd, actionsTd);
       return tr;
     }
 
@@ -1842,6 +1870,8 @@
         canCreate: document.getElementById('cu-create').checked,
         canEdit: document.getElementById('cu-edit').checked,
         canDelete: document.getElementById('cu-delete').checked,
+        canEditGeoObjects: document.getElementById('cu-edit-geo').checked,
+        canDeleteGeoObjects: document.getElementById('cu-delete-geo').checked,
         isAdmin: document.getElementById('cu-admin').checked,
       };
       createUser(payload).then(() => {
@@ -1849,6 +1879,8 @@
         document.getElementById('cu-create').checked = true;
         document.getElementById('cu-edit').checked = true;
         document.getElementById('cu-delete').checked = true;
+        document.getElementById('cu-edit-geo').checked = true;
+        document.getElementById('cu-delete-geo').checked = true;
       });
     });
 

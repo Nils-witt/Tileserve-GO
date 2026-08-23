@@ -218,6 +218,12 @@
               <label><input type="checkbox" id="cu-delete" checked> Can delete</label>
             </div>
             <div class="field">
+              <label><input type="checkbox" id="cu-edit-geo" checked> Can edit geo objects</label>
+            </div>
+            <div class="field">
+              <label><input type="checkbox" id="cu-delete-geo" checked> Can delete geo objects</label>
+            </div>
+            <div class="field">
               <label><input type="checkbox" id="cu-admin"> Admin</label>
             </div>
             <button type="submit">Create</button>
@@ -234,6 +240,8 @@
                 <th class="checkbox-cell">Create</th>
                 <th class="checkbox-cell">Edit</th>
                 <th class="checkbox-cell">Delete</th>
+                <th class="checkbox-cell">Geo edit</th>
+                <th class="checkbox-cell">Geo delete</th>
                 <th class="checkbox-cell">Admin</th>
                 <th>New password</th>
                 <th>Created</th>
@@ -339,6 +347,8 @@
               <th class="checkbox-cell">View</th>
               <th class="checkbox-cell">Edit</th>
               <th class="checkbox-cell">Delete</th>
+              <th class="checkbox-cell">Geo edit</th>
+              <th class="checkbox-cell">Geo delete</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -358,6 +368,12 @@
           </div>
           <div class="field">
             <label><input type="checkbox" id="perm-add-delete"> Can delete</label>
+          </div>
+          <div class="field">
+            <label><input type="checkbox" id="perm-add-edit-geo"> Can edit geo objects</label>
+          </div>
+          <div class="field">
+            <label><input type="checkbox" id="perm-add-delete-geo"> Can delete geo objects</label>
           </div>
           <button id="perm-add-btn">Grant</button>
         </div>

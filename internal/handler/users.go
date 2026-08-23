@@ -8,28 +8,77 @@ import (
 )
 
 type userRequest struct {
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	CN        string `json:"cn"`
-	CanCreate bool   `json:"canCreate"`
-	CanEdit   bool   `json:"canEdit"`
-	CanDelete bool   `json:"canDelete"`
-	IsAdmin   bool   `json:"isAdmin"`
+	Username            string `json:"username"`
+	Password            string `json:"password"`
+	CN                  string `json:"cn"`
+	CanCreate           bool   `json:"canCreate"`
+	CanEdit             bool   `json:"canEdit"`
+	CanDelete           bool   `json:"canDelete"`
+	CanEditGeoObjects   bool   `json:"canEditGeoObjects"`
+	CanDeleteGeoObjects bool   `json:"canDeleteGeoObjects"`
+	IsAdmin             bool   `json:"isAdmin"`
 }
 
 // permissions extracts the global Permissions fields carried by a userRequest.
 func (req userRequest) permissions() store.Permissions {
 	return store.Permissions{
-		CanCreate: req.CanCreate,
-		CanEdit:   req.CanEdit,
-		CanDelete: req.CanDelete,
-		IsAdmin:   req.IsAdmin,
+		CanCreate:           req.CanCreate,
+		CanEdit:             req.CanEdit,
+		CanDelete:           req.CanDelete,
+		CanEditGeoObjects:   req.CanEditGeoObjects,
+		CanDeleteGeoObjects: req.CanDeleteGeoObjects,
+		IsAdmin:             req.IsAdmin,
 	}
 }
 
 // requireAdmin is a shorthand for requiring the is_admin permission.
 func requireAdmin(w http.ResponseWriter, r *http.Request, st *store.Store) bool {
 	return requirePermission(w, r, st, func(p store.Permissions) bool { return p.IsAdmin })
+}
+
+// userFilterFromQuery builds a store.UserFilter from r's query parameters,
+// writing a 400 response and returning ok=false if any of the boolean
+// params is malformed.
+func userFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter store.UserFilter, ok bool) {
+	isAdmin, ok := queryBoolParam(w, r, "isAdmin")
+	if !ok {
+		return store.UserFilter{}, false
+	}
+
+	canCreate, ok := queryBoolParam(w, r, "canCreate")
+	if !ok {
+		return store.UserFilter{}, false
+	}
+
+	canEdit, ok := queryBoolParam(w, r, "canEdit")
+	if !ok {
+		return store.UserFilter{}, false
+	}
+
+	canDelete, ok := queryBoolParam(w, r, "canDelete")
+	if !ok {
+		return store.UserFilter{}, false
+	}
+
+	canEditGeoObjects, ok := queryBoolParam(w, r, "canEditGeoObjects")
+	if !ok {
+		return store.UserFilter{}, false
+	}
+
+	canDeleteGeoObjects, ok := queryBoolParam(w, r, "canDeleteGeoObjects")
+	if !ok {
+		return store.UserFilter{}, false
+	}
+
+	return store.UserFilter{
+		Search:              r.URL.Query().Get("search"),
+		IsAdmin:             isAdmin,
+		CanCreate:           canCreate,
+		CanEdit:             canEdit,
+		CanDelete:           canDelete,
+		CanEditGeoObjects:   canEditGeoObjects,
+		CanDeleteGeoObjects: canDeleteGeoObjects,
+	}, true
 }
 
 // UsersCollectionHandler serves the /users collection route (admin-only):
@@ -42,32 +91,9 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 
 		switch r.Method {
 		case http.MethodGet:
-			isAdmin, ok := queryBoolParam(w, r, "isAdmin")
+			filter, ok := userFilterFromQuery(w, r)
 			if !ok {
 				return
-			}
-
-			canCreate, ok := queryBoolParam(w, r, "canCreate")
-			if !ok {
-				return
-			}
-
-			canEdit, ok := queryBoolParam(w, r, "canEdit")
-			if !ok {
-				return
-			}
-
-			canDelete, ok := queryBoolParam(w, r, "canDelete")
-			if !ok {
-				return
-			}
-
-			filter := store.UserFilter{
-				Search:    r.URL.Query().Get("search"),
-				IsAdmin:   isAdmin,
-				CanCreate: canCreate,
-				CanEdit:   canEdit,
-				CanDelete: canDelete,
 			}
 
 			users, err := st.ListUsers(r.Context(), filter)

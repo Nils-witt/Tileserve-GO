@@ -252,7 +252,7 @@ func userCanViewMap(ctx context.Context, st *store.Store, m store.MapRecord, use
 		return false, err
 	}
 
-	if perms.IsAdmin || perms.CanEdit || perms.CanDelete {
+	if perms.GrantsMapVisibility() {
 		return true, nil
 	}
 
@@ -261,7 +261,7 @@ func userCanViewMap(ctx context.Context, st *store.Store, m store.MapRecord, use
 		return false, err
 	}
 
-	return mp.CanView || mp.CanEdit || mp.CanDelete, nil
+	return mp.GrantsVisibility(), nil
 }
 
 // requireMapView checks canViewMap and writes a 403 if it fails. It returns
@@ -310,7 +310,7 @@ func listMaps(w http.ResponseWriter, r *http.Request, st *store.Store) {
 		return
 	}
 
-	bypassVisibility := perms.IsAdmin || perms.CanEdit || perms.CanDelete
+	bypassVisibility := perms.GrantsMapVisibility()
 
 	visibleToAll, ok := queryBoolParam(w, r, "visibleToAll")
 	if !ok {
@@ -812,9 +812,11 @@ func mapVersionsHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
 }
 
 type mapPermissionRequest struct {
-	CanView   bool `json:"canView"`
-	CanEdit   bool `json:"canEdit"`
-	CanDelete bool `json:"canDelete"`
+	CanView             bool `json:"canView"`
+	CanEdit             bool `json:"canEdit"`
+	CanDelete           bool `json:"canDelete"`
+	CanEditGeoObjects   bool `json:"canEditGeoObjects"`
+	CanDeleteGeoObjects bool `json:"canDeleteGeoObjects"`
 }
 
 // mapPermissionsCollectionHandler lists a map's per-user permission grants.
@@ -856,7 +858,7 @@ func mapPermissionItemHandler(st *store.Store, id uuid.UUID, username string) ht
 				return
 			}
 
-			p, err := st.SetMapPermission(r.Context(), id, username, req.CanView, req.CanEdit, req.CanDelete, usernameFromContext(r.Context()))
+			p, err := st.SetMapPermission(r.Context(), id, username, req.CanView, req.CanEdit, req.CanDelete, req.CanEditGeoObjects, req.CanDeleteGeoObjects, usernameFromContext(r.Context()))
 			if err != nil {
 				writeStoreError(w, err, store.ErrMapPermissionInvalid, http.StatusBadRequest, "map or username does not exist", "failed to set map permission")
 				return
