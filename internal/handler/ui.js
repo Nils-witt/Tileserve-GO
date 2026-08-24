@@ -801,6 +801,14 @@
       postcodeInput.className = 'inline';
       postcodeInput.value = g.postcode || '';
 
+      const cityInput = document.createElement('input');
+      cityInput.className = 'inline';
+      cityInput.value = g.city || '';
+
+      const cityDistrictInput = document.createElement('input');
+      cityDistrictInput.className = 'inline';
+      cityDistrictInput.value = g.cityDistrict || '';
+
       const saveBtn = document.createElement('button');
       saveBtn.className = 'secondary';
       saveBtn.textContent = 'Save';
@@ -812,6 +820,8 @@
         street: streetInput.value,
         housenumber: houseInput.value,
         postcode: postcodeInput.value,
+        city: cityInput.value,
+        cityDistrict: cityDistrictInput.value,
       });
 
       const deleteBtn = document.createElement('button');
@@ -839,8 +849,12 @@
       houseTd.appendChild(houseInput);
       const postcodeTd = document.createElement('td');
       postcodeTd.appendChild(postcodeInput);
+      const cityTd = document.createElement('td');
+      cityTd.appendChild(cityInput);
+      const cityDistrictTd = document.createElement('td');
+      cityDistrictTd.appendChild(cityDistrictInput);
 
-      tr.append(nameTd, externalTd, latTd, lonTd, streetTd, houseTd, postcodeTd, actionsTd);
+      tr.append(nameTd, externalTd, latTd, lonTd, streetTd, houseTd, postcodeTd, cityTd, cityDistrictTd, actionsTd);
       return tr;
     }
 
@@ -898,6 +912,8 @@
         street: document.getElementById('geo-create-street').value,
         housenumber: document.getElementById('geo-create-housenumber').value,
         postcode: document.getElementById('geo-create-postcode').value,
+        city: document.getElementById('geo-create-city').value,
+        cityDistrict: document.getElementById('geo-create-city-district').value,
       };
       createGeoObject(payload).then(() => {
         e.target.reset();

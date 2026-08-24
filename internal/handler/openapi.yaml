@@ -1187,6 +1187,16 @@ paths:
           description: Exact match on postcode.
           schema:
             type: string
+        - name: city
+          in: query
+          description: Case-insensitive substring match on city.
+          schema:
+            type: string
+        - name: cityDistrict
+          in: query
+          description: Case-insensitive substring match on cityDistrict.
+          schema:
+            type: string
         - name: createdBy
           in: query
           description: Exact match on the username that created the geo object.
@@ -1563,6 +1573,10 @@ components:
           type: string
         postcode:
           type: string
+        city:
+          type: string
+        cityDistrict:
+          type: string
 
     GeoObject:
       type: object
@@ -1590,6 +1604,10 @@ components:
         housenumber:
           type: string
         postcode:
+          type: string
+        city:
+          type: string
+        cityDistrict:
           type: string
         createdAt:
           type: string

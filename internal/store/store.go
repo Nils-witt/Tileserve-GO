@@ -202,6 +202,18 @@ var migrationSteps = []struct {
 		`,
 	},
 	{
+		errContext: "migrate geo_objects city column",
+		sql: `
+			ALTER TABLE geo_objects ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
+		`,
+	},
+	{
+		errContext: "migrate geo_objects city_district column",
+		sql: `
+			ALTER TABLE geo_objects ADD COLUMN IF NOT EXISTS city_district TEXT NOT NULL DEFAULT '';
+		`,
+	},
+	{
 		errContext: "migrate geo_objects index",
 		sql: `
 			CREATE INDEX IF NOT EXISTS idx_geo_objects_map_version ON geo_objects (map_uuid, version);

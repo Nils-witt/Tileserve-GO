@@ -9,13 +9,15 @@ import (
 )
 
 type geoObjectRequest struct {
-	Name        string   `json:"name"`
-	ExternalID  string   `json:"externalId"`
-	Latitude    *float64 `json:"latitude"`
-	Longitude   *float64 `json:"longitude"`
-	Street      string   `json:"street"`
-	HouseNumber string   `json:"housenumber"`
-	Postcode    string   `json:"postcode"`
+	Name         string   `json:"name"`
+	ExternalID   string   `json:"externalId"`
+	Latitude     *float64 `json:"latitude"`
+	Longitude    *float64 `json:"longitude"`
+	Street       string   `json:"street"`
+	HouseNumber  string   `json:"housenumber"`
+	Postcode     string   `json:"postcode"`
+	City         string   `json:"city"`
+	CityDistrict string   `json:"cityDistrict"`
 }
 
 // decodeGeoObjectRequest decodes and validates req's body, writing a 400
@@ -79,15 +81,17 @@ func geoObjectFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter st
 	}
 
 	return store.GeoObjectFilter{
-		Name:       r.URL.Query().Get("name"),
-		ExternalID: r.URL.Query().Get("externalId"),
-		Street:     r.URL.Query().Get("street"),
-		Postcode:   r.URL.Query().Get("postcode"),
-		CreatedBy:  r.URL.Query().Get("createdBy"),
-		MinLat:     minLat,
-		MaxLat:     maxLat,
-		MinLon:     minLon,
-		MaxLon:     maxLon,
+		Name:         r.URL.Query().Get("name"),
+		ExternalID:   r.URL.Query().Get("externalId"),
+		Street:       r.URL.Query().Get("street"),
+		Postcode:     r.URL.Query().Get("postcode"),
+		City:         r.URL.Query().Get("city"),
+		CityDistrict: r.URL.Query().Get("cityDistrict"),
+		CreatedBy:    r.URL.Query().Get("createdBy"),
+		MinLat:       minLat,
+		MaxLat:       maxLat,
+		MinLon:       minLon,
+		MaxLon:       maxLon,
 	}, true
 }
 
@@ -132,7 +136,7 @@ func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version strin
 				return
 			}
 
-			g, err := st.CreateGeoObject(r.Context(), mapID, version, req.Name, req.ExternalID, *req.Latitude, *req.Longitude, req.Street, req.HouseNumber, req.Postcode, usernameFromContext(r.Context()))
+			g, err := st.CreateGeoObject(r.Context(), mapID, version, req.Name, req.ExternalID, *req.Latitude, *req.Longitude, req.Street, req.HouseNumber, req.Postcode, req.City, req.CityDistrict, usernameFromContext(r.Context()))
 			if err != nil {
 				writeStoreError(w, err, store.ErrGeoObjectInvalid, http.StatusBadRequest, "map or version does not exist", "failed to create geo object")
 				return
@@ -200,7 +204,7 @@ func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id u
 				return
 			}
 
-			g, err := st.UpdateGeoObject(r.Context(), mapID, version, id, req.Name, req.ExternalID, *req.Latitude, *req.Longitude, req.Street, req.HouseNumber, req.Postcode, usernameFromContext(r.Context()))
+			g, err := st.UpdateGeoObject(r.Context(), mapID, version, id, req.Name, req.ExternalID, *req.Latitude, *req.Longitude, req.Street, req.HouseNumber, req.Postcode, req.City, req.CityDistrict, usernameFromContext(r.Context()))
 			if err != nil {
 				writeStoreError(w, err, store.ErrGeoObjectNotFound, http.StatusNotFound, "geo object not found", "failed to update geo object")
 				return

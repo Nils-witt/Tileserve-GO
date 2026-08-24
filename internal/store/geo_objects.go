@@ -20,46 +20,50 @@ var (
 
 // GeoObjectRecord is a point of interest attached to a specific map version.
 type GeoObjectRecord struct {
-	UUID        uuid.UUID `json:"uuid"`
-	MapUUID     uuid.UUID `json:"mapUuid"`
-	Version     string    `json:"version"`
-	Name        string    `json:"name"`
-	ExternalID  string    `json:"externalId"`
-	Latitude    float64   `json:"latitude"`
-	Longitude   float64   `json:"longitude"`
-	Street      string    `json:"street"`
-	HouseNumber string    `json:"housenumber"`
-	Postcode    string    `json:"postcode"`
-	CreatedAt   time.Time `json:"createdAt"`
-	UpdatedAt   time.Time `json:"updatedAt"`
-	CreatedBy   string    `json:"createdBy"`
-	UpdatedBy   string    `json:"updatedBy"`
+	UUID         uuid.UUID `json:"uuid"`
+	MapUUID      uuid.UUID `json:"mapUuid"`
+	Version      string    `json:"version"`
+	Name         string    `json:"name"`
+	ExternalID   string    `json:"externalId"`
+	Latitude     float64   `json:"latitude"`
+	Longitude    float64   `json:"longitude"`
+	Street       string    `json:"street"`
+	HouseNumber  string    `json:"housenumber"`
+	Postcode     string    `json:"postcode"`
+	City         string    `json:"city"`
+	CityDistrict string    `json:"cityDistrict"`
+	CreatedAt    time.Time `json:"createdAt"`
+	UpdatedAt    time.Time `json:"updatedAt"`
+	CreatedBy    string    `json:"createdBy"`
+	UpdatedBy    string    `json:"updatedBy"`
 }
 
 // CreateGeoObject inserts a new geo object row with a fresh UUID, tied to
 // mapID's version. It returns ErrGeoObjectInvalid if that map/version
 // combination doesn't exist in map_versions.
-func (s *Store) CreateGeoObject(ctx context.Context, mapID uuid.UUID, version, name, externalID string, latitude, longitude float64, street, houseNumber, postcode, createdBy string) (GeoObjectRecord, error) {
+func (s *Store) CreateGeoObject(ctx context.Context, mapID uuid.UUID, version, name, externalID string, latitude, longitude float64, street, houseNumber, postcode, city, cityDistrict, createdBy string) (GeoObjectRecord, error) {
 	g := GeoObjectRecord{
-		UUID:        uuid.New(),
-		MapUUID:     mapID,
-		Version:     version,
-		Name:        name,
-		ExternalID:  externalID,
-		Latitude:    latitude,
-		Longitude:   longitude,
-		Street:      street,
-		HouseNumber: houseNumber,
-		Postcode:    postcode,
-		CreatedBy:   createdBy,
-		UpdatedBy:   createdBy,
+		UUID:         uuid.New(),
+		MapUUID:      mapID,
+		Version:      version,
+		Name:         name,
+		ExternalID:   externalID,
+		Latitude:     latitude,
+		Longitude:    longitude,
+		Street:       street,
+		HouseNumber:  houseNumber,
+		Postcode:     postcode,
+		City:         city,
+		CityDistrict: cityDistrict,
+		CreatedBy:    createdBy,
+		UpdatedBy:    createdBy,
 	}
 
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO geo_objects (uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, created_by, updated_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+		INSERT INTO geo_objects (uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, city, city_district, created_by, updated_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		RETURNING created_at, updated_at
-	`, g.UUID, g.MapUUID, g.Version, g.Name, g.ExternalID, g.Latitude, g.Longitude, g.Street, g.HouseNumber, g.Postcode, g.CreatedBy, g.UpdatedBy).Scan(&g.CreatedAt, &g.UpdatedAt)
+	`, g.UUID, g.MapUUID, g.Version, g.Name, g.ExternalID, g.Latitude, g.Longitude, g.Street, g.HouseNumber, g.Postcode, g.City, g.CityDistrict, g.CreatedBy, g.UpdatedBy).Scan(&g.CreatedAt, &g.UpdatedAt)
 	if err != nil {
 		if isPgErrCode(err, "23503") {
 			return GeoObjectRecord{}, ErrGeoObjectInvalid
@@ -76,11 +80,13 @@ func (s *Store) CreateGeoObject(ctx context.Context, mapID uuid.UUID, version, n
 // enforced by the caller (see the handler), not here — clauses only checks
 // MinLat to decide whether to emit the bbox condition.
 type GeoObjectFilter struct {
-	Name       string // substring, case-insensitive
-	ExternalID string // exact match
-	Street     string // substring, case-insensitive
-	Postcode   string // exact match
-	CreatedBy  string // exact match
+	Name         string // substring, case-insensitive
+	ExternalID   string // exact match
+	Street       string // substring, case-insensitive
+	Postcode     string // exact match
+	City         string // substring, case-insensitive
+	CityDistrict string // substring, case-insensitive
+	CreatedBy    string // exact match
 
 	MinLat, MaxLat, MinLon, MaxLon *float64
 }
@@ -104,6 +110,14 @@ func (f GeoObjectFilter) clauses(qb *queryBuilder) []string {
 
 	if f.Postcode != "" {
 		clauses = append(clauses, "postcode = "+qb.bind(f.Postcode))
+	}
+
+	if f.City != "" {
+		clauses = append(clauses, "city ILIKE "+qb.bind("%"+f.City+"%"))
+	}
+
+	if f.CityDistrict != "" {
+		clauses = append(clauses, "city_district ILIKE "+qb.bind("%"+f.CityDistrict+"%"))
 	}
 
 	if f.CreatedBy != "" {
@@ -130,7 +144,7 @@ func (s *Store) ListGeoObjects(ctx context.Context, mapID uuid.UUID, version str
 	where := strings.Join(clauses, " AND ")
 
 	query := fmt.Sprintf(`
-		SELECT uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, created_at, updated_at, created_by, updated_by
+		SELECT uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, city, city_district, created_at, updated_at, created_by, updated_by
 		FROM geo_objects
 		WHERE %s
 		ORDER BY created_at ASC
@@ -139,7 +153,7 @@ func (s *Store) ListGeoObjects(ctx context.Context, mapID uuid.UUID, version str
 	return collectRows(ctx, s.pool, "list geo objects", query, func(rows pgx.Rows) (GeoObjectRecord, error) {
 		var g GeoObjectRecord
 
-		err := rows.Scan(&g.UUID, &g.MapUUID, &g.Version, &g.Name, &g.ExternalID, &g.Latitude, &g.Longitude, &g.Street, &g.HouseNumber, &g.Postcode, &g.CreatedAt, &g.UpdatedAt, &g.CreatedBy, &g.UpdatedBy)
+		err := rows.Scan(&g.UUID, &g.MapUUID, &g.Version, &g.Name, &g.ExternalID, &g.Latitude, &g.Longitude, &g.Street, &g.HouseNumber, &g.Postcode, &g.City, &g.CityDistrict, &g.CreatedAt, &g.UpdatedAt, &g.CreatedBy, &g.UpdatedBy)
 
 		return g, err
 	}, qb.args...)
@@ -151,9 +165,9 @@ func (s *Store) GetGeoObject(ctx context.Context, id uuid.UUID) (GeoObjectRecord
 	var g GeoObjectRecord
 
 	err := s.pool.QueryRow(ctx, `
-		SELECT uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, created_at, updated_at, created_by, updated_by
+		SELECT uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, city, city_district, created_at, updated_at, created_by, updated_by
 		FROM geo_objects WHERE uuid = $1
-	`, id).Scan(&g.UUID, &g.MapUUID, &g.Version, &g.Name, &g.ExternalID, &g.Latitude, &g.Longitude, &g.Street, &g.HouseNumber, &g.Postcode, &g.CreatedAt, &g.UpdatedAt, &g.CreatedBy, &g.UpdatedBy)
+	`, id).Scan(&g.UUID, &g.MapUUID, &g.Version, &g.Name, &g.ExternalID, &g.Latitude, &g.Longitude, &g.Street, &g.HouseNumber, &g.Postcode, &g.City, &g.CityDistrict, &g.CreatedAt, &g.UpdatedAt, &g.CreatedBy, &g.UpdatedBy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return GeoObjectRecord{}, ErrGeoObjectNotFound
 	}
@@ -170,15 +184,15 @@ func (s *Store) GetGeoObject(ctx context.Context, id uuid.UUID) (GeoObjectRecord
 // the caller's URL, so a mismatched id, map, or version all report as
 // ErrGeoObjectNotFound in one query rather than requiring a separate lookup
 // first.
-func (s *Store) UpdateGeoObject(ctx context.Context, mapID uuid.UUID, version string, id uuid.UUID, name, externalID string, latitude, longitude float64, street, houseNumber, postcode, updatedBy string) (GeoObjectRecord, error) {
+func (s *Store) UpdateGeoObject(ctx context.Context, mapID uuid.UUID, version string, id uuid.UUID, name, externalID string, latitude, longitude float64, street, houseNumber, postcode, city, cityDistrict, updatedBy string) (GeoObjectRecord, error) {
 	var g GeoObjectRecord
 
 	err := s.pool.QueryRow(ctx, `
 		UPDATE geo_objects
-		SET name = $4, external_id = $5, latitude = $6, longitude = $7, street = $8, housenumber = $9, postcode = $10, updated_by = $11, updated_at = now()
+		SET name = $4, external_id = $5, latitude = $6, longitude = $7, street = $8, housenumber = $9, postcode = $10, city = $11, city_district = $12, updated_by = $13, updated_at = now()
 		WHERE uuid = $1 AND map_uuid = $2 AND version = $3
-		RETURNING uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, created_at, updated_at, created_by, updated_by
-	`, id, mapID, version, name, externalID, latitude, longitude, street, houseNumber, postcode, updatedBy).Scan(&g.UUID, &g.MapUUID, &g.Version, &g.Name, &g.ExternalID, &g.Latitude, &g.Longitude, &g.Street, &g.HouseNumber, &g.Postcode, &g.CreatedAt, &g.UpdatedAt, &g.CreatedBy, &g.UpdatedBy)
+		RETURNING uuid, map_uuid, version, name, external_id, latitude, longitude, street, housenumber, postcode, city, city_district, created_at, updated_at, created_by, updated_by
+	`, id, mapID, version, name, externalID, latitude, longitude, street, houseNumber, postcode, city, cityDistrict, updatedBy).Scan(&g.UUID, &g.MapUUID, &g.Version, &g.Name, &g.ExternalID, &g.Latitude, &g.Longitude, &g.Street, &g.HouseNumber, &g.Postcode, &g.City, &g.CityDistrict, &g.CreatedAt, &g.UpdatedAt, &g.CreatedBy, &g.UpdatedBy)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return GeoObjectRecord{}, ErrGeoObjectNotFound
 	}
