@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -99,6 +100,8 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
+			recordAudit(r, st, "create", "sync_remote", sr.ID.String(), fmt.Sprintf("name=%q baseUrl=%q", sr.Name, sr.BaseURL))
+
 			writeJSON(w, http.StatusCreated, sr)
 
 		default:
@@ -182,7 +185,7 @@ func SyncRemoteItemHandler(st *store.Store, mgr syncManager) http.HandlerFunc {
 
 		switch rest {
 		case "trigger":
-			triggerSyncRemote(w, r, mgr, id)
+			triggerSyncRemote(w, r, st, mgr, id)
 			return
 		case "logs":
 			getSyncRemoteLogs(w, r, mgr, id)
@@ -291,6 +294,8 @@ func updateSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 		}
 	}
 
+	recordAudit(r, st, "update", "sync_remote", sr.ID.String(), fmt.Sprintf("name=%q baseUrl=%q enabled=%v", sr.Name, sr.BaseURL, sr.Enabled))
+
 	writeJSON(w, http.StatusOK, sr)
 }
 
@@ -304,10 +309,12 @@ func deleteSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 		return
 	}
 
+	recordAudit(r, st, "delete", "sync_remote", id.String(), "")
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func triggerSyncRemote(w http.ResponseWriter, r *http.Request, mgr syncManager, id uuid.UUID) {
+func triggerSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, mgr syncManager, id uuid.UUID) {
 	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -316,6 +323,8 @@ func triggerSyncRemote(w http.ResponseWriter, r *http.Request, mgr syncManager, 
 		http.Error(w, "sync remote is not currently running (check it exists and is enabled)", http.StatusConflict)
 		return
 	}
+
+	recordAudit(r, st, "trigger", "sync_remote", id.String(), "")
 
 	w.WriteHeader(http.StatusAccepted)
 }

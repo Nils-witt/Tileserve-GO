@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -81,6 +82,8 @@ func apiKeysCollectionHandler(st *store.Store, username string) http.HandlerFunc
 				return
 			}
 
+			recordAudit(r, st, "create", "api_key", rec.ID.String(), fmt.Sprintf("owner=%s name=%q", username, req.Name))
+
 			writeJSON(w, http.StatusCreated, rec)
 
 		default:
@@ -106,6 +109,8 @@ func apiKeyItemHandler(st *store.Store, username, idStr string) http.HandlerFunc
 			writeStoreError(w, err, store.ErrAPIKeyNotFound, http.StatusNotFound, "api key not found", "failed to revoke api key")
 			return
 		}
+
+		recordAudit(r, st, "revoke", "api_key", id.String(), "owner="+username)
 
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -143,6 +148,8 @@ func apiKeyScopesCollectionHandler(st *store.Store, username, idStr string) http
 				writeStoreError(w, err, store.ErrAPIKeyNotFound, http.StatusNotFound, "api key not found", "failed to clear api key scope")
 				return
 			}
+
+			recordAudit(r, st, "revoke", "api_key_scope", id.String(), "owner="+username+" cleared all scopes")
 
 			w.WriteHeader(http.StatusNoContent)
 
@@ -187,6 +194,8 @@ func apiKeyScopeItemHandler(st *store.Store, username, idStr, mapIDStr string) h
 				return
 			}
 
+			recordAudit(r, st, "grant", "api_key_scope", id.String()+":"+mapID.String(), fmt.Sprintf("owner=%s versions=%v", username, req.Versions))
+
 			writeJSON(w, http.StatusOK, scope)
 
 		case http.MethodDelete:
@@ -194,6 +203,8 @@ func apiKeyScopeItemHandler(st *store.Store, username, idStr, mapIDStr string) h
 				writeStoreError(w, err, store.ErrAPIKeyNotFound, http.StatusNotFound, "api key not found", "failed to delete api key scope")
 				return
 			}
+
+			recordAudit(r, st, "revoke", "api_key_scope", id.String()+":"+mapID.String(), "owner="+username)
 
 			w.WriteHeader(http.StatusNoContent)
 

@@ -144,6 +144,7 @@
         <button id="tab-maps-btn" class="active">Maps</button>
         <button id="tab-users-btn" class="hidden">Users</button>
         <button id="tab-sync-btn" class="hidden">Sync</button>
+        <button id="tab-audit-btn" class="hidden">Audit log</button>
       </div>
 
       <div id="tab-maps">
@@ -313,6 +314,54 @@
           <p id="sync-empty" class="muted hidden">No sync remotes configured yet.</p>
           <p class="muted">Removing a remote stops future syncing; maps already mirrored from it keep their local
             data. Deletions on the remote are never propagated here.</p>
+        </div>
+      </div>
+
+      <div id="tab-audit" class="hidden">
+        <div class="card">
+          <form id="audit-filter-form" class="row">
+            <div class="field">
+              <label for="audit-filter-actor">Actor</label>
+              <input id="audit-filter-actor" placeholder="username">
+            </div>
+            <div class="field">
+              <label for="audit-filter-action">Action</label>
+              <input id="audit-filter-action" placeholder="e.g. create">
+            </div>
+            <div class="field">
+              <label for="audit-filter-entity-type">Entity type</label>
+              <input id="audit-filter-entity-type" placeholder="e.g. map">
+            </div>
+            <div class="field">
+              <label for="audit-filter-entity-id">Entity ID</label>
+              <input id="audit-filter-entity-id">
+            </div>
+            <button type="submit">Filter</button>
+            <button type="button" class="secondary" id="audit-filter-clear">Clear</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <p id="audit-error" class="hidden" style="color:#dc2626"></p>
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Actor</th>
+                <th>Action</th>
+                <th>Entity type</th>
+                <th>Entity ID</th>
+                <th>Detail</th>
+              </tr>
+            </thead>
+            <tbody id="audit-body"></tbody>
+          </table>
+          <p id="audit-empty" class="muted hidden">No audit log entries yet.</p>
+          <div class="row" style="margin-top:1rem">
+            <button type="button" class="secondary hidden" id="audit-load-more">Load more</button>
+          </div>
+          <p class="muted">Records every mutating admin/API action: users, maps, map permissions and aliases, version
+            uploads, geo objects, API keys, and sync remotes. Most recent first.</p>
         </div>
       </div>
     </div>

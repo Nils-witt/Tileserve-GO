@@ -206,6 +206,8 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	// POST /keys/generate: server-side RSA key pair generation convenience
 	// for the admin UI (admin-only, nothing persisted).
 	mux.Handle("/keys/generate", handler.RequireAuth(secret, st, handler.GenerateKeyPairHandler(st)))
+	// GET /audit-logs: lists recorded audit entries (admin-only).
+	mux.Handle("/audit-logs", handler.RequireAuth(secret, st, handler.AuditLogsCollectionHandler(st)))
 
 	addr := ":" + port
 	srv := &http.Server{

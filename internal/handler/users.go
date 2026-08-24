@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -121,6 +122,8 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
+			recordAudit(r, st, "create", "user", u.Username, fmt.Sprintf("cn=%q isAdmin=%v", u.CN, u.IsAdmin))
+
 			writeJSON(w, http.StatusCreated, u)
 
 		default:
@@ -172,6 +175,8 @@ func UserItemHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
+			recordAudit(r, st, "update", "user", u.Username, fmt.Sprintf("cn=%q isAdmin=%v passwordChanged=%v", u.CN, u.IsAdmin, req.Password != ""))
+
 			writeJSON(w, http.StatusOK, u)
 
 		case http.MethodDelete:
@@ -184,6 +189,8 @@ func UserItemHandler(st *store.Store) http.HandlerFunc {
 				writeStoreError(w, err, store.ErrUserNotFound, http.StatusNotFound, "user not found", "failed to delete user")
 				return
 			}
+
+			recordAudit(r, st, "delete", "user", username, "")
 
 			w.WriteHeader(http.StatusNoContent)
 

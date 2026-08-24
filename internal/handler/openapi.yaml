@@ -23,6 +23,8 @@ tags:
     description: Admin-only API key management, for server-to-server authentication
   - name: sync
     description: Admin-only configuration and control of pulling a full mirror from remote tileserve-go instances
+  - name: audit-logs
+    description: Admin-only read access to the recorded history of mutating admin/API actions
   - name: files
     description: Serving extracted map/tile files
   - name: ui
@@ -1075,6 +1077,81 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /audit-logs:
+    get:
+      tags: [audit-logs]
+      summary: List recorded audit log entries
+      description: >-
+        Requires the acting user's `is_admin` permission. Returns entries most
+        recent first. Every mutating admin/API action across users, maps,
+        map permissions, aliases, version uploads, geo objects, api keys, and
+        sync remotes appends one entry here.
+      parameters:
+        - name: actor
+          in: query
+          description: Exact match against the username that performed the action.
+          schema:
+            type: string
+        - name: action
+          in: query
+          description: 'Exact match, e.g. "create", "update", "delete", "grant", "revoke", "upload", "trigger".'
+          schema:
+            type: string
+        - name: entityType
+          in: query
+          description: 'Exact match, e.g. "user", "map", "map_permission", "map_alias", "map_version", "geo_object", "api_key", "api_key_scope", "sync_remote".'
+          schema:
+            type: string
+        - name: entityId
+          in: query
+          description: >-
+            Exact match against the affected entity's id. For an entity keyed
+            by more than one field (e.g. a map permission grant), this is a
+            colon-joined composite, e.g. `<mapUuid>:<username>`.
+          schema:
+            type: string
+        - name: since
+          in: query
+          description: Only entries at or after this RFC 3339 timestamp.
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          description: Only entries at or before this RFC 3339 timestamp.
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          description: Maximum entries to return. Defaults to 100; capped at 500.
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          description: Number of matching entries to skip, for pagination.
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Array of audit log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AuditLogEntry"
+        "400":
+          description: Invalid query parameter
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /maps/{id}/version/{version}/bounds:
     parameters:
       - $ref: "#/components/parameters/MapId"
@@ -1860,3 +1937,30 @@ components:
           type: string
         updatedBy:
           type: string
+
+    AuditLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        occurredAt:
+          type: string
+          format: date-time
+        actor:
+          type: string
+          description: Username that performed the action.
+        action:
+          type: string
+          example: create
+        entityType:
+          type: string
+          example: map
+        entityId:
+          type: string
+          description: >-
+            The affected entity's id. For an entity keyed by more than one
+            field, a colon-joined composite, e.g. `<mapUuid>:<username>`.
+        detail:
+          type: string
+          description: Short human-readable summary of what changed, if any.

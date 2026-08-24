@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
 	"strings"
@@ -373,6 +374,8 @@ func MapsCollectionHandler(st *store.Store) http.HandlerFunc {
 				http.Error(w, "failed to create map", http.StatusInternalServerError)
 				return
 			}
+
+			recordAudit(r, st, "create", "map", m.UUID.String(), fmt.Sprintf("name=%q visibleToAll=%v anonymousAllowed=%v", m.Name, m.VisibleToAll, m.AnonymousAllowed))
 
 			writeJSON(w, http.StatusCreated, m)
 
@@ -757,6 +760,8 @@ func updateMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 		return
 	}
 
+	recordAudit(r, st, "update", "map", m.UUID.String(), fmt.Sprintf("name=%q visibleToAll=%v anonymousAllowed=%v", m.Name, m.VisibleToAll, m.AnonymousAllowed))
+
 	writeJSON(w, http.StatusOK, m)
 }
 
@@ -772,6 +777,8 @@ func deleteMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 		writeStoreError(w, err, store.ErrMapNotFound, http.StatusNotFound, "map not found", "failed to delete map")
 		return
 	}
+
+	recordAudit(r, st, "delete", "map", id.String(), "")
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -864,6 +871,8 @@ func mapPermissionItemHandler(st *store.Store, id uuid.UUID, username string) ht
 				return
 			}
 
+			recordAudit(r, st, "grant", "map_permission", id.String()+":"+username, fmt.Sprintf("view=%v edit=%v delete=%v editGeo=%v deleteGeo=%v", req.CanView, req.CanEdit, req.CanDelete, req.CanEditGeoObjects, req.CanDeleteGeoObjects))
+
 			writeJSON(w, http.StatusOK, p)
 
 		case http.MethodDelete:
@@ -871,6 +880,8 @@ func mapPermissionItemHandler(st *store.Store, id uuid.UUID, username string) ht
 				http.Error(w, "failed to delete map permission", http.StatusInternalServerError)
 				return
 			}
+
+			recordAudit(r, st, "revoke", "map_permission", id.String()+":"+username, "")
 
 			w.WriteHeader(http.StatusNoContent)
 
