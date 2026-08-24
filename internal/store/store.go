@@ -137,6 +137,16 @@ var migrationSteps = []struct {
 		`,
 	},
 	{
+		// Defaults to true, like the other global permission columns above:
+		// an upgrading deployment's existing editors (can_edit) keep the
+		// ability to edit/delete geo objects until an admin narrows it.
+		errContext: "migrate users geo object permission columns",
+		sql: `
+			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit_geo_objects   BOOLEAN NOT NULL DEFAULT true;
+			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_delete_geo_objects BOOLEAN NOT NULL DEFAULT true;
+		`,
+	},
+	{
 		errContext: "migrate maps table",
 		sql: `
 			CREATE TABLE IF NOT EXISTS maps (
@@ -215,6 +225,15 @@ var migrationSteps = []struct {
 		errContext: "migrate map_permissions view column",
 		sql: `
 			ALTER TABLE map_permissions ADD COLUMN IF NOT EXISTS can_view BOOLEAN NOT NULL DEFAULT false;
+		`,
+	},
+	{
+		// Opt-in, like the other per-map grant columns: a per-map grant only
+		// ever adds capability, so it defaults to false.
+		errContext: "migrate map_permissions geo object columns",
+		sql: `
+			ALTER TABLE map_permissions ADD COLUMN IF NOT EXISTS can_edit_geo_objects   BOOLEAN NOT NULL DEFAULT false;
+			ALTER TABLE map_permissions ADD COLUMN IF NOT EXISTS can_delete_geo_objects BOOLEAN NOT NULL DEFAULT false;
 		`,
 	},
 	{
@@ -420,17 +439,30 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) err
 }
 
 // Permissions holds a user's global create/edit/delete/admin capabilities.
+// CanEditGeoObjects/CanDeleteGeoObjects are separate from CanEdit/CanDelete:
+// they govern geo objects specifically and don't grant (or require) the
+// ability to edit/delete the map itself, its versions, or its aliases.
 type Permissions struct {
-	CanCreate bool
-	CanEdit   bool
-	CanDelete bool
-	IsAdmin   bool
+	CanCreate           bool
+	CanEdit             bool
+	CanDelete           bool
+	CanEditGeoObjects   bool
+	CanDeleteGeoObjects bool
+	IsAdmin             bool
 }
 
-// GetPermissions returns the global create/edit/delete/admin permissions for
-// username. Results are cached for cacheTTL, since this is looked up on
-// every authenticated request (see requirePermission/canViewMap in
-// internal/handler) but changes rarely.
+// GrantsMapVisibility reports whether p, on its own, is enough to make
+// every map visible to its holder regardless of that map's own visibility
+// settings or any per-map grant: being able to modify a map or its geo
+// objects without being able to see it first would be nonsensical.
+func (p Permissions) GrantsMapVisibility() bool {
+	return p.IsAdmin || p.CanEdit || p.CanDelete || p.CanEditGeoObjects || p.CanDeleteGeoObjects
+}
+
+// GetPermissions returns the global permissions for username. Results are
+// cached for cacheTTL, since this is looked up on every authenticated
+// request (see requirePermission/canViewMap in internal/handler) but
+// changes rarely.
 func (s *Store) GetPermissions(ctx context.Context, username string) (Permissions, error) {
 	if p, ok := s.permsCache.get(username); ok {
 		return p, nil
@@ -439,8 +471,8 @@ func (s *Store) GetPermissions(ctx context.Context, username string) (Permission
 	var p Permissions
 
 	err := s.pool.QueryRow(ctx, `
-		SELECT can_create, can_edit, can_delete, is_admin FROM users WHERE username = $1
-	`, username).Scan(&p.CanCreate, &p.CanEdit, &p.CanDelete, &p.IsAdmin)
+		SELECT can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin FROM users WHERE username = $1
+	`, username).Scan(&p.CanCreate, &p.CanEdit, &p.CanDelete, &p.CanEditGeoObjects, &p.CanDeleteGeoObjects, &p.IsAdmin)
 	if err != nil {
 		return Permissions{}, fmt.Errorf("get permissions for %q: %w", username, err)
 	}

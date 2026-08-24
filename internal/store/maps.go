@@ -102,7 +102,7 @@ func (s *Store) ListMaps(ctx context.Context, username string, bypassVisibility 
 		   OR EXISTS (
 		        SELECT 1 FROM map_permissions mp
 		        WHERE mp.map_uuid = maps.uuid AND mp.username = %s
-		          AND (mp.can_view OR mp.can_edit OR mp.can_delete)
+		          AND (mp.can_view OR mp.can_edit OR mp.can_delete OR mp.can_edit_geo_objects OR mp.can_delete_geo_objects)
 		      ))`, bypassArg, userArg, userArg)}, filter.clauses(qb)...)
 	where := strings.Join(clauses, " AND ")
 

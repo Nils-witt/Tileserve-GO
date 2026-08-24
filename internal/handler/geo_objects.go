@@ -94,7 +94,9 @@ func geoObjectFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter st
 // geoObjectsCollectionHandler serves the /maps/{id}/version/{version}/geo-objects
 // collection route: GET lists the geo objects tied to this map version
 // (requires view access to the map), POST creates a new one (requires the
-// can_edit permission, global or per-map — implies view access, so no
+// can_edit_geo_objects permission, global or per-map — a permission separate
+// from the map's own can_edit, so it can be granted without also granting
+// the ability to edit the map itself. It implies view access, so no
 // separate check is needed).
 func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -119,8 +121,8 @@ func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version strin
 
 		case http.MethodPost:
 			if !requireMapPermission(w, r, st, mapID,
-				func(p store.Permissions) bool { return p.CanEdit },
-				func(mp store.MapPermission) bool { return mp.CanEdit },
+				func(p store.Permissions) bool { return p.CanEditGeoObjects },
+				func(mp store.MapPermission) bool { return mp.CanEditGeoObjects },
 			) {
 				return
 			}
@@ -168,9 +170,10 @@ func getScopedGeoObject(w http.ResponseWriter, r *http.Request, st *store.Store,
 // geoObjectItemHandler serves the
 // /maps/{id}/version/{version}/geo-objects/{uuid} route: GET fetches a geo
 // object (requires view access to the map), PUT replaces its fields
-// (requires can_edit), DELETE removes it (requires can_delete). can_edit/
-// can_delete each imply view access, so GET is the only method that checks
-// it separately.
+// (requires can_edit_geo_objects), DELETE removes it (requires
+// can_delete_geo_objects). These are separate from the map's own can_edit/
+// can_delete (see geoObjectsCollectionHandler) and each imply view access,
+// so GET is the only method that checks it separately.
 func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id uuid.UUID) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
@@ -186,8 +189,8 @@ func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id u
 
 		case http.MethodPut:
 			if !requireMapPermission(w, r, st, mapID,
-				func(p store.Permissions) bool { return p.CanEdit },
-				func(mp store.MapPermission) bool { return mp.CanEdit },
+				func(p store.Permissions) bool { return p.CanEditGeoObjects },
+				func(mp store.MapPermission) bool { return mp.CanEditGeoObjects },
 			) {
 				return
 			}
@@ -207,8 +210,8 @@ func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id u
 
 		case http.MethodDelete:
 			if !requireMapPermission(w, r, st, mapID,
-				func(p store.Permissions) bool { return p.CanDelete },
-				func(mp store.MapPermission) bool { return mp.CanDelete },
+				func(p store.Permissions) bool { return p.CanDeleteGeoObjects },
+				func(mp store.MapPermission) bool { return mp.CanDeleteGeoObjects },
 			) {
 				return
 			}

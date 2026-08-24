@@ -82,8 +82,8 @@ func (s *Store) insertOIDCUser(ctx context.Context, username, cn, issuer, subjec
 	const noPermissions = false
 
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO users (username, password_hash, cn, can_create, can_edit, can_delete, is_admin, oidc_issuer, oidc_subject)
-		VALUES ($1, $2, $3, $4, $4, $4, $4, $5, $6)
+		INSERT INTO users (username, password_hash, cn, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, oidc_issuer, oidc_subject)
+		VALUES ($1, $2, $3, $4, $4, $4, $4, $4, $4, $5, $6)
 		RETURNING created_at
 	`, username, passwordHash, cn, noPermissions, issuer, subject).Scan(&u.CreatedAt)
 	if err != nil {
