@@ -72,6 +72,10 @@ func (s *Store) CreateGeoObject(ctx context.Context, mapID uuid.UUID, version, n
 		return GeoObjectRecord{}, fmt.Errorf("create geo object: %w", err)
 	}
 
+	if s.events != nil {
+		s.events.GeoObjectCreated(g)
+	}
+
 	return g, nil
 }
 
@@ -199,6 +203,10 @@ func (s *Store) UpdateGeoObject(ctx context.Context, mapID uuid.UUID, version st
 
 	if err != nil {
 		return GeoObjectRecord{}, fmt.Errorf("update geo object: %w", err)
+	}
+
+	if s.events != nil {
+		s.events.GeoObjectUpdated(g)
 	}
 
 	return g, nil

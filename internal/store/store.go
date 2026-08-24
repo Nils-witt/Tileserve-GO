@@ -45,6 +45,7 @@ type Store struct {
 	mapAliasCache       *ttlCache[mapAliasKey, string]
 	apiKeyCache         *ttlCache[uuid.UUID, apiKeySigningKey]
 	apiKeyScopeCache    *ttlCache[apiKeyScopeKey, apiKeyScopeEntry]
+	events              EventPublisher
 }
 
 // NewStore opens a connection pool to the postgres database at dsn and

@@ -256,11 +256,31 @@ first login from a given provider identity auto-creates a local account (linked 
 logins) with no permissions at all — grant it whatever access is appropriate via the Users tab in `/ui/` or the
 `/users` API.
 
+## MQTT events
+
+Set `-mqtt-broker-url`/`MQTT_BROKER_URL` (e.g. `tcp://localhost:1883`) to publish data-change events to an MQTT
+broker; it's unset by default, which disables event publishing entirely. `-mqtt-client-id`/`MQTT_CLIENT_ID`,
+`-mqtt-username`/`MQTT_USERNAME`, and `-mqtt-password`/`MQTT_PASSWORD` configure the connection (client id defaults
+to `tileserve-go` — set it explicitly if you run more than one instance against the same broker, since two clients
+sharing an id repeatedly disconnect each other). `-mqtt-topic-prefix`/`MQTT_TOPIC_PREFIX` defaults to `tileserve`.
+
+Each event is a JSON-encoded record of the map or geo object involved, published at QoS 1 (not retained):
+
+| Topic                                                          | Fired when                              |
+|------------------------------------------------------------------|------------------------------------------|
+| `{prefix}/maps/{uuid}/created`                                    | a new map is created                      |
+| `{prefix}/maps/{uuid}/version-updated`                            | a map's current version is bumped (upload) |
+| `{prefix}/maps/{uuid}/geo-objects/{uuid}/created`                 | a new geo object is created               |
+| `{prefix}/maps/{uuid}/geo-objects/{uuid}/updated`                 | a geo object is updated                   |
+
+Note: changes pulled in via server-to-server sync (`/sync/remotes`) do not currently publish events — only changes
+made through this server's own API do.
+
 ## Config
 
 Set via flags or matching env vars (`-data-root`/`DATA_ROOT`, `-jwt-secret`/`JWT_SECRET`, `-db-dsn`/`DATABASE_URL`,
 `-seed-username`/`SEED_USERNAME`, `-seed-password`/`SEED_PASSWORD`, `-port`/`PORT`, default port `8085`, plus the
-`-oidc-*` settings above).
+`-oidc-*` settings above and the `-mqtt-*` settings above).
 `jwt-secret` and `db-dsn` are required.
 
 ## Docker
