@@ -703,7 +703,11 @@
     const geoErrorEl = document.getElementById('geo-error');
     const geoClose = document.getElementById('geo-close');
     const geoCreateForm = document.getElementById('geo-create-form');
+    const geoSelectAll = document.getElementById('geo-select-all');
+    const geoDeleteSelectedBtn = document.getElementById('geo-delete-selected');
+    const geoSelectedCountEl = document.getElementById('geo-selected-count');
     let geoMapId = null;
+    let geoSelected = new Set();
 
     function geoError(message) {
       if (!message) {
@@ -759,15 +763,38 @@
     }
 
     function renderGeoObjects(objs) {
+      geoSelected = new Set();
       geoBody.innerHTML = '';
       geoEmptyEl.classList.toggle('hidden', objs.length > 0);
       for (const g of objs) {
         geoBody.appendChild(renderGeoObjectRow(g));
       }
+      updateGeoSelectionUI();
+    }
+
+    function updateGeoSelectionUI() {
+      geoSelectedCountEl.textContent = String(geoSelected.size);
+      geoDeleteSelectedBtn.disabled = geoSelected.size === 0;
+      const rowCbs = geoBody.querySelectorAll('input.geo-select');
+      geoSelectAll.checked = rowCbs.length > 0 && geoSelected.size === rowCbs.length;
     }
 
     function renderGeoObjectRow(g) {
       const tr = document.createElement('tr');
+
+      const selectCb = document.createElement('input');
+      selectCb.type = 'checkbox';
+      selectCb.className = 'geo-select';
+      selectCb.dataset.id = g.uuid;
+      selectCb.checked = geoSelected.has(g.uuid);
+      selectCb.onchange = () => {
+        if (selectCb.checked) geoSelected.add(g.uuid);
+        else geoSelected.delete(g.uuid);
+        updateGeoSelectionUI();
+      };
+      const selectTd = document.createElement('td');
+      selectTd.className = 'checkbox-cell';
+      selectTd.appendChild(selectCb);
 
       const nameInput = document.createElement('input');
       nameInput.className = 'inline';
@@ -854,7 +881,7 @@
       const cityDistrictTd = document.createElement('td');
       cityDistrictTd.appendChild(cityDistrictInput);
 
-      tr.append(nameTd, externalTd, latTd, lonTd, streetTd, houseTd, postcodeTd, cityTd, cityDistrictTd, actionsTd);
+      tr.append(selectTd, nameTd, externalTd, latTd, lonTd, streetTd, houseTd, postcodeTd, cityTd, cityDistrictTd, actionsTd);
       return tr;
     }
 
@@ -896,6 +923,36 @@
         if (err.message !== 'unauthorized') geoError(err.message);
       }
     }
+
+    async function deleteSelectedGeoObjects() {
+      const ids = Array.from(geoSelected);
+      if (ids.length === 0) return;
+      if (!confirm('Delete ' + ids.length + ' selected geo object(s)?')) return;
+      geoError(null);
+      try {
+        for (const id of ids) {
+          await api(geoObjectPath('/' + id), { method: 'DELETE' });
+        }
+        await loadGeoObjects();
+      } catch (err) {
+        if (err.message !== 'unauthorized') geoError(err.message);
+        await loadGeoObjects();
+      }
+    }
+
+    geoSelectAll.addEventListener('change', () => {
+      geoSelected = new Set();
+      if (geoSelectAll.checked) {
+        geoBody.querySelectorAll('input.geo-select').forEach(cb => {
+          cb.checked = true;
+          geoSelected.add(cb.dataset.id);
+        });
+      } else {
+        geoBody.querySelectorAll('input.geo-select').forEach(cb => { cb.checked = false; });
+      }
+      updateGeoSelectionUI();
+    });
+    geoDeleteSelectedBtn.addEventListener('click', deleteSelectedGeoObjects);
 
     geoClose.addEventListener('click', closeGeoObjects);
     geoOverlay.addEventListener('click', (e) => {
