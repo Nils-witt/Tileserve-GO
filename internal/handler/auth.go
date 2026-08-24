@@ -14,6 +14,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
 
+	"nilswitt.dev/tileserve-go/internal/ldapauth"
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
@@ -100,12 +101,15 @@ type loginResponse struct {
 }
 
 // LoginHandler serves GET /login (the static login page) and handles
-// POST /login: it authenticates the given username/password against st
-// and, on success, issues a signed JWT valid for the requested TTL (capped
-// at maxTokenTTL, defaulting to defaultTokenTTL) alongside a refresh token
-// (valid for refreshTokenTTL) that can later be exchanged at POST /refresh
-// for a new login JWT without re-sending credentials.
-func LoginHandler(secret []byte, st *store.Store) http.HandlerFunc {
+// POST /login: it authenticates the given username/password — against st,
+// falling back to ldapAuth (if configured) for an account that isn't a local
+// match, see authenticatePassword — and, on success, issues a signed JWT
+// valid for the requested TTL (capped at maxTokenTTL, defaulting to
+// defaultTokenTTL) alongside a refresh token (valid for refreshTokenTTL)
+// that can later be exchanged at POST /refresh for a new login JWT without
+// re-sending credentials. ldapAuth may be nil, meaning LDAP login isn't
+// configured.
+func LoginHandler(secret []byte, st *store.Store, ldapAuth *ldapauth.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -124,7 +128,8 @@ func LoginHandler(secret []byte, st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if err := st.Authenticate(r.Context(), req.Username, req.Password); err != nil {
+		username, err := authenticatePassword(r.Context(), st, ldapAuth, req.Username, req.Password)
+		if err != nil {
 			http.Error(w, "invalid credentials", http.StatusUnauthorized)
 			return
 		}
@@ -134,13 +139,13 @@ func LoginHandler(secret []byte, st *store.Store) http.HandlerFunc {
 			ttl = min(time.Duration(req.TTLSeconds)*time.Second, maxTokenTTL)
 		}
 
-		token, err := issueLoginToken(secret, req.Username, ttl)
+		token, err := issueLoginToken(secret, username, ttl)
 		if err != nil {
 			http.Error(w, "failed to issue token", http.StatusInternalServerError)
 			return
 		}
 
-		refreshToken, _, err := st.CreateRefreshToken(r.Context(), req.Username, refreshTokenTTL)
+		refreshToken, _, err := st.CreateRefreshToken(r.Context(), username, refreshTokenTTL)
 		if err != nil {
 			http.Error(w, "failed to issue token", http.StatusInternalServerError)
 			return

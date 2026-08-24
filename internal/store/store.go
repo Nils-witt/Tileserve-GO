@@ -455,6 +455,20 @@ var migrationSteps = []struct {
 			CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor);
 		`,
 	},
+	{
+		// Links a local account to the LDAP directory entry it was
+		// provisioned from (or later linked to), so a repeat login at the
+		// same directory resolves back to the same account (see
+		// FindUserByLDAPIdentity/CreateLDAPUser in ldap.go). '' for a
+		// password-only or OIDC account. The unique index is partial
+		// (WHERE ldap_dn <> ''), same reasoning as idx_users_oidc_identity
+		// above.
+		errContext: "migrate users ldap column",
+		sql: `
+			ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_dn TEXT NOT NULL DEFAULT '';
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ldap_identity ON users (ldap_dn) WHERE ldap_dn <> '';
+		`,
+	},
 }
 
 // Authenticate looks up username and verifies password against its bcrypt hash.
