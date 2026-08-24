@@ -431,6 +431,30 @@ var migrationSteps = []struct {
 			CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity ON users (oidc_issuer, oidc_subject) WHERE oidc_subject <> '';
 		`,
 	},
+	{
+		// Records who did what to which resource, and when — every
+		// mutating admin/API action across users, maps, permissions, geo
+		// objects, api keys, and sync remotes (see
+		// internal/handler.recordAudit and its call sites). entity_id is
+		// TEXT rather than UUID since some entities have no single UUID
+		// (e.g. a per-map permission grant is keyed by map uuid AND
+		// username) and are recorded as a composite string instead.
+		errContext: "migrate audit_logs table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS audit_logs (
+				id          BIGSERIAL PRIMARY KEY,
+				occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+				actor       TEXT NOT NULL,
+				action      TEXT NOT NULL,
+				entity_type TEXT NOT NULL,
+				entity_id   TEXT NOT NULL DEFAULT '',
+				detail      TEXT NOT NULL DEFAULT ''
+			);
+			CREATE INDEX IF NOT EXISTS idx_audit_logs_occurred_at ON audit_logs (occurred_at DESC, id DESC);
+			CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs (entity_type, entity_id);
+			CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor);
+		`,
+	},
 }
 
 // Authenticate looks up username and verifies password against its bcrypt hash.

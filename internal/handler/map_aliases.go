@@ -123,6 +123,8 @@ func mapAliasItemHandler(st *store.Store, id uuid.UUID, alias string) http.Handl
 				return
 			}
 
+			recordAudit(r, st, "update", "map_alias", id.String()+":"+alias, "version="+req.Version)
+
 			writeJSON(w, http.StatusOK, a)
 
 		case http.MethodDelete:
@@ -137,6 +139,8 @@ func mapAliasItemHandler(st *store.Store, id uuid.UUID, alias string) http.Handl
 				http.Error(w, "failed to delete alias", http.StatusInternalServerError)
 				return
 			}
+
+			recordAudit(r, st, "delete", "map_alias", id.String()+":"+alias, "")
 
 			w.WriteHeader(http.StatusNoContent)
 

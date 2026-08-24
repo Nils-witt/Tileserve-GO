@@ -68,6 +68,8 @@ func uploadMapVersionHandler(st *store.Store, dataRoot string, id uuid.UUID) htt
 			return
 		}
 
+		recordAudit(r, st, "upload", "map_version", id.String()+":"+m.CurrentVersion, "")
+
 		writeJSON(w, http.StatusCreated, m)
 	}
 }

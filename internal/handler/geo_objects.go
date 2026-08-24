@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -142,6 +143,8 @@ func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version strin
 				return
 			}
 
+			recordAudit(r, st, "create", "geo_object", g.UUID.String(), fmt.Sprintf("map=%s version=%s name=%q", mapID, version, g.Name))
+
 			writeJSON(w, http.StatusCreated, g)
 
 		default:
@@ -210,6 +213,8 @@ func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id u
 				return
 			}
 
+			recordAudit(r, st, "update", "geo_object", g.UUID.String(), fmt.Sprintf("map=%s version=%s name=%q", mapID, version, g.Name))
+
 			writeJSON(w, http.StatusOK, g)
 
 		case http.MethodDelete:
@@ -224,6 +229,8 @@ func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id u
 				writeStoreError(w, err, store.ErrGeoObjectNotFound, http.StatusNotFound, "geo object not found", "failed to delete geo object")
 				return
 			}
+
+			recordAudit(r, st, "delete", "geo_object", id.String(), fmt.Sprintf("map=%s version=%s", mapID, version))
 
 			w.WriteHeader(http.StatusNoContent)
 

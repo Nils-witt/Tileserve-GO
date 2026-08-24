@@ -16,9 +16,20 @@
     const tabMapsBtn = document.getElementById('tab-maps-btn');
     const tabUsersBtn = document.getElementById('tab-users-btn');
     const tabSyncBtn = document.getElementById('tab-sync-btn');
+    const tabAuditBtn = document.getElementById('tab-audit-btn');
     const tabMaps = document.getElementById('tab-maps');
     const tabUsers = document.getElementById('tab-users');
     const tabSync = document.getElementById('tab-sync');
+    const tabAudit = document.getElementById('tab-audit');
+    const auditBody = document.getElementById('audit-body');
+    const auditEmptyEl = document.getElementById('audit-empty');
+    const auditErrorEl = document.getElementById('audit-error');
+    const auditFilterForm = document.getElementById('audit-filter-form');
+    const auditFilterClearBtn = document.getElementById('audit-filter-clear');
+    const auditLoadMoreBtn = document.getElementById('audit-load-more');
+    const AUDIT_PAGE_SIZE = 100;
+    let auditOffset = 0;
+    let auditHasMore = false;
     const syncBody = document.getElementById('sync-body');
     const syncEmptyEl = document.getElementById('sync-empty');
     const syncErrorEl = document.getElementById('sync-error');
@@ -121,12 +132,14 @@
         allUsers = users;
         tabUsersBtn.classList.remove('hidden');
         tabSyncBtn.classList.remove('hidden');
+        tabAuditBtn.classList.remove('hidden');
         renderUsers(users);
       } catch (err) {
         isAdmin = false;
         allUsers = [];
         tabUsersBtn.classList.add('hidden');
         tabSyncBtn.classList.add('hidden');
+        tabAuditBtn.classList.add('hidden');
         showTab('maps');
       }
     }
@@ -135,9 +148,11 @@
       tabMaps.classList.toggle('hidden', name !== 'maps');
       tabUsers.classList.toggle('hidden', name !== 'users');
       tabSync.classList.toggle('hidden', name !== 'sync');
+      tabAudit.classList.toggle('hidden', name !== 'audit');
       tabMapsBtn.classList.toggle('active', name === 'maps');
       tabUsersBtn.classList.toggle('active', name === 'users');
       tabSyncBtn.classList.toggle('active', name === 'sync');
+      tabAuditBtn.classList.toggle('active', name === 'audit');
     }
 
     function fmtDate(iso) {
@@ -1878,6 +1893,98 @@
     });
 
     tabSyncBtn.addEventListener('click', () => { showTab('sync'); loadSyncRemotes(); });
+
+    function auditError(message) {
+      if (!message) {
+        auditErrorEl.classList.add('hidden');
+        return;
+      }
+      auditErrorEl.textContent = message;
+      auditErrorEl.classList.remove('hidden');
+    }
+
+    // currentAuditFilter reads the filter form into the query params
+    // ListAuditLogs understands (see internal/handler/audit_logs.go).
+    function currentAuditFilter() {
+      const params = {};
+      const actor = document.getElementById('audit-filter-actor').value.trim();
+      const action = document.getElementById('audit-filter-action').value.trim();
+      const entityType = document.getElementById('audit-filter-entity-type').value.trim();
+      const entityId = document.getElementById('audit-filter-entity-id').value.trim();
+      if (actor) params.actor = actor;
+      if (action) params.action = action;
+      if (entityType) params.entityType = entityType;
+      if (entityId) params.entityId = entityId;
+      return params;
+    }
+
+    // loadAuditLogs fetches one page of audit log entries. reset=true starts
+    // a fresh filtered listing from offset 0, replacing the table; reset=false
+    // appends the next page (via "Load more") to what's already shown.
+    async function loadAuditLogs(reset) {
+      auditError(null);
+      if (reset) {
+        auditOffset = 0;
+        auditBody.innerHTML = '';
+      }
+      const params = new URLSearchParams(currentAuditFilter());
+      params.set('limit', String(AUDIT_PAGE_SIZE));
+      params.set('offset', String(auditOffset));
+      try {
+        const res = await api('/audit-logs?' + params.toString());
+        const entries = await res.json();
+        for (const e of entries) {
+          auditBody.appendChild(renderAuditLogRow(e));
+        }
+        auditOffset += entries.length;
+        auditHasMore = entries.length === AUDIT_PAGE_SIZE;
+        auditLoadMoreBtn.classList.toggle('hidden', !auditHasMore);
+        auditEmptyEl.classList.toggle('hidden', auditBody.children.length > 0);
+      } catch (err) {
+        if (err.message !== 'unauthorized') auditError(err.message);
+      }
+    }
+
+    function renderAuditLogRow(e) {
+      const tr = document.createElement('tr');
+
+      const timeTd = document.createElement('td');
+      timeTd.textContent = fmtDate(e.occurredAt);
+
+      const actorTd = document.createElement('td');
+      actorTd.textContent = e.actor;
+
+      const actionTd = document.createElement('td');
+      actionTd.textContent = e.action;
+
+      const entityTypeTd = document.createElement('td');
+      entityTypeTd.textContent = e.entityType;
+
+      const entityIdTd = document.createElement('td');
+      entityIdTd.textContent = e.entityId;
+      entityIdTd.style.fontFamily = 'monospace';
+      entityIdTd.style.fontSize = '0.8em';
+
+      const detailTd = document.createElement('td');
+      detailTd.textContent = e.detail;
+
+      tr.append(timeTd, actorTd, actionTd, entityTypeTd, entityIdTd, detailTd);
+      return tr;
+    }
+
+    auditFilterForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      loadAuditLogs(true);
+    });
+
+    auditFilterClearBtn.addEventListener('click', () => {
+      auditFilterForm.reset();
+      loadAuditLogs(true);
+    });
+
+    auditLoadMoreBtn.addEventListener('click', () => loadAuditLogs(false));
+
+    tabAuditBtn.addEventListener('click', () => { showTab('audit'); loadAuditLogs(true); });
 
     loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
