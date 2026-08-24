@@ -485,9 +485,13 @@
             <select id="geo-version"></select>
           </div>
         </div>
+        <div class="row" style="align-items:center">
+          <button class="danger" id="geo-delete-selected" disabled>Delete selected (<span id="geo-selected-count">0</span>)</button>
+        </div>
         <table>
           <thead>
             <tr>
+              <th class="checkbox-cell"><input type="checkbox" id="geo-select-all"></th>
               <th>Name</th>
               <th>External ID</th>
               <th>Latitude</th>
