@@ -196,7 +196,7 @@ target `version` must already exist in the map's upload history. Managing aliase
 #### GeoObjects API
 
 Authenticated CRUD for a `geo_objects` table (`uuid`, `name`, `externalId`, `latitude`, `longitude`, `street`,
-`housenumber`, `postcode`, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`). Every geo object is tied to one
+`housenumber`, `postcode`, `city`, `cityDistrict`, `createdAt`, `updatedAt`, `createdBy`, `updatedBy`). Every geo object is tied to one
 specific map version (`mapUuid` + `version`, immutable after creation) — e.g. addresses or points of interest
 belonging to a particular tile-pyramid upload. Requires view access to the map to read, `can_edit` (global or
 per-map) to create/update, and `can_delete` (global or per-map) to delete.
@@ -204,7 +204,7 @@ per-map) to create/update, and `can_delete` (global or per-map) to delete.
 ```sh
 # create a geo object for a given map version
 curl -X POST localhost:8085/maps/<uuid>/version/<version>/geo-objects -H "Authorization: Bearer <token>" \
-  -d '{"name":"Town Hall","externalId":"ext-1","latitude":52.5,"longitude":13.4,"street":"Main St","housenumber":"1","postcode":"12345"}'
+  -d '{"name":"Town Hall","externalId":"ext-1","latitude":52.5,"longitude":13.4,"street":"Main St","housenumber":"1","postcode":"12345","city":"Berlin","cityDistrict":"Mitte"}'
 
 # list a version's geo objects
 curl localhost:8085/maps/<uuid>/version/<version>/geo-objects -H "Authorization: Bearer <token>"
@@ -212,7 +212,7 @@ curl localhost:8085/maps/<uuid>/version/<version>/geo-objects -H "Authorization:
 # get one
 curl localhost:8085/maps/<uuid>/version/<version>/geo-objects/<geoObjectUuid> -H "Authorization: Bearer <token>"
 
-# update (replaces name/externalId/latitude/longitude/street/housenumber/postcode)
+# update (replaces name/externalId/latitude/longitude/street/housenumber/postcode/city/cityDistrict)
 curl -X PUT localhost:8085/maps/<uuid>/version/<version>/geo-objects/<geoObjectUuid> -H "Authorization: Bearer <token>" \
   -d '{"name":"Town Hall","latitude":52.5,"longitude":13.4}'
 

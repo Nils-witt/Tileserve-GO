@@ -88,11 +88,13 @@ func TestGeoObjectFilterClauses(t *testing.T) {
 
 		qb := &queryBuilder{}
 		f := GeoObjectFilter{
-			Name:       "hydrant",
-			ExternalID: "ext-1",
-			Street:     "main",
-			Postcode:   "12345",
-			CreatedBy:  "bob",
+			Name:         "hydrant",
+			ExternalID:   "ext-1",
+			Street:       "main",
+			Postcode:     "12345",
+			City:         "springfield",
+			CityDistrict: "downtown",
+			CreatedBy:    "bob",
 		}
 		got := f.clauses(qb)
 
@@ -101,7 +103,9 @@ func TestGeoObjectFilterClauses(t *testing.T) {
 			"external_id = $2",
 			"street ILIKE $3",
 			"postcode = $4",
-			"created_by = $5",
+			"city ILIKE $5",
+			"city_district ILIKE $6",
+			"created_by = $7",
 		}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("clauses() = %v, want %v", got, want)
