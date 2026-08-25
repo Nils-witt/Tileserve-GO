@@ -265,6 +265,15 @@ Active Directory) finds the user's entry within that base DN — it must contain
 username. `-ldap-bind-dn`/`LDAP_BIND_DN` and `-ldap-bind-password`/`LDAP_BIND_PASSWORD` are the optional service
 account used to run that search (omit both to search anonymously); `-ldap-start-tls`/`LDAP_START_TLS` upgrades a
 plain `ldap://` connection with StartTLS before binding (ignored for `ldaps://`).
+`-ldap-ca-cert-file`/`LDAP_CA_CERT_FILE` points at a PEM-encoded CA certificate (or bundle) to trust for verifying the
+server's TLS certificate, for either `ldaps://` or `-ldap-start-tls`, instead of the system trust store — use it for a
+self-signed or internal-CA certificate the host doesn't already trust.
+`-ldap-insecure-skip-verify`/`LDAP_INSECURE_SKIP_VERIFY` skips verification of the server's TLS certificate entirely
+(ignoring `-ldap-ca-cert-file`) — only use it when the certificate genuinely can't be trusted otherwise, since it
+leaves the connection open to a man-in-the-middle.
+`-ldap-debug`/`LDAP_DEBUG` logs each step of an LDAP login attempt (bind/search attempts, the resolved DN,
+success/failure), including the username — off by default since that's per-attempt log volume; turn it on while
+troubleshooting a directory connection or filter.
 
 A local account's own password always takes precedence — LDAP is only consulted when the given username is unknown
 locally or its local password doesn't match. The first successful LDAP login for a given directory entry (matched by

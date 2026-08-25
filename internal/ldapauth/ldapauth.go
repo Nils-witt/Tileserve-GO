@@ -8,11 +8,13 @@ package ldapauth
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -51,12 +53,33 @@ type Config struct {
 	// StartTLS upgrades a plain "ldap://" connection with StartTLS before
 	// binding. Ignored for an "ldaps://" URL, which is already encrypted.
 	StartTLS bool
+	// InsecureSkipVerify disables verification of the server's TLS
+	// certificate for both an "ldaps://" connection and a StartTLS upgrade —
+	// e.g. for a self-signed or internal-CA certificate the host doesn't
+	// trust. This leaves the connection vulnerable to a man-in-the-middle,
+	// so it should only be used when the alternative (installing the CA
+	// certificate) genuinely isn't available.
+	InsecureSkipVerify bool
+	// CACertFile is the path to a PEM-encoded CA certificate (or bundle)
+	// used, instead of the host's system trust store, to verify the
+	// server's TLS certificate for both an "ldaps://" connection and a
+	// StartTLS upgrade — e.g. for a self-signed or internal-CA certificate
+	// the host doesn't otherwise trust. Ignored when InsecureSkipVerify is
+	// set. Leave empty to use the system trust store.
+	CACertFile string
+	// Debug logs each step of Authenticate (bind/search attempts, the
+	// resolved DN, success/failure) via the standard logger, including the
+	// caller-supplied username. Off by default since that's per-login-attempt
+	// volume and identifies who tried to log in; enable it while
+	// troubleshooting a directory connection or filter.
+	Debug bool
 }
 
 // Authenticator authenticates username/password pairs against the directory
 // described by a Config. Construct one with NewAuthenticator.
 type Authenticator struct {
-	cfg Config
+	cfg    Config
+	caPool *x509.CertPool // nil unless Config.CACertFile is set
 }
 
 // NewAuthenticator validates cfg and returns an Authenticator for it.
@@ -73,7 +96,21 @@ func NewAuthenticator(cfg Config) (*Authenticator, error) {
 		return nil, fmt.Errorf("ldap: invalid url: %w", err)
 	}
 
-	return &Authenticator{cfg: cfg}, nil
+	var caPool *x509.CertPool
+
+	if cfg.CACertFile != "" {
+		pem, err := os.ReadFile(cfg.CACertFile)
+		if err != nil {
+			return nil, fmt.Errorf("ldap: read ca-cert-file: %w", err)
+		}
+
+		caPool = x509.NewCertPool()
+		if !caPool.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("ldap: ca-cert-file %q contains no valid PEM certificates", cfg.CACertFile)
+		}
+	}
+
+	return &Authenticator{cfg: cfg, caPool: caPool}, nil
 }
 
 // Identity is the directory entry an Authenticate call resolved the caller
@@ -105,11 +142,11 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		return Identity{}, ErrInvalidCredentials
 	}
 
-	log.Printf("ldapauth: authenticating %q against %s", username, a.cfg.URL)
+	a.debugf("ldapauth: authenticating %q against %s", username, a.cfg.URL)
 
 	conn, err := a.dial()
 	if err != nil {
-		log.Printf("ldapauth: %q: connect to %s failed: %v", username, a.cfg.URL, err)
+		a.debugf("ldapauth: %q: connect to %s failed: %v", username, a.cfg.URL, err)
 		return Identity{}, fmt.Errorf("%w: connect: %w", ErrInvalidCredentials, err)
 	}
 	defer func() { _ = conn.Close() }()
@@ -132,13 +169,13 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 
 	if a.cfg.BindDN != "" {
 		if err := conn.Bind(a.cfg.BindDN, a.cfg.BindPassword); err != nil {
-			log.Printf("ldapauth: %q: service bind as %s failed: %v", username, a.cfg.BindDN, err)
+			a.debugf("ldapauth: %q: service bind as %s failed: %v", username, a.cfg.BindDN, err)
 			return Identity{}, fmt.Errorf("%w: service bind: %w", ErrInvalidCredentials, err)
 		}
 
-		log.Printf("ldapauth: %q: service bind as %s ok", username, a.cfg.BindDN)
+		a.debugf("ldapauth: %q: service bind as %s ok", username, a.cfg.BindDN)
 	} else {
-		log.Printf("ldapauth: %q: searching anonymously (no bind-dn configured)", username)
+		a.debugf("ldapauth: %q: searching anonymously (no bind-dn configured)", username)
 	}
 
 	filter := fmt.Sprintf(a.cfg.UserFilter, ldap.EscapeFilter(username))
@@ -152,27 +189,27 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 
 	result, err := conn.Search(req)
 	if err != nil {
-		log.Printf("ldapauth: %q: search base=%q filter=%q failed: %v", username, a.cfg.BaseDN, filter, err)
+		a.debugf("ldapauth: %q: search base=%q filter=%q failed: %v", username, a.cfg.BaseDN, filter, err)
 		return Identity{}, fmt.Errorf("%w: search: %w", ErrInvalidCredentials, err)
 	}
 
 	if len(result.Entries) != 1 {
-		log.Printf("ldapauth: %q: search base=%q filter=%q matched %d entries, want 1", username, a.cfg.BaseDN, filter, len(result.Entries))
+		a.debugf("ldapauth: %q: search base=%q filter=%q matched %d entries, want 1", username, a.cfg.BaseDN, filter, len(result.Entries))
 		return Identity{}, ErrInvalidCredentials
 	}
 
 	entry := result.Entries[0]
-	log.Printf("ldapauth: %q: resolved to dn=%q, verifying password", username, entry.DN)
+	a.debugf("ldapauth: %q: resolved to dn=%q, verifying password", username, entry.DN)
 
 	// Rebind on the same connection as the resolved entry to actually verify
 	// the password; this is the only step in the whole flow that proves the
 	// caller knows it.
 	if err := conn.Bind(entry.DN, password); err != nil {
-		log.Printf("ldapauth: %q: password verify bind as dn=%q failed: %v", username, entry.DN, err)
+		a.debugf("ldapauth: %q: password verify bind as dn=%q failed: %v", username, entry.DN, err)
 		return Identity{}, ErrInvalidCredentials
 	}
 
-	log.Printf("ldapauth: %q: authenticated successfully as dn=%q", username, entry.DN)
+	a.debugf("ldapauth: %q: authenticated successfully as dn=%q", username, entry.DN)
 
 	return Identity{
 		DN:    entry.DN,
@@ -183,9 +220,13 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 
 // dial connects to the directory, applying dialTimeout as both the connect
 // timeout and every subsequent operation's read/write deadline, and upgrades
-// to TLS via StartTLS when configured.
+// to TLS via StartTLS when configured. tlsConfig governs both an "ldaps://"
+// connection and a StartTLS upgrade, so InsecureSkipVerify applies to
+// whichever of the two is in play.
 func (a *Authenticator) dial() (*ldap.Conn, error) {
-	conn, err := ldap.DialURL(a.cfg.URL, ldap.DialWithDialer(&net.Dialer{Timeout: dialTimeout}))
+	tlsConfig := &tls.Config{ServerName: a.tlsServerName(), MinVersion: tls.VersionTLS12, InsecureSkipVerify: a.cfg.InsecureSkipVerify, RootCAs: a.caPool} //nolint:gosec // opt-in via Config.InsecureSkipVerify
+
+	conn, err := ldap.DialURL(a.cfg.URL, ldap.DialWithDialer(&net.Dialer{Timeout: dialTimeout}), ldap.DialWithTLSConfig(tlsConfig))
 	if err != nil {
 		return nil, err
 	}
@@ -193,13 +234,23 @@ func (a *Authenticator) dial() (*ldap.Conn, error) {
 	conn.SetTimeout(dialTimeout)
 
 	if a.cfg.StartTLS && strings.HasPrefix(strings.ToLower(a.cfg.URL), "ldap://") {
-		if err := conn.StartTLS(&tls.Config{ServerName: a.tlsServerName(), MinVersion: tls.VersionTLS12}); err != nil {
+		if err := conn.StartTLS(tlsConfig); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
 	}
 
 	return conn, nil
+}
+
+// debugf logs via the standard logger when Config.Debug is set, a no-op
+// otherwise.
+func (a *Authenticator) debugf(format string, args ...any) {
+	if !a.cfg.Debug {
+		return
+	}
+
+	log.Printf(format, args...)
 }
 
 // tlsServerName returns the hostname StartTLS should verify the server's

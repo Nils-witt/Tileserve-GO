@@ -56,10 +56,13 @@ func main() {
 	ldapBaseDN := flag.String("ldap-base-dn", envOrDefault("LDAP_BASE_DN", ""), "search base for resolving a username to a directory entry, e.g. ou=people,dc=example,dc=com (env LDAP_BASE_DN)")
 	ldapUserFilter := flag.String("ldap-user-filter", envOrDefault("LDAP_USER_FILTER", "(uid=%s)"), `LDAP filter used to find a user's entry below -ldap-base-dn, with a "%s" placeholder for the username, e.g. (sAMAccountName=%s) for Active Directory (env LDAP_USER_FILTER)`)
 	ldapStartTLS := flag.Bool("ldap-start-tls", envOrDefault("LDAP_START_TLS", "") == "true", "upgrade a plain ldap:// connection with StartTLS before binding; ignored for an ldaps:// URL (env LDAP_START_TLS)")
+	ldapInsecureSkipVerify := flag.Bool("ldap-insecure-skip-verify", envOrDefault("LDAP_INSECURE_SKIP_VERIFY", "") == "true", "skip verification of the LDAP server's TLS certificate, for ldaps:// or -ldap-start-tls; insecure, only use if the certificate can't otherwise be trusted (env LDAP_INSECURE_SKIP_VERIFY)")
+	ldapCACertFile := flag.String("ldap-ca-cert-file", envOrDefault("LDAP_CA_CERT_FILE", ""), "path to a PEM-encoded CA certificate (or bundle) used to verify the LDAP server's TLS certificate, for ldaps:// or -ldap-start-tls, instead of the system trust store; ignored if -ldap-insecure-skip-verify is set (env LDAP_CA_CERT_FILE)")
+	ldapDebug := flag.Bool("ldap-debug", envOrDefault("LDAP_DEBUG", "") == "true", "log each step of LDAP authentication (bind/search attempts, resolved DN, success/failure), including the username of every login attempt; off by default since that's per-attempt log volume (env LDAP_DEBUG)")
 
 	flag.Parse()
 
-	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL, *ldapURL, *ldapBindDN, *ldapBindPassword, *ldapBaseDN, *ldapUserFilter, *ldapStartTLS); err != nil {
+	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL, *ldapURL, *ldapBindDN, *ldapBindPassword, *ldapBaseDN, *ldapUserFilter, *ldapCACertFile, *ldapStartTLS, *ldapInsecureSkipVerify, *ldapDebug); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -105,7 +108,7 @@ func statusCmd(args []string) {
 // run wires up storage and the HTTP server and blocks until the server
 // exits. It returns an error instead of calling log.Fatal directly so that
 // deferred cleanup (closing the store) always runs.
-func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter string, ldapStartTLS bool) error {
+func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile string, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug bool) error {
 	if jwtSecret == "" || dbDSN == "" {
 		return errors.New("jwt-secret and db-dsn are both required")
 	}
@@ -151,7 +154,7 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	syncManager := sync.NewManager(st, dataRoot)
 	go syncManager.Start(ctx)
 
-	oidcAuth, ldapAuth, err := newAuthenticators(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapStartTLS)
+	oidcAuth, ldapAuth, err := newAuthenticators(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug)
 	if err != nil {
 		return err
 	}
@@ -255,13 +258,13 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 // their respective -oidc-*/-ldap-* settings (see newOIDCAuthenticator and
 // newLDAPAuthenticator), bundled into one call so run only has a single
 // error check to make for both.
-func newAuthenticators(ctx context.Context, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter string, ldapStartTLS bool) (*handler.OIDCAuthenticator, *ldapauth.Authenticator, error) {
+func newAuthenticators(ctx context.Context, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile string, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug bool) (*handler.OIDCAuthenticator, *ldapauth.Authenticator, error) {
 	oidcAuth, err := newOIDCAuthenticator(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL)
 	if err != nil {
 		return nil, nil, fmt.Errorf("init oidc: %w", err)
 	}
 
-	ldapAuth, err := newLDAPAuthenticator(ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapStartTLS)
+	ldapAuth, err := newLDAPAuthenticator(ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug)
 	if err != nil {
 		return nil, nil, fmt.Errorf("init ldap: %w", err)
 	}
@@ -289,9 +292,10 @@ func newOIDCAuthenticator(ctx context.Context, issuerURL, clientID, clientSecret
 
 // newLDAPAuthenticator builds the LDAP authenticator from the -ldap-*
 // settings. LDAP login is off (nil, nil) unless -ldap-url is set; once it
-// is, -ldap-base-dn is also required (-ldap-bind-dn/-ldap-bind-password and
-// -ldap-start-tls are optional, and -ldap-user-filter always has a default).
-func newLDAPAuthenticator(url, bindDN, bindPassword, baseDN, userFilter string, startTLS bool) (*ldapauth.Authenticator, error) {
+// is, -ldap-base-dn is also required (-ldap-bind-dn/-ldap-bind-password,
+// -ldap-start-tls, -ldap-ca-cert-file, -ldap-insecure-skip-verify, and
+// -ldap-debug are optional, and -ldap-user-filter always has a default).
+func newLDAPAuthenticator(url, bindDN, bindPassword, baseDN, userFilter, caCertFile string, startTLS, insecureSkipVerify, debug bool) (*ldapauth.Authenticator, error) {
 	if url == "" {
 		return nil, nil
 	}
@@ -301,11 +305,14 @@ func newLDAPAuthenticator(url, bindDN, bindPassword, baseDN, userFilter string, 
 	}
 
 	return ldapauth.NewAuthenticator(ldapauth.Config{
-		URL:          url,
-		BindDN:       bindDN,
-		BindPassword: bindPassword,
-		BaseDN:       baseDN,
-		UserFilter:   userFilter,
-		StartTLS:     startTLS,
+		URL:                url,
+		BindDN:             bindDN,
+		BindPassword:       bindPassword,
+		BaseDN:             baseDN,
+		UserFilter:         userFilter,
+		StartTLS:           startTLS,
+		InsecureSkipVerify: insecureSkipVerify,
+		CACertFile:         caCertFile,
+		Debug:              debug,
 	})
 }
