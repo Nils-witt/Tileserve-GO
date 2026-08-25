@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"nilswitt.dev/tileserve-go/internal/handler"
+	"nilswitt.dev/tileserve-go/internal/ldapauth"
 	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/sync"
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
@@ -49,10 +50,19 @@ func main() {
 	oidcClientID := flag.String("oidc-client-id", envOrDefault("OIDC_CLIENT_ID", ""), "OpenID Connect client id (env OIDC_CLIENT_ID)")
 	oidcClientSecret := flag.String("oidc-client-secret", envOrDefault("OIDC_CLIENT_SECRET", ""), "OpenID Connect client secret (env OIDC_CLIENT_SECRET)")
 	oidcRedirectURL := flag.String("oidc-redirect-url", envOrDefault("OIDC_REDIRECT_URL", ""), "OpenID Connect redirect URL, must exactly match what's registered with the provider, e.g. https://tiles.example.com/login/oidc/callback (env OIDC_REDIRECT_URL)")
+	ldapURL := flag.String("ldap-url", envOrDefault("LDAP_URL", ""), "LDAP server URL, e.g. ldaps://ldap.example.com:636; set together with -ldap-base-dn and -ldap-user-filter to let /login fall back to LDAP bind authentication for accounts not known locally (env LDAP_URL)")
+	ldapBindDN := flag.String("ldap-bind-dn", envOrDefault("LDAP_BIND_DN", ""), "DN of the service account used to search for a user's entry; leave unset to search anonymously (env LDAP_BIND_DN)")
+	ldapBindPassword := flag.String("ldap-bind-password", envOrDefault("LDAP_BIND_PASSWORD", ""), "password for -ldap-bind-dn (env LDAP_BIND_PASSWORD)")
+	ldapBaseDN := flag.String("ldap-base-dn", envOrDefault("LDAP_BASE_DN", ""), "search base for resolving a username to a directory entry, e.g. ou=people,dc=example,dc=com (env LDAP_BASE_DN)")
+	ldapUserFilter := flag.String("ldap-user-filter", envOrDefault("LDAP_USER_FILTER", "(uid=%s)"), `LDAP filter used to find a user's entry below -ldap-base-dn, with a "%s" placeholder for the username, e.g. (sAMAccountName=%s) for Active Directory (env LDAP_USER_FILTER)`)
+	ldapStartTLS := flag.Bool("ldap-start-tls", envOrDefault("LDAP_START_TLS", "") == "true", "upgrade a plain ldap:// connection with StartTLS before binding; ignored for an ldaps:// URL (env LDAP_START_TLS)")
+	ldapInsecureSkipVerify := flag.Bool("ldap-insecure-skip-verify", envOrDefault("LDAP_INSECURE_SKIP_VERIFY", "") == "true", "skip verification of the LDAP server's TLS certificate, for ldaps:// or -ldap-start-tls; insecure, only use if the certificate can't otherwise be trusted (env LDAP_INSECURE_SKIP_VERIFY)")
+	ldapCACertFile := flag.String("ldap-ca-cert-file", envOrDefault("LDAP_CA_CERT_FILE", ""), "path to a PEM-encoded CA certificate (or bundle) used to verify the LDAP server's TLS certificate, for ldaps:// or -ldap-start-tls, instead of the system trust store; ignored if -ldap-insecure-skip-verify is set (env LDAP_CA_CERT_FILE)")
+	ldapDebug := flag.Bool("ldap-debug", envOrDefault("LDAP_DEBUG", "") == "true", "log each step of LDAP authentication (bind/search attempts, resolved DN, success/failure), including the username of every login attempt; off by default since that's per-attempt log volume (env LDAP_DEBUG)")
 
 	flag.Parse()
 
-	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL); err != nil {
+	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL, *ldapURL, *ldapBindDN, *ldapBindPassword, *ldapBaseDN, *ldapUserFilter, *ldapCACertFile, *ldapStartTLS, *ldapInsecureSkipVerify, *ldapDebug); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -98,7 +108,7 @@ func statusCmd(args []string) {
 // run wires up storage and the HTTP server and blocks until the server
 // exits. It returns an error instead of calling log.Fatal directly so that
 // deferred cleanup (closing the store) always runs.
-func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL string) error {
+func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile string, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug bool) error {
 	if jwtSecret == "" || dbDSN == "" {
 		return errors.New("jwt-secret and db-dsn are both required")
 	}
@@ -144,9 +154,9 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	syncManager := sync.NewManager(st, dataRoot)
 	go syncManager.Start(ctx)
 
-	oidcAuth, err := newOIDCAuthenticator(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL)
+	oidcAuth, ldapAuth, err := newAuthenticators(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug)
 	if err != nil {
-		return fmt.Errorf("init oidc: %w", err)
+		return err
 	}
 
 	mux := http.NewServeMux()
@@ -159,7 +169,7 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	mux.HandleFunc("/version", handler.VersionHandler())
 	// GET /login: serves the login HTML page. POST /login: exchanges
 	// username/password for a JWT and a refresh token.
-	mux.HandleFunc("/login", handler.LoginHandler(secret, st))
+	mux.HandleFunc("/login", handler.LoginHandler(secret, st, ldapAuth))
 	// GET /login.js: serves the login page's script.
 	mux.HandleFunc("/login.js", handler.LoginScriptHandler())
 	// POST /refresh: exchanges a refresh token for a new JWT and refresh token.
@@ -244,6 +254,24 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	return nil
 }
 
+// newAuthenticators builds the optional OIDC and LDAP authenticators from
+// their respective -oidc-*/-ldap-* settings (see newOIDCAuthenticator and
+// newLDAPAuthenticator), bundled into one call so run only has a single
+// error check to make for both.
+func newAuthenticators(ctx context.Context, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile string, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug bool) (*handler.OIDCAuthenticator, *ldapauth.Authenticator, error) {
+	oidcAuth, err := newOIDCAuthenticator(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("init oidc: %w", err)
+	}
+
+	ldapAuth, err := newLDAPAuthenticator(ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug)
+	if err != nil {
+		return nil, nil, fmt.Errorf("init ldap: %w", err)
+	}
+
+	return oidcAuth, ldapAuth, nil
+}
+
 // newOIDCAuthenticator builds the OIDC authenticator from the four
 // -oidc-* settings. They must either all be empty (feature off — nil, nil is
 // returned and /login/oidc[/callback] aren't registered at all, see run
@@ -260,4 +288,31 @@ func newOIDCAuthenticator(ctx context.Context, issuerURL, clientID, clientSecret
 	}
 
 	return handler.NewOIDCAuthenticator(ctx, issuerURL, clientID, clientSecret, redirectURL)
+}
+
+// newLDAPAuthenticator builds the LDAP authenticator from the -ldap-*
+// settings. LDAP login is off (nil, nil) unless -ldap-url is set; once it
+// is, -ldap-base-dn is also required (-ldap-bind-dn/-ldap-bind-password,
+// -ldap-start-tls, -ldap-ca-cert-file, -ldap-insecure-skip-verify, and
+// -ldap-debug are optional, and -ldap-user-filter always has a default).
+func newLDAPAuthenticator(url, bindDN, bindPassword, baseDN, userFilter, caCertFile string, startTLS, insecureSkipVerify, debug bool) (*ldapauth.Authenticator, error) {
+	if url == "" {
+		return nil, nil
+	}
+
+	if baseDN == "" {
+		return nil, errors.New("ldap-base-dn is required when ldap-url is set")
+	}
+
+	return ldapauth.NewAuthenticator(ldapauth.Config{
+		URL:                url,
+		BindDN:             bindDN,
+		BindPassword:       bindPassword,
+		BaseDN:             baseDN,
+		UserFilter:         userFilter,
+		StartTLS:           startTLS,
+		InsecureSkipVerify: insecureSkipVerify,
+		CACertFile:         caCertFile,
+		Debug:              debug,
+	})
 }

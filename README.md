@@ -256,11 +256,35 @@ first login from a given provider identity auto-creates a local account (linked 
 logins) with no permissions at all — grant it whatever access is appropriate via the Users tab in `/ui/` or the
 `/users` API.
 
+## LDAP login
+
+Set `-ldap-url`/`LDAP_URL` (e.g. `ldaps://ldap.example.com:636`) and `-ldap-base-dn`/`LDAP_BASE_DN` (e.g.
+`ou=people,dc=example,dc=com`) to let `POST /login` fall back to an LDAP bind for a username/password that doesn't
+match a local account. `-ldap-user-filter`/`LDAP_USER_FILTER` (default `(uid=%s)`, e.g. `(sAMAccountName=%s)` for
+Active Directory) finds the user's entry within that base DN — it must contain exactly one `%s` placeholder for the
+username. `-ldap-bind-dn`/`LDAP_BIND_DN` and `-ldap-bind-password`/`LDAP_BIND_PASSWORD` are the optional service
+account used to run that search (omit both to search anonymously); `-ldap-start-tls`/`LDAP_START_TLS` upgrades a
+plain `ldap://` connection with StartTLS before binding (ignored for `ldaps://`).
+`-ldap-ca-cert-file`/`LDAP_CA_CERT_FILE` points at a PEM-encoded CA certificate (or bundle) to trust for verifying the
+server's TLS certificate, for either `ldaps://` or `-ldap-start-tls`, instead of the system trust store — use it for a
+self-signed or internal-CA certificate the host doesn't already trust.
+`-ldap-insecure-skip-verify`/`LDAP_INSECURE_SKIP_VERIFY` skips verification of the server's TLS certificate entirely
+(ignoring `-ldap-ca-cert-file`) — only use it when the certificate genuinely can't be trusted otherwise, since it
+leaves the connection open to a man-in-the-middle.
+`-ldap-debug`/`LDAP_DEBUG` logs each step of an LDAP login attempt (bind/search attempts, the resolved DN,
+success/failure), including the username — off by default since that's per-attempt log volume; turn it on while
+troubleshooting a directory connection or filter.
+
+A local account's own password always takes precedence — LDAP is only consulted when the given username is unknown
+locally or its local password doesn't match. The first successful LDAP login for a given directory entry (matched by
+its DN, not username) auto-creates a local account with no permissions at all, same as OIDC above — grant it
+whatever access is appropriate via the Users tab in `/ui/` or the `/users` API.
+
 ## Config
 
 Set via flags or matching env vars (`-data-root`/`DATA_ROOT`, `-jwt-secret`/`JWT_SECRET`, `-db-dsn`/`DATABASE_URL`,
 `-seed-username`/`SEED_USERNAME`, `-seed-password`/`SEED_PASSWORD`, `-port`/`PORT`, default port `8085`, plus the
-`-oidc-*` settings above).
+`-oidc-*` and `-ldap-*` settings above).
 `jwt-secret` and `db-dsn` are required.
 
 ## Docker
