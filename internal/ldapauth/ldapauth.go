@@ -10,6 +10,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/url"
 	"strings"
@@ -104,8 +105,11 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		return Identity{}, ErrInvalidCredentials
 	}
 
+	log.Printf("ldapauth: authenticating %q against %s", username, a.cfg.URL)
+
 	conn, err := a.dial()
 	if err != nil {
+		log.Printf("ldapauth: %q: connect to %s failed: %v", username, a.cfg.URL, err)
 		return Identity{}, fmt.Errorf("%w: connect: %w", ErrInvalidCredentials, err)
 	}
 	defer func() { _ = conn.Close() }()
@@ -128,35 +132,47 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 
 	if a.cfg.BindDN != "" {
 		if err := conn.Bind(a.cfg.BindDN, a.cfg.BindPassword); err != nil {
+			log.Printf("ldapauth: %q: service bind as %s failed: %v", username, a.cfg.BindDN, err)
 			return Identity{}, fmt.Errorf("%w: service bind: %w", ErrInvalidCredentials, err)
 		}
+
+		log.Printf("ldapauth: %q: service bind as %s ok", username, a.cfg.BindDN)
+	} else {
+		log.Printf("ldapauth: %q: searching anonymously (no bind-dn configured)", username)
 	}
 
+	filter := fmt.Sprintf(a.cfg.UserFilter, ldap.EscapeFilter(username))
 	req := ldap.NewSearchRequest(
 		a.cfg.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false,
-		fmt.Sprintf(a.cfg.UserFilter, ldap.EscapeFilter(username)),
+		filter,
 		[]string{"cn", "mail"},
 		nil,
 	)
 
 	result, err := conn.Search(req)
 	if err != nil {
+		log.Printf("ldapauth: %q: search base=%q filter=%q failed: %v", username, a.cfg.BaseDN, filter, err)
 		return Identity{}, fmt.Errorf("%w: search: %w", ErrInvalidCredentials, err)
 	}
 
 	if len(result.Entries) != 1 {
+		log.Printf("ldapauth: %q: search base=%q filter=%q matched %d entries, want 1", username, a.cfg.BaseDN, filter, len(result.Entries))
 		return Identity{}, ErrInvalidCredentials
 	}
 
 	entry := result.Entries[0]
+	log.Printf("ldapauth: %q: resolved to dn=%q, verifying password", username, entry.DN)
 
 	// Rebind on the same connection as the resolved entry to actually verify
 	// the password; this is the only step in the whole flow that proves the
 	// caller knows it.
 	if err := conn.Bind(entry.DN, password); err != nil {
+		log.Printf("ldapauth: %q: password verify bind as dn=%q failed: %v", username, entry.DN, err)
 		return Identity{}, ErrInvalidCredentials
 	}
+
+	log.Printf("ldapauth: %q: authenticated successfully as dn=%q", username, entry.DN)
 
 	return Identity{
 		DN:    entry.DN,

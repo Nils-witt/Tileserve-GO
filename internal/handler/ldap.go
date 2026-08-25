@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"log"
 
 	"nilswitt.dev/tileserve-go/internal/ldapauth"
 	"nilswitt.dev/tileserve-go/internal/store"
@@ -28,11 +29,15 @@ func authenticatePassword(ctx context.Context, st *store.Store, ldapAuth *ldapau
 	}
 
 	if ldapAuth == nil {
+		log.Printf("ldap: %q: local auth failed and no ldap authenticator configured", username)
 		return "", store.ErrInvalidCredentials
 	}
 
+	log.Printf("ldap: %q: local auth failed, falling back to ldap", username)
+
 	identity, err := ldapAuth.Authenticate(ctx, username, password)
 	if err != nil {
+		log.Printf("ldap: %q: ldap auth failed: %v", username, err)
 		return "", store.ErrInvalidCredentials
 	}
 
@@ -44,19 +49,25 @@ func authenticatePassword(ctx context.Context, st *store.Store, ldapAuth *ldapau
 func resolveLDAPUsername(ctx context.Context, st *store.Store, preferredUsername string, identity ldapauth.Identity) (string, error) {
 	username, err := st.FindUserByLDAPIdentity(ctx, identity.DN)
 	if err == nil {
+		log.Printf("ldap: dn=%q: resolved to existing local account %q", identity.DN, username)
 		return username, nil
 	}
 
 	if !errors.Is(err, store.ErrUserNotFound) {
+		log.Printf("ldap: dn=%q: lookup of local account failed: %v", identity.DN, err)
 		return "", err
 	}
 
 	candidate := firstNonEmpty(preferredUsername, identity.CN, identity.DN)
+	log.Printf("ldap: dn=%q: no local account yet, auto-provisioning as %q", identity.DN, candidate)
 
 	u, err := st.CreateLDAPUser(ctx, candidate, identity.CN, identity.DN)
 	if err != nil {
+		log.Printf("ldap: dn=%q: auto-provisioning as %q failed: %v", identity.DN, candidate, err)
 		return "", err
 	}
+
+	log.Printf("ldap: dn=%q: auto-provisioned local account %q", identity.DN, u.Username)
 
 	return u.Username, nil
 }
