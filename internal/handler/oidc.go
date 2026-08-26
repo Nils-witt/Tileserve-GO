@@ -191,7 +191,6 @@ func consumeOIDCFlowCookies(w http.ResponseWriter, r *http.Request) (redirectTo,
 type oidcClaims struct {
 	PreferredUsername string `json:"preferred_username"`
 	Email             string `json:"email"`
-	Name              string `json:"name"`
 }
 
 // exchangeAndVerify exchanges an authorization code for tokens, verifies the
@@ -242,7 +241,7 @@ func resolveOIDCUsername(ctx context.Context, st *store.Store, idToken *oidc.IDT
 
 	candidate := firstNonEmpty(claims.PreferredUsername, claims.Email, idToken.Subject)
 
-	u, err := st.CreateOIDCUser(ctx, candidate, claims.Name, idToken.Issuer, idToken.Subject)
+	u, err := st.CreateOIDCUser(ctx, candidate, idToken.Issuer, idToken.Subject)
 	if err != nil {
 		return "", err
 	}

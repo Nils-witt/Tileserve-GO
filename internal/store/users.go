@@ -20,7 +20,6 @@ var (
 // UserRecord is the persisted form of a user account.
 type UserRecord struct {
 	Username            string    `json:"username"`
-	CN                  string    `json:"cn"`
 	CanCreate           bool      `json:"canCreate"`
 	CanEdit             bool      `json:"canEdit"`
 	CanDelete           bool      `json:"canDelete"`
@@ -33,7 +32,7 @@ type UserRecord struct {
 // UserFilter holds optional filters for ListUsers. A zero value matches
 // every user.
 type UserFilter struct {
-	Search              string // substring match against username OR cn, case-insensitive
+	Search              string // substring match against username, case-insensitive
 	IsAdmin             *bool
 	CanCreate           *bool
 	CanEdit             *bool
@@ -49,8 +48,7 @@ func (f UserFilter) clauses(qb *queryBuilder) []string {
 	var clauses []string
 
 	if f.Search != "" {
-		search := qb.bind("%" + f.Search + "%")
-		clauses = append(clauses, fmt.Sprintf("(username ILIKE %s OR cn ILIKE %s)", search, search))
+		clauses = append(clauses, "username ILIKE "+qb.bind("%"+f.Search+"%"))
 	}
 
 	if f.IsAdmin != nil {
@@ -91,7 +89,7 @@ func (s *Store) ListUsers(ctx context.Context, filter UserFilter) ([]UserRecord,
 	}
 
 	query := fmt.Sprintf(`
-		SELECT username, cn, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, created_at
+		SELECT username, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, created_at
 		FROM users
 		%s
 		ORDER BY created_at ASC
@@ -100,7 +98,7 @@ func (s *Store) ListUsers(ctx context.Context, filter UserFilter) ([]UserRecord,
 	return collectRows(ctx, s.pool, "list users", query, func(rows pgx.Rows) (UserRecord, error) {
 		var u UserRecord
 
-		err := rows.Scan(&u.Username, &u.CN, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.CanEditGeoObjects, &u.CanDeleteGeoObjects, &u.IsAdmin, &u.CreatedAt)
+		err := rows.Scan(&u.Username, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.CanEditGeoObjects, &u.CanDeleteGeoObjects, &u.IsAdmin, &u.CreatedAt)
 
 		return u, err
 	}, qb.args...)
@@ -108,7 +106,7 @@ func (s *Store) ListUsers(ctx context.Context, filter UserFilter) ([]UserRecord,
 
 // CreateUser creates a new user. It returns ErrUserExists if username is
 // already taken.
-func (s *Store) CreateUser(ctx context.Context, username, password, cn string, perms Permissions) (UserRecord, error) {
+func (s *Store) CreateUser(ctx context.Context, username, password string, perms Permissions) (UserRecord, error) {
 	hash, err := hashPassword(password)
 	if err != nil {
 		return UserRecord{}, err
@@ -116,7 +114,6 @@ func (s *Store) CreateUser(ctx context.Context, username, password, cn string, p
 
 	u := UserRecord{
 		Username:            username,
-		CN:                  cn,
 		CanCreate:           perms.CanCreate,
 		CanEdit:             perms.CanEdit,
 		CanDelete:           perms.CanDelete,
@@ -126,10 +123,10 @@ func (s *Store) CreateUser(ctx context.Context, username, password, cn string, p
 	}
 
 	err = s.pool.QueryRow(ctx, `
-		INSERT INTO users (username, password_hash, cn, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO users (username, password_hash, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING created_at
-	`, username, hash, u.CN, u.CanCreate, u.CanEdit, u.CanDelete, u.CanEditGeoObjects, u.CanDeleteGeoObjects, u.IsAdmin).Scan(&u.CreatedAt)
+	`, username, hash, u.CanCreate, u.CanEdit, u.CanDelete, u.CanEditGeoObjects, u.CanDeleteGeoObjects, u.IsAdmin).Scan(&u.CreatedAt)
 	if err != nil {
 		if isPgErrCode(err, "23505") {
 			return UserRecord{}, ErrUserExists
@@ -141,10 +138,10 @@ func (s *Store) CreateUser(ctx context.Context, username, password, cn string, p
 	return u, nil
 }
 
-// UpdateUser sets username's cn and permissions, and its password too if
+// UpdateUser sets username's permissions, and its password too if
 // newPassword is non-empty. It returns ErrUserNotFound if username doesn't
 // exist.
-func (s *Store) UpdateUser(ctx context.Context, username, cn string, perms Permissions, newPassword string) (UserRecord, error) {
+func (s *Store) UpdateUser(ctx context.Context, username string, perms Permissions, newPassword string) (UserRecord, error) {
 	var (
 		u   UserRecord
 		err error
@@ -160,19 +157,19 @@ func (s *Store) UpdateUser(ctx context.Context, username, cn string, perms Permi
 
 		err = s.pool.QueryRow(ctx, `
 			UPDATE users
-			SET cn = $2, can_create = $3, can_edit = $4, can_delete = $5, can_edit_geo_objects = $6, can_delete_geo_objects = $7, is_admin = $8, password_hash = $9
+			SET can_create = $2, can_edit = $3, can_delete = $4, can_edit_geo_objects = $5, can_delete_geo_objects = $6, is_admin = $7, password_hash = $8
 			WHERE username = $1
-			RETURNING username, cn, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, created_at
-		`, username, cn, perms.CanCreate, perms.CanEdit, perms.CanDelete, perms.CanEditGeoObjects, perms.CanDeleteGeoObjects, perms.IsAdmin, hash).
-			Scan(&u.Username, &u.CN, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.CanEditGeoObjects, &u.CanDeleteGeoObjects, &u.IsAdmin, &u.CreatedAt)
+			RETURNING username, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, created_at
+		`, username, perms.CanCreate, perms.CanEdit, perms.CanDelete, perms.CanEditGeoObjects, perms.CanDeleteGeoObjects, perms.IsAdmin, hash).
+			Scan(&u.Username, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.CanEditGeoObjects, &u.CanDeleteGeoObjects, &u.IsAdmin, &u.CreatedAt)
 	} else {
 		err = s.pool.QueryRow(ctx, `
 			UPDATE users
-			SET cn = $2, can_create = $3, can_edit = $4, can_delete = $5, can_edit_geo_objects = $6, can_delete_geo_objects = $7, is_admin = $8
+			SET can_create = $2, can_edit = $3, can_delete = $4, can_edit_geo_objects = $5, can_delete_geo_objects = $6, is_admin = $7
 			WHERE username = $1
-			RETURNING username, cn, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, created_at
-		`, username, cn, perms.CanCreate, perms.CanEdit, perms.CanDelete, perms.CanEditGeoObjects, perms.CanDeleteGeoObjects, perms.IsAdmin).
-			Scan(&u.Username, &u.CN, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.CanEditGeoObjects, &u.CanDeleteGeoObjects, &u.IsAdmin, &u.CreatedAt)
+			RETURNING username, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, created_at
+		`, username, perms.CanCreate, perms.CanEdit, perms.CanDelete, perms.CanEditGeoObjects, perms.CanDeleteGeoObjects, perms.IsAdmin).
+			Scan(&u.Username, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.CanEditGeoObjects, &u.CanDeleteGeoObjects, &u.IsAdmin, &u.CreatedAt)
 	}
 
 	if errors.Is(err, pgx.ErrNoRows) {

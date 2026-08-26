@@ -6,7 +6,10 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"net/http"
+	"os"
+	"path/filepath"
 
+	"nilswitt.dev/tileserve-go/internal/serverkey"
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
@@ -60,5 +63,37 @@ func GenerateKeyPairHandler(st *store.Store) http.HandlerFunc {
 			PrivateKeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})),
 			PublicKeyPEM:  string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})),
 		})
+	}
+}
+
+type serverPublicKeyResponse struct {
+	PublicKeyPEM string `json:"publicKeyPem"`
+}
+
+// ServerPublicKeyHandler serves GET /server/public-key (admin-only): returns
+// this server's own persistent RSA public key (see internal/serverkey,
+// generated once on first startup and reused thereafter), PEM-encoded. An
+// admin copies this into another tileserve-go instance's "API keys" form to
+// register this server as a sync client there, the same way a per-remote key
+// pair from GenerateKeyPairHandler would be registered, except this key is
+// stable across restarts and shared by every sync remote this server pulls
+// from.
+func ServerPublicKeyHandler(st *store.Store, keysDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !requireAdmin(w, r, st) {
+			return
+		}
+
+		if !requireMethod(w, r, http.MethodGet) {
+			return
+		}
+
+		pemBytes, err := os.ReadFile(filepath.Join(keysDir, serverkey.PublicKeyFileName)) //nolint:gosec // G304: keysDir is a server-operator-supplied startup flag, not request input
+		if err != nil {
+			http.Error(w, "failed to read server public key", http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, serverPublicKeyResponse{PublicKeyPEM: string(pemBytes)})
 	}
 }

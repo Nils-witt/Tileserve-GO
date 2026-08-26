@@ -131,7 +131,7 @@ func TestUserFilterClauses(t *testing.T) {
 		qb := &queryBuilder{}
 		got := UserFilter{Search: "al"}.clauses(qb)
 
-		want := []string{"(username ILIKE $1 OR cn ILIKE $1)"}
+		want := []string{"username ILIKE $1"}
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("clauses() = %v, want %v", got, want)
 		}

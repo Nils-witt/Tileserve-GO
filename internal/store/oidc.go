@@ -43,7 +43,7 @@ func (s *Store) FindUserByOIDCIdentity(ctx context.Context, issuer, subject stri
 // preferredUsername is tried as-is first; if it's already taken by some
 // other account, a short random suffix is appended and creation is retried
 // once so provisioning doesn't fail just because the name collides.
-func (s *Store) CreateOIDCUser(ctx context.Context, preferredUsername, cn, issuer, subject string) (UserRecord, error) {
+func (s *Store) CreateOIDCUser(ctx context.Context, preferredUsername, issuer, subject string) (UserRecord, error) {
 	randomPassword, err := newRefreshTokenValue()
 	if err != nil {
 		return UserRecord{}, err
@@ -54,7 +54,7 @@ func (s *Store) CreateOIDCUser(ctx context.Context, preferredUsername, cn, issue
 		return UserRecord{}, err
 	}
 
-	u, err := s.insertOIDCUser(ctx, preferredUsername, cn, issuer, subject, hash)
+	u, err := s.insertOIDCUser(ctx, preferredUsername, issuer, subject, hash)
 	if err == nil {
 		return u, nil
 	}
@@ -68,7 +68,7 @@ func (s *Store) CreateOIDCUser(ctx context.Context, preferredUsername, cn, issue
 		return UserRecord{}, err
 	}
 
-	u, err = s.insertOIDCUser(ctx, preferredUsername+"-"+suffix, cn, issuer, subject, hash)
+	u, err = s.insertOIDCUser(ctx, preferredUsername+"-"+suffix, issuer, subject, hash)
 	if err != nil {
 		return UserRecord{}, fmt.Errorf("create oidc user: %w", err)
 	}
@@ -76,16 +76,16 @@ func (s *Store) CreateOIDCUser(ctx context.Context, preferredUsername, cn, issue
 	return u, nil
 }
 
-func (s *Store) insertOIDCUser(ctx context.Context, username, cn, issuer, subject, passwordHash string) (UserRecord, error) {
-	u := UserRecord{Username: username, CN: cn}
+func (s *Store) insertOIDCUser(ctx context.Context, username, issuer, subject, passwordHash string) (UserRecord, error) {
+	u := UserRecord{Username: username}
 
 	const noPermissions = false
 
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO users (username, password_hash, cn, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, oidc_issuer, oidc_subject)
-		VALUES ($1, $2, $3, $4, $4, $4, $4, $4, $4, $5, $6)
+		INSERT INTO users (username, password_hash, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, oidc_issuer, oidc_subject)
+		VALUES ($1, $2, $3, $3, $3, $3, $3, $3, $4, $5)
 		RETURNING created_at
-	`, username, passwordHash, cn, noPermissions, issuer, subject).Scan(&u.CreatedAt)
+	`, username, passwordHash, noPermissions, issuer, subject).Scan(&u.CreatedAt)
 	if err != nil {
 		return UserRecord{}, err
 	}

@@ -16,6 +16,7 @@ import (
 
 	"nilswitt.dev/tileserve-go/internal/handler"
 	"nilswitt.dev/tileserve-go/internal/ldapauth"
+	"nilswitt.dev/tileserve-go/internal/serverkey"
 	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/sync"
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
@@ -41,6 +42,7 @@ func main() {
 	}
 
 	dataRoot := flag.String("data-root", envOrDefault("DATA_ROOT", "./data/overlays"), "directory to serve files from (env DATA_ROOT)")
+	keysDir := flag.String("keys-dir", envOrDefault("KEYS_DIR", "./data/keys"), "directory for storing key pairs (env KEYS_DIR)")
 	jwtSecret := flag.String("jwt-secret", envOrDefault("JWT_SECRET", ""), "secret used to sign and verify JWTs (env JWT_SECRET)")
 	dbDSN := flag.String("db-dsn", envOrDefault("DATABASE_URL", "postgres://user:pass@localhost:5432/db"), "postgres connection string, e.g. postgres://user:pass@host:5432/db (env DATABASE_URL)")
 	seedUsername := flag.String("seed-username", envOrDefault("SEED_USERNAME", "admin"), "username to create on startup if it doesn't already exist (env SEED_USERNAME)")
@@ -62,7 +64,7 @@ func main() {
 
 	flag.Parse()
 
-	if err := run(*dataRoot, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL, *ldapURL, *ldapBindDN, *ldapBindPassword, *ldapBaseDN, *ldapUserFilter, *ldapCACertFile, *ldapStartTLS, *ldapInsecureSkipVerify, *ldapDebug); err != nil {
+	if err := run(*dataRoot, *keysDir, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL, *ldapURL, *ldapBindDN, *ldapBindPassword, *ldapBaseDN, *ldapUserFilter, *ldapCACertFile, *ldapStartTLS, *ldapInsecureSkipVerify, *ldapDebug); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -108,7 +110,7 @@ func statusCmd(args []string) {
 // run wires up storage and the HTTP server and blocks until the server
 // exits. It returns an error instead of calling log.Fatal directly so that
 // deferred cleanup (closing the store) always runs.
-func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile string, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug bool) error {
+func run(dataRoot, keysDir, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile string, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug bool) error {
 	if jwtSecret == "" || dbDSN == "" {
 		return errors.New("jwt-secret and db-dsn are both required")
 	}
@@ -122,21 +124,15 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	st, err := store.NewStore(ctx, dbDSN)
+	if err := serverkey.EnsureKeyPair(keysDir); err != nil {
+		return fmt.Errorf("ensure server key pair: %w", err)
+	}
+
+	st, err := initStore(ctx, dbDSN, seedUsername, seedPassword)
 	if err != nil {
-		return fmt.Errorf("connect to postgres: %w", err)
+		return err
 	}
 	defer st.Close()
-
-	if err := st.Migrate(ctx); err != nil {
-		return fmt.Errorf("migrate: %w", err)
-	}
-
-	if seedUsername != "" && seedPassword != "" {
-		if err := st.SeedUser(ctx, seedUsername, seedPassword); err != nil {
-			return fmt.Errorf("seed user: %w", err)
-		}
-	}
 
 	// Backfilling missing index.json files is best-effort and independent of
 	// serving traffic (see EnsureTileIndexes) — run it in the background
@@ -216,6 +212,9 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	// POST /keys/generate: server-side RSA key pair generation convenience
 	// for the admin UI (admin-only, nothing persisted).
 	mux.Handle("/keys/generate", handler.RequireAuth(secret, st, handler.GenerateKeyPairHandler(st)))
+	// GET /server/public-key: this server's own persistent public key
+	// (admin-only, see internal/serverkey).
+	mux.Handle("/server/public-key", handler.RequireAuth(secret, st, handler.ServerPublicKeyHandler(st, keysDir)))
 	// GET /audit-logs: lists recorded audit entries (admin-only).
 	mux.Handle("/audit-logs", handler.RequireAuth(secret, st, handler.AuditLogsCollectionHandler(st)))
 
@@ -252,6 +251,32 @@ func run(dataRoot, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssue
 	}
 
 	return nil
+}
+
+// initStore connects to Postgres, runs migrations, and seeds the initial
+// admin user if configured, closing the store again on any failure so run
+// doesn't leak a connection pool it never returns to the caller.
+func initStore(ctx context.Context, dbDSN, seedUsername, seedPassword string) (*store.Store, error) {
+	st, err := store.NewStore(ctx, dbDSN)
+	if err != nil {
+		return nil, fmt.Errorf("connect to postgres: %w", err)
+	}
+
+	if err := st.Migrate(ctx); err != nil {
+		st.Close()
+
+		return nil, fmt.Errorf("migrate: %w", err)
+	}
+
+	if seedUsername != "" && seedPassword != "" {
+		if err := st.SeedUser(ctx, seedUsername, seedPassword); err != nil {
+			st.Close()
+
+			return nil, fmt.Errorf("seed user: %w", err)
+		}
+	}
+
+	return st, nil
 }
 
 // newAuthenticators builds the optional OIDC and LDAP authenticators from

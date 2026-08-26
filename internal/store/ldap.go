@@ -41,7 +41,7 @@ func (s *Store) FindUserByLDAPIdentity(ctx context.Context, dn string) (string, 
 // preferredUsername is tried as-is first; if it's already taken by some
 // other account, a short random suffix is appended and creation is retried
 // once so provisioning doesn't fail just because the name collides.
-func (s *Store) CreateLDAPUser(ctx context.Context, preferredUsername, cn, dn string) (UserRecord, error) {
+func (s *Store) CreateLDAPUser(ctx context.Context, preferredUsername, dn string) (UserRecord, error) {
 	randomPassword, err := newRefreshTokenValue()
 	if err != nil {
 		return UserRecord{}, err
@@ -52,7 +52,7 @@ func (s *Store) CreateLDAPUser(ctx context.Context, preferredUsername, cn, dn st
 		return UserRecord{}, err
 	}
 
-	u, err := s.insertLDAPUser(ctx, preferredUsername, cn, dn, hash)
+	u, err := s.insertLDAPUser(ctx, preferredUsername, dn, hash)
 	if err == nil {
 		return u, nil
 	}
@@ -66,7 +66,7 @@ func (s *Store) CreateLDAPUser(ctx context.Context, preferredUsername, cn, dn st
 		return UserRecord{}, err
 	}
 
-	u, err = s.insertLDAPUser(ctx, preferredUsername+"-"+suffix, cn, dn, hash)
+	u, err = s.insertLDAPUser(ctx, preferredUsername+"-"+suffix, dn, hash)
 	if err != nil {
 		return UserRecord{}, fmt.Errorf("create ldap user: %w", err)
 	}
@@ -74,16 +74,16 @@ func (s *Store) CreateLDAPUser(ctx context.Context, preferredUsername, cn, dn st
 	return u, nil
 }
 
-func (s *Store) insertLDAPUser(ctx context.Context, username, cn, dn, passwordHash string) (UserRecord, error) {
-	u := UserRecord{Username: username, CN: cn}
+func (s *Store) insertLDAPUser(ctx context.Context, username, dn, passwordHash string) (UserRecord, error) {
+	u := UserRecord{Username: username}
 
 	const noPermissions = false
 
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO users (username, password_hash, cn, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, ldap_dn)
-		VALUES ($1, $2, $3, $4, $4, $4, $4, $4, $4, $5)
+		INSERT INTO users (username, password_hash, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, ldap_dn)
+		VALUES ($1, $2, $3, $3, $3, $3, $3, $3, $4)
 		RETURNING created_at
-	`, username, passwordHash, cn, noPermissions, dn).Scan(&u.CreatedAt)
+	`, username, passwordHash, noPermissions, dn).Scan(&u.CreatedAt)
 	if err != nil {
 		return UserRecord{}, err
 	}

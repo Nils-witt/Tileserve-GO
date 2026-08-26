@@ -133,7 +133,6 @@ var migrationSteps = []struct {
 			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit   BOOLEAN NOT NULL DEFAULT true;
 			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_delete BOOLEAN NOT NULL DEFAULT true;
 			ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin   BOOLEAN NOT NULL DEFAULT true;
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS cn         TEXT NOT NULL DEFAULT '';
 		`,
 	},
 	{
@@ -467,6 +466,15 @@ var migrationSteps = []struct {
 		sql: `
 			ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_dn TEXT NOT NULL DEFAULT '';
 			CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ldap_identity ON users (ldap_dn) WHERE ldap_dn <> '';
+		`,
+	},
+	{
+		// Removes the free-text display-name field: never used as an identity
+		// key (LDAP/OIDC accounts link via ldap_dn/oidc_issuer+subject
+		// instead), so dropping it loses no functionality.
+		errContext: "migrate users drop cn column",
+		sql: `
+			ALTER TABLE users DROP COLUMN IF EXISTS cn;
 		`,
 	},
 }

@@ -202,10 +202,6 @@
               <input id="cu-username" required>
             </div>
             <div class="field">
-              <label for="cu-cn">Certificate DN</label>
-              <input id="cu-cn">
-            </div>
-            <div class="field">
               <label for="cu-password">Password</label>
               <input id="cu-password" type="password" required>
             </div>
@@ -237,7 +233,6 @@
             <thead>
               <tr>
                 <th>Username</th>
-                <th>Full name</th>
                 <th class="checkbox-cell">Create</th>
                 <th class="checkbox-cell">Edit</th>
                 <th class="checkbox-cell">Delete</th>
@@ -255,6 +250,17 @@
       </div>
 
       <div id="tab-sync" class="hidden">
+        <div class="card">
+          <h2>This server's public key</h2>
+          <p class="muted" style="margin-top:0; margin-bottom:0.9rem">
+            Generated once on first startup and persisted across restarts (unlike the per-remote key pairs
+            below). Register it wherever this server needs to authenticate itself, e.g. as an API key for a
+            user on a remote tileserve-go instance.
+          </p>
+          <textarea id="server-public-key" rows="6" readonly style="width:100%; font-family:monospace; font-size:0.8em"></textarea>
+          <p id="server-public-key-error" class="hidden" style="color:#dc2626"></p>
+        </div>
+
         <div class="card">
           <h2>Register sync remote</h2>
           <p class="muted" style="margin-top:0; margin-bottom:0.9rem">

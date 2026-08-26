@@ -58,10 +58,10 @@ func resolveLDAPUsername(ctx context.Context, st *store.Store, preferredUsername
 		return "", err
 	}
 
-	candidate := firstNonEmpty(preferredUsername, identity.CN, identity.DN)
+	candidate := firstNonEmpty(preferredUsername, identity.DN)
 	log.Printf("ldap: dn=%q: no local account yet, auto-provisioning as %q", identity.DN, candidate)
 
-	u, err := st.CreateLDAPUser(ctx, candidate, identity.CN, identity.DN)
+	u, err := st.CreateLDAPUser(ctx, candidate, identity.DN)
 	if err != nil {
 		log.Printf("ldap: dn=%q: auto-provisioning as %q failed: %v", identity.DN, candidate, err)
 		return "", err

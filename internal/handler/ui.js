@@ -30,6 +30,8 @@
     const AUDIT_PAGE_SIZE = 100;
     let auditOffset = 0;
     let auditHasMore = false;
+    const serverPublicKeyEl = document.getElementById('server-public-key');
+    const serverPublicKeyErrorEl = document.getElementById('server-public-key-error');
     const syncBody = document.getElementById('sync-body');
     const syncEmptyEl = document.getElementById('sync-empty');
     const syncErrorEl = document.getElementById('sync-error');
@@ -1041,10 +1043,6 @@
       const usernameTd = document.createElement('td');
       usernameTd.textContent = u.username + (self ? ' (you)' : '');
 
-      const cnInput = document.createElement('input');
-      cnInput.className = 'inline';
-      cnInput.value = u.cn || '';
-
       const createCb = document.createElement('input');
       createCb.type = 'checkbox';
       createCb.checked = u.canCreate;
@@ -1076,7 +1074,6 @@
       saveBtn.className = 'secondary';
       saveBtn.textContent = 'Save';
       saveBtn.onclick = () => updateUser(u.username, {
-        cn: cnInput.value,
         canCreate: createCb.checked,
         canEdit: editCb.checked,
         canDelete: deleteCb.checked,
@@ -1107,9 +1104,6 @@
       const passwordTd = document.createElement('td');
       passwordTd.appendChild(passwordInput);
 
-      const cnTd = document.createElement('td');
-      cnTd.appendChild(cnInput);
-
       const createTd = document.createElement('td');
       createTd.className = 'checkbox-cell';
       createTd.appendChild(createCb);
@@ -1129,7 +1123,7 @@
       adminTd.className = 'checkbox-cell';
       adminTd.appendChild(adminCb);
 
-      tr.append(usernameTd, cnTd, createTd, editTd, deleteTd, editGeoTd, deleteGeoTd, adminTd, passwordTd, createdTd, actionsTd);
+      tr.append(usernameTd, createTd, editTd, deleteTd, editGeoTd, deleteGeoTd, adminTd, passwordTd, createdTd, actionsTd);
       return tr;
     }
 
@@ -1455,6 +1449,20 @@
       }
       syncErrorEl.textContent = message;
       syncErrorEl.classList.remove('hidden');
+    }
+
+    async function loadServerPublicKey() {
+      serverPublicKeyErrorEl.classList.add('hidden');
+      try {
+        const res = await api('/server/public-key');
+        const data = await res.json();
+        serverPublicKeyEl.value = data.publicKeyPem;
+      } catch (err) {
+        if (err.message !== 'unauthorized') {
+          serverPublicKeyErrorEl.textContent = err.message;
+          serverPublicKeyErrorEl.classList.remove('hidden');
+        }
+      }
     }
 
     async function loadSyncRemotes() {
@@ -1892,7 +1900,7 @@
       });
     });
 
-    tabSyncBtn.addEventListener('click', () => { showTab('sync'); loadSyncRemotes(); });
+    tabSyncBtn.addEventListener('click', () => { showTab('sync'); loadSyncRemotes(); loadServerPublicKey(); });
 
     function auditError(message) {
       if (!message) {
@@ -2045,7 +2053,6 @@
       e.preventDefault();
       const payload = {
         username: document.getElementById('cu-username').value,
-        cn: document.getElementById('cu-cn').value,
         password: document.getElementById('cu-password').value,
         canCreate: document.getElementById('cu-create').checked,
         canEdit: document.getElementById('cu-edit').checked,

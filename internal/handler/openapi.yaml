@@ -655,7 +655,7 @@ paths:
       parameters:
         - name: search
           in: query
-          description: Case-insensitive substring match against username OR cn.
+          description: Case-insensitive substring match against username.
           schema:
             type: string
         - name: isAdmin
@@ -1084,6 +1084,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/KeyPair"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /server/public-key:
+    get:
+      tags: [api-keys]
+      summary: This server's own persistent public key
+      description: >-
+        Requires the acting user's `is_admin` permission. Returns the public
+        half of the RSA-4096 key pair this server generated for itself on
+        first startup and persists across restarts (see the `-keys-dir`
+        startup flag). Register it wherever this server needs to authenticate
+        itself, e.g. as an API key for a user on a remote tileserve-go
+        instance this server syncs from.
+      responses:
+        "200":
+          description: This server's public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerPublicKey"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1882,6 +1905,16 @@ components:
         publicKeyPem:
           type: string
           description: The matching public key, PEM-encoded (PKIX). Register this wherever an API key needs it.
+
+    ServerPublicKey:
+      type: object
+      properties:
+        publicKeyPem:
+          type: string
+          description: >-
+            This server's own persistent RSA-4096 public key, PEM-encoded
+            (PKIX). Generated once on first startup and stable across
+            restarts.
 
     SyncRemoteRequest:
       type: object

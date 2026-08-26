@@ -11,7 +11,6 @@ import (
 type userRequest struct {
 	Username            string `json:"username"`
 	Password            string `json:"password"`
-	CN                  string `json:"cn"`
 	CanCreate           bool   `json:"canCreate"`
 	CanEdit             bool   `json:"canEdit"`
 	CanDelete           bool   `json:"canDelete"`
@@ -116,13 +115,13 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
-			u, err := st.CreateUser(r.Context(), req.Username, req.Password, req.CN, req.permissions())
+			u, err := st.CreateUser(r.Context(), req.Username, req.Password, req.permissions())
 			if err != nil {
 				writeStoreError(w, err, store.ErrUserExists, http.StatusConflict, "user already exists", "failed to create user")
 				return
 			}
 
-			recordAudit(r, st, "create", "user", u.Username, fmt.Sprintf("cn=%q isAdmin=%v", u.CN, u.IsAdmin))
+			recordAudit(r, st, "create", "user", u.Username, fmt.Sprintf("isAdmin=%v", u.IsAdmin))
 
 			writeJSON(w, http.StatusCreated, u)
 
@@ -133,7 +132,7 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 }
 
 // UserItemHandler serves the /users/{username} item route (admin-only): PUT
-// updates the user's cn/permissions (and password, if given), DELETE removes
+// updates the user's permissions (and password, if given), DELETE removes
 // the user (an admin may not delete their own account). It also dispatches
 // the nested /users/{username}/api-keys[/{id}] sub-resource, mirroring
 // MapsItemHandler's path-segment dispatch style.
@@ -169,13 +168,13 @@ func UserItemHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
-			u, err := st.UpdateUser(r.Context(), username, req.CN, req.permissions(), req.Password)
+			u, err := st.UpdateUser(r.Context(), username, req.permissions(), req.Password)
 			if err != nil {
 				writeStoreError(w, err, store.ErrUserNotFound, http.StatusNotFound, "user not found", "failed to update user")
 				return
 			}
 
-			recordAudit(r, st, "update", "user", u.Username, fmt.Sprintf("cn=%q isAdmin=%v passwordChanged=%v", u.CN, u.IsAdmin, req.Password != ""))
+			recordAudit(r, st, "update", "user", u.Username, fmt.Sprintf("isAdmin=%v passwordChanged=%v", u.IsAdmin, req.Password != ""))
 
 			writeJSON(w, http.StatusOK, u)
 

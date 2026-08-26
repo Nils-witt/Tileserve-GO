@@ -118,10 +118,9 @@ func NewAuthenticator(cfg Config) (*Authenticator, error) {
 type Identity struct {
 	// DN is the entry's distinguished name — the stable identifier a local
 	// account gets linked to (see store.FindUserByLDAPIdentity/
-	// CreateLDAPUser), since a directory's username/cn attributes can be
+	// CreateLDAPUser), since a directory's username attribute can be
 	// reassigned across entries over time but its DN is not.
 	DN    string
-	CN    string
 	Email string
 }
 
@@ -183,7 +182,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		a.cfg.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false,
 		filter,
-		[]string{"cn", "mail"},
+		[]string{"mail"},
 		nil,
 	)
 
@@ -213,7 +212,6 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 
 	return Identity{
 		DN:    entry.DN,
-		CN:    entry.GetAttributeValue("cn"),
 		Email: entry.GetAttributeValue("mail"),
 	}, nil
 }
