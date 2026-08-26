@@ -477,6 +477,18 @@ var migrationSteps = []struct {
 			ALTER TABLE users DROP COLUMN IF EXISTS cn;
 		`,
 	},
+	{
+		// Every sync remote now authenticates with this server's own
+		// persistent key pair (see internal/serverkey) instead of a key pair
+		// generated per remote, so the per-remote private key has nowhere
+		// left to be read from. As with api_keys.key_hash and
+		// sync_remotes.api_key before it, the column is dropped outright —
+		// no migration path, by design.
+		errContext: "migrate sync_remotes drop private key column",
+		sql: `
+			ALTER TABLE sync_remotes DROP COLUMN IF EXISTS private_key_pem;
+		`,
+	},
 }
 
 // Authenticate looks up username and verifies password against its bcrypt hash.

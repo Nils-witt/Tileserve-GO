@@ -98,9 +98,10 @@
     }
 
     // generateKeyPair asks the server to generate a fresh RSA key pair
-    // (nothing persisted server-side) — shared by the API-key modal and the
-    // sync-remote form, since both need a caller-held private key plus a
-    // public key to register somewhere.
+    // (nothing persisted server-side), for the API-key modal: the admin
+    // keeps the private half and registers the public half as a user's API
+    // key. Sync remotes don't use this — they all authenticate with this
+    // server's own persistent key (see loadServerPublicKey).
     async function generateKeyPair() {
       const res = await api('/keys/generate', { method: 'POST' });
       return res.json();
@@ -1585,11 +1586,7 @@
 
     // updateSyncRemote PUTs the full remote configuration, merging patch
     // over r's current fields — mirrors updateMapFlag's pattern for
-    // toggling a single boolean via a full-replace endpoint. remoteApiKeyId
-    // isn't secret, so it's always resent from r; privateKeyPem is
-    // deliberately omitted: PUT /sync/remotes/{id} treats a missing/empty
-    // privateKeyPem as "keep the current one" (see store.UpdateSyncRemote),
-    // since GET /sync/remotes never echoes it back for this code to resend.
+    // toggling a single boolean via a full-replace endpoint.
     async function updateSyncRemote(r, patch) {
       syncError(null);
       try {
@@ -1614,40 +1611,17 @@
     }
 
     // editSyncRemote uses the existing sequential-prompt() pattern for the
-    // short scalar fields, but a multi-line PEM private key doesn't fit a
-    // single-line prompt() well — so instead of asking the admin to paste
-    // one, this offers to generate a fresh key pair (same as the create
-    // form) and only prompts for the new remote key id once it's been
-    // registered on the remote.
+    // short scalar fields. There's no per-remote key pair to manage — every
+    // remote authenticates with this server's own persistent key (see
+    // loadServerPublicKey) — so the only key-related field here is the
+    // remote API key ID that key was registered as on the remote.
     async function editSyncRemote(r) {
       const name = prompt('Name', r.name);
       if (name === null) return;
       const baseUrl = prompt('Base URL', r.baseUrl);
       if (baseUrl === null) return;
-
-      let remoteApiKeyId = r.remoteApiKeyId;
-      let privateKeyPem = '';
-
-      if (confirm('Generate a new key pair for this remote? (Cancel to keep the current one)')) {
-        syncError(null);
-        try {
-          const kp = await generateKeyPair();
-          prompt('Public key — register this as a new API key on the remote, then note the resulting key ID:', kp.publicKeyPem);
-          privateKeyPem = kp.privateKeyPem;
-        } catch (err) {
-          if (err.message !== 'unauthorized') syncError(err.message);
-          return;
-        }
-
-        const newId = prompt('New remote API key ID (from the remote\'s response)', remoteApiKeyId);
-        if (newId === null) return;
-        remoteApiKeyId = newId;
-      } else {
-        const newId = prompt('Remote API key ID', remoteApiKeyId);
-        if (newId === null) return;
-        remoteApiKeyId = newId;
-      }
-
+      const remoteApiKeyId = prompt('Remote API key ID', r.remoteApiKeyId);
+      if (remoteApiKeyId === null) return;
       const pollIntervalSec = prompt('Poll interval (seconds)', r.pollIntervalSec);
       if (pollIntervalSec === null) return;
       syncError(null);
@@ -1659,7 +1633,6 @@
             name,
             baseUrl,
             remoteApiKeyId,
-            privateKeyPem,
             pollIntervalSec: parseInt(pollIntervalSec, 10),
             enabled: r.enabled,
             syncAllMaps: r.syncAllMaps,
@@ -1862,24 +1835,12 @@
       if (e.target === syncMapsOverlay) closeSyncMapsModal();
     });
 
-    document.getElementById('sync-generate-btn').addEventListener('click', async () => {
-      syncError(null);
-      try {
-        const kp = await generateKeyPair();
-        document.getElementById('sync-private-key-pem').value = kp.privateKeyPem;
-        document.getElementById('sync-public-key-pem').value = kp.publicKeyPem;
-      } catch (err) {
-        if (err.message !== 'unauthorized') syncError(err.message);
-      }
-    });
-
     document.getElementById('create-sync-form').addEventListener('submit', (e) => {
       e.preventDefault();
       const payload = {
         name: document.getElementById('sync-name').value,
         baseUrl: document.getElementById('sync-base-url').value,
         remoteApiKeyId: document.getElementById('sync-remote-key-id').value,
-        privateKeyPem: document.getElementById('sync-private-key-pem').value,
         pollIntervalSec: parseInt(document.getElementById('sync-interval').value, 10),
         enabled: document.getElementById('sync-enabled').checked,
         // A freshly registered remote starts in "sync everything" mode,
@@ -1893,8 +1854,6 @@
       };
       createSyncRemote(payload).then(() => {
         e.target.reset();
-        document.getElementById('sync-public-key-pem').value = '';
-        document.getElementById('sync-private-key-pem').value = '';
         document.getElementById('sync-interval').value = 300;
         document.getElementById('sync-enabled').checked = true;
       });

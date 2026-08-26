@@ -7,6 +7,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -71,4 +72,37 @@ func EnsureKeyPair(dir string) error {
 	}
 
 	return nil
+}
+
+// LoadPrivateKey reads and parses the server.key file EnsureKeyPair creates
+// in dir, returning this server's own persistent RSA private key. Callers
+// (see internal/sync) use it to sign every outbound sync request, rather
+// than a key pair generated per remote — one identity, shared by every
+// remote this server pulls from, matching the public half served by
+// ServerPublicKeyHandler. EnsureKeyPair must have been called successfully
+// against dir first.
+func LoadPrivateKey(dir string) (*rsa.PrivateKey, error) {
+	privatePath := filepath.Join(dir, PrivateKeyFileName)
+
+	pemBytes, err := os.ReadFile(privatePath) //nolint:gosec // G304: dir is a server-operator-supplied startup flag, not request input
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", privatePath, err)
+	}
+
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, fmt.Errorf("%s: not a valid PEM file", privatePath)
+	}
+
+	key, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", privatePath, err)
+	}
+
+	rsaKey, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		return nil, errors.New(privatePath + ": not an RSA private key")
+	}
+
+	return rsaKey, nil
 }

@@ -253,9 +253,11 @@
         <div class="card">
           <h2>This server's public key</h2>
           <p class="muted" style="margin-top:0; margin-bottom:0.9rem">
-            Generated once on first startup and persisted across restarts (unlike the per-remote key pairs
-            below). Register it wherever this server needs to authenticate itself, e.g. as an API key for a
-            user on a remote tileserve-go instance.
+            Generated once on first startup and persisted across restarts. Every sync remote below
+            authenticates with this same key — register it as an API key for a user on each remote
+            tileserve-go instance you want to pull from (via that instance's "API keys" button on its
+            Users tab), then paste the key ID that call returns into "Remote API key ID" when registering
+            the remote.
           </p>
           <textarea id="server-public-key" rows="6" readonly style="width:100%; font-family:monospace; font-size:0.8em"></textarea>
           <p id="server-public-key-error" class="hidden" style="color:#dc2626"></p>
@@ -266,9 +268,8 @@
           <p class="muted" style="margin-top:0; margin-bottom:0.9rem">
             Pulls a full mirror of every map visible to a registered API key on another tileserve-go instance —
             versions and aliases included, under the same map UUIDs. This server signs its own short-lived JWTs
-            using a key pair it generates itself: click "Generate key pair" below, register the resulting public
-            key as an API key for a user on the remote instance (via that instance's "API keys" button on its
-            Users tab), then paste the key ID that call returns into "Remote API key ID".
+            using its persistent key pair shown above; register that public key as an API key for a user on the
+            remote instance, then paste the key ID that call returns into "Remote API key ID" below.
           </p>
           <form id="create-sync-form" class="row">
             <div class="field">
@@ -290,12 +291,6 @@
             <div class="field">
               <label><input type="checkbox" id="sync-enabled" checked> Enabled</label>
             </div>
-            <div class="field" style="flex-basis:100%">
-              <label for="sync-public-key-pem">Public key (copy this to the remote's "API keys" form)</label>
-              <textarea id="sync-public-key-pem" rows="3" readonly placeholder="Click &quot;Generate key pair&quot;" style="width:100%; font-family:monospace; font-size:0.8em"></textarea>
-            </div>
-            <input type="hidden" id="sync-private-key-pem">
-            <button type="button" class="secondary" id="sync-generate-btn">Generate key pair</button>
             <button type="submit">Register</button>
           </form>
         </div>

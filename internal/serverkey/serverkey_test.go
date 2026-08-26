@@ -57,6 +57,50 @@ func TestEnsureKeyPairGeneratesWhenMissing(t *testing.T) {
 	}
 }
 
+func TestLoadPrivateKeyMatchesGeneratedKey(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+
+	if err := EnsureKeyPair(dir); err != nil {
+		t.Fatalf("EnsureKeyPair: %v", err)
+	}
+
+	privatePEM, err := os.ReadFile(filepath.Join(dir, PrivateKeyFileName))
+	if err != nil {
+		t.Fatalf("read private key: %v", err)
+	}
+
+	block, _ := pem.Decode(privatePEM)
+
+	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	if err != nil {
+		t.Fatalf("parse private key: %v", err)
+	}
+
+	want, ok := parsed.(*rsa.PrivateKey)
+	if !ok {
+		t.Fatalf("private key type: got %T, want *rsa.PrivateKey", parsed)
+	}
+
+	got, err := LoadPrivateKey(dir)
+	if err != nil {
+		t.Fatalf("LoadPrivateKey: %v", err)
+	}
+
+	if !got.Equal(want) {
+		t.Fatal("LoadPrivateKey returned a different key than EnsureKeyPair generated")
+	}
+}
+
+func TestLoadPrivateKeyMissingFile(t *testing.T) {
+	t.Parallel()
+
+	if _, err := LoadPrivateKey(t.TempDir()); err == nil {
+		t.Fatal("LoadPrivateKey with no server.key present should return an error")
+	}
+}
+
 func TestEnsureKeyPairLeavesExistingKeyAlone(t *testing.T) {
 	t.Parallel()
 

@@ -894,9 +894,7 @@ paths:
       tags: [sync]
       summary: List configured sync remotes
       description: >-
-        Requires the acting user's `is_admin` permission. Never includes
-        `privateKeyPem` — the secret this server uses to sign its outbound
-        requests to the remote.
+        Requires the acting user's `is_admin` permission.
       responses:
         "200":
           description: Array of sync remotes
@@ -914,15 +912,14 @@ paths:
       tags: [sync]
       summary: Register a remote to pull a full mirror from
       description: >-
-        Requires the acting user's `is_admin` permission. `privateKeyPem` is
-        required here (unlike on `PUT`) — this server generates its own RSA
-        key pair (e.g. via `POST /keys/generate`), registers the public half
-        as an API key on the remote (`POST /users/{username}/api-keys`
-        there), and configures the resulting key id as `remoteApiKeyId`
-        alongside its own `privateKeyPem` here. Once created and enabled,
-        this server periodically (every `pollIntervalSec`) signs a
-        short-lived JWT per request and pulls every map visible to that
-        identity on the remote — including every version and alias,
+        Requires the acting user's `is_admin` permission. This server
+        authenticates to every remote with its own persistent key pair (see
+        `GET /server/public-key`) — register that public key as an API key
+        on the remote (`POST /users/{username}/api-keys` there), and
+        configure the resulting key id as `remoteApiKeyId` here. Once created
+        and enabled, this server periodically (every `pollIntervalSec`)
+        signs a short-lived JWT per request and pulls every map visible to
+        that identity on the remote — including every version and alias,
         mirrored under the same map UUIDs — via `GET /maps`, `GET
         /maps/{id}/versions`, `GET /maps/{id}/version/{version}/archive`,
         and `GET /maps/{id}/aliases` on the remote.
@@ -984,9 +981,9 @@ paths:
       summary: Replace a sync remote's configuration
       description: >-
         Requires the acting user's `is_admin` permission. Changing
-        `baseUrl`, `remoteApiKeyId`, `privateKeyPem`, or `pollIntervalSec`
-        on a currently-running remote restarts its background sync worker
-        with the new configuration (within ~30s).
+        `baseUrl`, `remoteApiKeyId`, or `pollIntervalSec` on a
+        currently-running remote restarts its background sync worker with
+        the new configuration (within ~30s).
       requestBody:
         required: true
         content:
@@ -1930,20 +1927,9 @@ components:
           format: uuid
           description: >-
             The `id` returned by `POST /users/{username}/api-keys` on the
-            remote instance, when this server's own public key was
-            registered there. Always required (not secret — echoed back by
-            `GET`).
-        privateKeyPem:
-          type: string
-          description: >-
-            This (local) server's own RSA private key, PEM-encoded, used to
-            sign short-lived JWTs presented to the remote. Required when
-            creating a remote (`POST /sync/remotes`). On update (`PUT
-            /sync/remotes/{id}`), optional — omit or leave empty to keep the
-            current key, the same convention `UserRequest.password` uses;
-            necessary because `GET`/list responses never echo the key back.
-            See `POST /keys/generate` for a convenience endpoint that
-            generates a fresh key pair without persisting anything.
+            remote instance, when this server's own persistent public key
+            (see `GET /server/public-key`) was registered there. Always
+            required (not secret — echoed back by `GET`).
         pollIntervalSec:
           type: integer
           description: How often to sync, in seconds. Must be positive.

@@ -27,10 +27,11 @@ type keyPairResponse struct {
 // a fresh RSA key pair server-side and returns both halves PEM-encoded,
 // without persisting anything. It exists purely as a convenience so the
 // vanilla-JS admin UI doesn't require external tooling (e.g. openssl) to
-// bootstrap a key pair — the caller (an admin registering a user's API key,
-// or this instance's own sync worker registering itself against a remote)
-// is responsible for keeping the private key and submitting only the public
-// half wherever a key gets registered; this server never stores it.
+// bootstrap a key pair when registering a user's API key — the caller is
+// responsible for keeping the private key and submitting only the public
+// half wherever a key gets registered; this server never stores it. Sync
+// remotes don't use this: they all authenticate with this server's own
+// persistent key pair instead (see ServerPublicKeyHandler).
 func GenerateKeyPairHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireAdmin(w, r, st) {
@@ -74,10 +75,9 @@ type serverPublicKeyResponse struct {
 // this server's own persistent RSA public key (see internal/serverkey,
 // generated once on first startup and reused thereafter), PEM-encoded. An
 // admin copies this into another tileserve-go instance's "API keys" form to
-// register this server as a sync client there, the same way a per-remote key
-// pair from GenerateKeyPairHandler would be registered, except this key is
-// stable across restarts and shared by every sync remote this server pulls
-// from.
+// register this server as a sync client there — every sync remote this
+// server pulls from is authenticated with this same key (see
+// internal/sync.Manager), not a key pair generated per remote.
 func ServerPublicKeyHandler(st *store.Store, keysDir string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireAdmin(w, r, st) {

@@ -30,7 +30,6 @@ type syncRemoteRequest struct {
 	Name            string `json:"name"`
 	BaseURL         string `json:"baseUrl"`
 	RemoteAPIKeyID  string `json:"remoteApiKeyId"`
-	PrivateKeyPEM   string `json:"privateKeyPem"`
 	PollIntervalSec int    `json:"pollIntervalSec"`
 	Enabled         bool   `json:"enabled"`
 	SyncAllMaps     bool   `json:"syncAllMaps"`
@@ -68,7 +67,7 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
-			remoteAPIKeyID, ok := validateSyncRemoteRequest(w, req, true)
+			remoteAPIKeyID, ok := validateSyncRemoteRequest(w, req)
 			if !ok {
 				return
 			}
@@ -83,15 +82,9 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
-			sr, err := st.CreateSyncRemote(r.Context(), req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, req.SyncGeoObjects, usernameFromContext(r.Context()))
+			sr, err := st.CreateSyncRemote(r.Context(), req.Name, req.BaseURL, remoteAPIKeyID, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, req.SyncGeoObjects, usernameFromContext(r.Context()))
 			if err != nil {
-				if errors.Is(err, store.ErrInvalidPrivateKeyPEM) {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-
 				http.Error(w, "failed to create sync remote", http.StatusInternalServerError)
-
 				return
 			}
 
@@ -113,20 +106,10 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 // validateSyncRemoteRequest checks req's required fields, writing a 400 and
 // returning ok=false if invalid, along with the parsed remoteApiKeyId on
 // success. remoteApiKeyId is always required — it isn't secret, so GET/list
-// responses always echo it back for the UI to resubmit. requirePrivateKey is
-// true for POST (a new remote must be given a key) and false for PUT (an
-// empty privateKeyPem there means "keep the current one" — see
-// store.UpdateSyncRemote — since GET/list responses never echo the key back
-// for the UI to resubmit unchanged).
-func validateSyncRemoteRequest(w http.ResponseWriter, req syncRemoteRequest, requirePrivateKey bool) (uuid.UUID, bool) {
-	if req.Name == "" || req.BaseURL == "" || req.RemoteAPIKeyID == "" || (requirePrivateKey && req.PrivateKeyPEM == "") {
-		msg := "name, baseUrl, and remoteApiKeyId are required"
-		if requirePrivateKey {
-			msg = "name, baseUrl, remoteApiKeyId, and privateKeyPem are required"
-		}
-
-		http.Error(w, msg, http.StatusBadRequest)
-
+// responses always echo it back for the UI to resubmit.
+func validateSyncRemoteRequest(w http.ResponseWriter, req syncRemoteRequest) (uuid.UUID, bool) {
+	if req.Name == "" || req.BaseURL == "" || req.RemoteAPIKeyID == "" {
+		http.Error(w, "name, baseUrl, and remoteApiKeyId are required", http.StatusBadRequest)
 		return uuid.UUID{}, false
 	}
 
@@ -256,7 +239,7 @@ func updateSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 		return
 	}
 
-	remoteAPIKeyID, ok := validateSyncRemoteRequest(w, req, false)
+	remoteAPIKeyID, ok := validateSyncRemoteRequest(w, req)
 	if !ok {
 		return
 	}
@@ -272,15 +255,9 @@ func updateSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 		}
 	}
 
-	sr, err := st.UpdateSyncRemote(r.Context(), id, req.Name, req.BaseURL, remoteAPIKeyID, req.PrivateKeyPEM, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, req.SyncGeoObjects, usernameFromContext(r.Context()))
+	sr, err := st.UpdateSyncRemote(r.Context(), id, req.Name, req.BaseURL, remoteAPIKeyID, req.PollIntervalSec, req.Enabled, req.SyncAllMaps, req.SyncNewMaps, req.SyncGeoObjects, usernameFromContext(r.Context()))
 	if err != nil {
-		if errors.Is(err, store.ErrInvalidPrivateKeyPEM) {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-
 		writeStoreError(w, err, store.ErrSyncRemoteNotFound, http.StatusNotFound, "sync remote not found", "failed to update sync remote")
-
 		return
 	}
 

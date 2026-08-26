@@ -3,9 +3,7 @@ package sync
 import (
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,9 +16,9 @@ import (
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
-// testKeyPair generates a fresh RSA key pair for tests and returns both the
-// private key and its PKCS8-PEM encoding, matching what NewClient parses.
-func testKeyPair(t *testing.T) (*rsa.PrivateKey, string) {
+// testKeyPair generates a fresh RSA key pair for tests, matching what
+// NewClient signs with.
+func testKeyPair(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -28,14 +26,7 @@ func testKeyPair(t *testing.T) (*rsa.PrivateKey, string) {
 		t.Fatalf("generate rsa key: %v", err)
 	}
 
-	der, err := x509.MarshalPKCS8PrivateKey(key)
-	if err != nil {
-		t.Fatalf("marshal private key: %v", err)
-	}
-
-	pemStr := string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
-
-	return key, pemStr
+	return key
 }
 
 // requireAPIKeyJWT wraps handler, rejecting any request whose bearer token
@@ -81,7 +72,7 @@ func TestClientListMaps(t *testing.T) {
 	mapID := uuid.New()
 	want := []store.MapRecord{{UUID: mapID, Name: "test-map", CurrentVersion: "3"}}
 
-	key, keyPEM := testKeyPair(t)
+	key := testKeyPair(t)
 	keyID := uuid.New()
 
 	mux := http.NewServeMux()
@@ -96,10 +87,7 @@ func TestClientListMaps(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client, err := NewClient(srv.URL, keyID, keyPEM)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	client := NewClient(srv.URL, keyID, key)
 
 	got, err := client.ListMaps(t.Context())
 	if err != nil {
@@ -114,7 +102,7 @@ func TestClientListMaps(t *testing.T) {
 func TestClientListMapsRejectsBadStatus(t *testing.T) {
 	t.Parallel()
 
-	_, keyPEM := testKeyPair(t)
+	key := testKeyPair(t)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/maps", func(w http.ResponseWriter, _ *http.Request) {
@@ -124,10 +112,7 @@ func TestClientListMapsRejectsBadStatus(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client, err := NewClient(srv.URL, uuid.New(), keyPEM)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	client := NewClient(srv.URL, uuid.New(), key)
 
 	if _, err := client.ListMaps(t.Context()); err == nil {
 		t.Fatal("ListMaps() with a rejected request should return an error")
@@ -140,7 +125,7 @@ func TestClientDownloadArchive(t *testing.T) {
 	mapID := uuid.New()
 	body := []byte("fake-zip-bytes")
 
-	key, keyPEM := testKeyPair(t)
+	key := testKeyPair(t)
 	keyID := uuid.New()
 
 	mux := http.NewServeMux()
@@ -151,10 +136,7 @@ func TestClientDownloadArchive(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client, err := NewClient(srv.URL, keyID, keyPEM)
-	if err != nil {
-		t.Fatalf("NewClient: %v", err)
-	}
+	client := NewClient(srv.URL, keyID, key)
 
 	tmpPath, err := client.DownloadArchive(t.Context(), mapID, "3")
 	if err != nil {
@@ -169,13 +151,5 @@ func TestClientDownloadArchive(t *testing.T) {
 
 	if string(got) != string(body) {
 		t.Fatalf("downloaded archive = %q, want %q", got, body)
-	}
-}
-
-func TestNewClientRejectsInvalidPrivateKey(t *testing.T) {
-	t.Parallel()
-
-	if _, err := NewClient("https://example.com", uuid.New(), "not a valid pem"); err == nil {
-		t.Fatal("NewClient with an invalid private key PEM should return an error")
 	}
 }

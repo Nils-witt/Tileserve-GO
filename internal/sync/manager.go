@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"crypto/rsa"
 	"errors"
 	"fmt"
 	"log"
@@ -34,24 +35,29 @@ type runningWorker struct {
 
 // Manager starts, stops, and restarts one background sync worker
 // (see runRemote) per enabled sync_remotes row, keeping them in sync with
-// the database via a periodic reconciler loop (see Start). The zero value
-// is not usable; construct via NewManager.
+// the database via a periodic reconciler loop (see Start). Every worker
+// authenticates using the same privateKey — this server's own persistent
+// key pair (see internal/serverkey) — rather than a key pair per remote.
+// The zero value is not usable; construct via NewManager.
 type Manager struct {
-	st       *store.Store
-	dataRoot string
-	logs     *LogStore
+	st         *store.Store
+	dataRoot   string
+	privateKey *rsa.PrivateKey
+	logs       *LogStore
 
 	mu      sync.Mutex
 	workers map[uuid.UUID]*runningWorker
 }
 
-// NewManager returns a Manager for dataRoot, backed by st.
-func NewManager(st *store.Store, dataRoot string) *Manager {
+// NewManager returns a Manager for dataRoot, backed by st, signing every
+// outbound sync request with privateKey (see internal/serverkey.LoadPrivateKey).
+func NewManager(st *store.Store, dataRoot string, privateKey *rsa.PrivateKey) *Manager {
 	return &Manager{
-		st:       st,
-		dataRoot: dataRoot,
-		logs:     newLogStore(),
-		workers:  make(map[uuid.UUID]*runningWorker),
+		st:         st,
+		dataRoot:   dataRoot,
+		privateKey: privateKey,
+		logs:       newLogStore(),
+		workers:    make(map[uuid.UUID]*runningWorker),
 	}
 }
 
@@ -167,7 +173,6 @@ func (m *Manager) reconcile(ctx context.Context) {
 func configChanged(running, current store.SyncRemote) bool {
 	return running.BaseURL != current.BaseURL ||
 		running.RemoteAPIKeyID != current.RemoteAPIKeyID ||
-		running.PrivateKeyPEM != current.PrivateKeyPEM ||
 		running.PollIntervalSec != current.PollIntervalSec ||
 		running.SyncAllMaps != current.SyncAllMaps ||
 		running.SyncNewMaps != current.SyncNewMaps ||
@@ -185,7 +190,7 @@ func (m *Manager) startWorkerLocked(ctx context.Context, remote store.SyncRemote
 	go func() {
 		defer close(done)
 
-		runRemote(workerCtx, m.st, m.dataRoot, remote, trigger, m.logs)
+		runRemote(workerCtx, m.st, m.dataRoot, remote, m.privateKey, trigger, m.logs)
 	}()
 }
 
@@ -219,10 +224,7 @@ func (m *Manager) ListRemoteMaps(ctx context.Context, id uuid.UUID) ([]store.Map
 		return nil, fmt.Errorf("get sync remote: %w", err)
 	}
 
-	client, err := NewClient(remote.BaseURL, remote.RemoteAPIKeyID, remote.PrivateKeyPEM)
-	if err != nil {
-		return nil, fmt.Errorf("build client: %w", err)
-	}
+	client := NewClient(remote.BaseURL, remote.RemoteAPIKeyID, m.privateKey)
 
 	maps, err := client.ListMaps(ctx)
 	if err != nil {

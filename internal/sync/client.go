@@ -53,21 +53,18 @@ type Client struct {
 
 // NewClient returns a Client for the remote instance at baseURL,
 // authenticating every request with a freshly-signed RS256 JWT (see
-// signToken) naming keyID as its `kid` and signed with privateKeyPEM — the
-// private half of the key pair whose public half was registered as API key
-// keyID on the remote. It returns an error if privateKeyPEM doesn't parse.
-func NewClient(baseURL string, keyID uuid.UUID, privateKeyPEM string) (*Client, error) {
-	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyPEM))
-	if err != nil {
-		return nil, fmt.Errorf("parse sync remote private key: %w", err)
-	}
-
+// signToken) naming keyID as its `kid` and signed with privateKey — this
+// server's own persistent key pair (see internal/serverkey), whose public
+// half was registered as API key keyID on the remote. Every remote this
+// server pulls from shares the same privateKey; there is no longer a
+// separate key pair per remote.
+func NewClient(baseURL string, keyID uuid.UUID, privateKey *rsa.PrivateKey) *Client {
 	return &Client{
 		baseURL:    strings.TrimSuffix(baseURL, "/"),
 		keyID:      keyID,
 		privateKey: privateKey,
 		http:       &http.Client{Timeout: httpTimeout},
-	}, nil
+	}
 }
 
 // signToken mints a fresh, short-lived RS256 JWT identifying this client's

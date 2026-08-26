@@ -2,6 +2,7 @@ package sync
 
 import (
 	"context"
+	"crypto/rsa"
 	"time"
 
 	"nilswitt.dev/tileserve-go/internal/store"
@@ -18,7 +19,7 @@ const defaultPollInterval = 5 * time.Minute
 // outcome is persisted via st.SetSyncRemoteStatus for observability, and its
 // log lines are recorded in logs for the admin UI's log view (see
 // Manager.Logs). Meant to be launched in its own goroutine by Manager.
-func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote, trigger <-chan struct{}, logs *LogStore) {
+func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote, privateKey *rsa.PrivateKey, trigger <-chan struct{}, logs *LogStore) {
 	interval := time.Duration(remote.PollIntervalSec) * time.Second
 	if interval <= 0 {
 		interval = defaultPollInterval
@@ -26,7 +27,7 @@ func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote sto
 
 	logs.logf(remote.ID, "sync remote %s (%s): worker started, polling every %s", remote.Name, remote.ID, interval)
 
-	runOnce(ctx, st, dataRoot, remote, logs)
+	runOnce(ctx, st, dataRoot, remote, privateKey, logs)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -37,32 +38,25 @@ func runRemote(ctx context.Context, st *store.Store, dataRoot string, remote sto
 			logs.logf(remote.ID, "sync remote %s (%s): worker stopped", remote.Name, remote.ID)
 			return
 		case <-ticker.C:
-			runOnce(ctx, st, dataRoot, remote, logs)
+			runOnce(ctx, st, dataRoot, remote, privateKey, logs)
 		case <-trigger:
 			logs.logf(remote.ID, "sync remote %s (%s): running triggered sync", remote.Name, remote.ID)
-			runOnce(ctx, st, dataRoot, remote, logs)
+			runOnce(ctx, st, dataRoot, remote, privateKey, logs)
 		}
 	}
 }
 
 // runOnce performs a single sync pass for remote and records its outcome.
 // Errors are logged, not propagated — a failed sync tick is retried on the
-// next tick/trigger, not treated as fatal to the worker loop. The client is
-// (re)built on every call, rather than once per worker goroutine, because
-// NewClient can now fail (a malformed stored private key) — building it
-// here means that failure surfaces as a normal recurring sync-status error
-// instead of permanently stranding the worker.
-func runOnce(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote, logs *LogStore) {
+// next tick/trigger, not treated as fatal to the worker loop.
+func runOnce(ctx context.Context, st *store.Store, dataRoot string, remote store.SyncRemote, privateKey *rsa.PrivateKey, logs *LogStore) {
 	start := time.Now()
 	status, errMsg := "ok", ""
 
 	logs.logf(remote.ID, "sync remote %s (%s): starting sync pass", remote.Name, remote.ID)
 
-	client, err := NewClient(remote.BaseURL, remote.RemoteAPIKeyID, remote.PrivateKeyPEM)
-	if err != nil {
-		status, errMsg = "error", err.Error()
-		logs.errf(remote.ID, "sync remote %s (%s): build client: %v", remote.Name, remote.ID, err)
-	} else if err := syncRemoteOnce(ctx, st, dataRoot, client, remote, logs); err != nil {
+	client := NewClient(remote.BaseURL, remote.RemoteAPIKeyID, privateKey)
+	if err := syncRemoteOnce(ctx, st, dataRoot, client, remote, logs); err != nil {
 		status, errMsg = "error", err.Error()
 		logs.errf(remote.ID, "sync remote %s (%s): sync pass failed: %v", remote.Name, remote.ID, err)
 	}

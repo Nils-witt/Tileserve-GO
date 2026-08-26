@@ -128,6 +128,11 @@ func run(dataRoot, keysDir, jwtSecret, dbDSN, seedUsername, seedPassword, port, 
 		return fmt.Errorf("ensure server key pair: %w", err)
 	}
 
+	serverPrivateKey, err := serverkey.LoadPrivateKey(keysDir)
+	if err != nil {
+		return fmt.Errorf("load server key pair: %w", err)
+	}
+
 	st, err := initStore(ctx, dbDSN, seedUsername, seedPassword)
 	if err != nil {
 		return err
@@ -147,7 +152,7 @@ func run(dataRoot, keysDir, jwtSecret, dbDSN, seedUsername, seedPassword, port, 
 	// enabled sync_remotes row (see internal/sync.Manager); it reconciles
 	// against the database periodically, so remotes added/edited/disabled
 	// via the /sync/remotes API take effect without a restart.
-	syncManager := sync.NewManager(st, dataRoot)
+	syncManager := sync.NewManager(st, dataRoot, serverPrivateKey)
 	go syncManager.Start(ctx)
 
 	oidcAuth, ldapAuth, err := newAuthenticators(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug)
