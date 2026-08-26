@@ -337,10 +337,11 @@ paths:
       tags: [maps]
       summary: Replace a map's name/currentVersion/visibleToAll/anonymousAllowed
       description: >
-        Requires the acting user's `can_edit` permission (global or per-map).
-        `name`, `currentVersion`, `visibleToAll`, and `anonymousAllowed` are
-        replaced; this does not touch the map_versions history or any
-        extracted files on disk.
+        Requires the acting user's `can_edit` permission (global or per-map),
+        or being the map's owner (its creator, who can do everything with
+        their own map). `name`, `currentVersion`, `visibleToAll`, and
+        `anonymousAllowed` are replaced; this does not touch the
+        map_versions history or any extracted files on disk.
       requestBody:
         required: true
         content:
@@ -369,7 +370,10 @@ paths:
     delete:
       tags: [maps]
       summary: Delete a map
-      description: Requires the acting user's `can_delete` permission. Cascades and deletes the map's version history.
+      description: >-
+        Requires the acting user's `can_delete` permission, or being the
+        map's owner (its creator). Cascades and deletes the map's version
+        history.
       responses:
         "204":
           description: Map deleted
@@ -412,8 +416,9 @@ paths:
       tags: [maps]
       summary: Upload a new map version
       description: >
-        Requires the acting user's `can_create` permission. The request body
-        is a zip file (max 1 GiB), extracted to
+        Requires the acting user's global `can_create` permission, a per-map
+        `can_edit` grant, or being the map's owner (its creator). The
+        request body is a zip file (max 1 GiB), extracted to
         `<data-root>/<uuid>/<version>/`. `<version>` is one more than the
         highest version recorded in this map's history (0 if none yet); it is
         never derived from the map's `currentVersion` field. On success both
@@ -467,11 +472,12 @@ paths:
       tags: [maps]
       summary: List a map's per-user permission grants
       description: >-
-        Requires the acting user's `is_admin` permission, same as the global
-        Users API. A grant only adds `can_view`/`can_edit`/`can_delete`
-        capability for that specific map on top of the user's global
-        permissions — it never removes capability a user's global flags
-        already give them.
+        Requires the acting user's `is_admin` permission (same as the global
+        Users API) or being the map's owner (its creator, who can do
+        everything with their own map). A grant only adds
+        `can_view`/`can_edit`/`can_delete` capability for that specific map
+        on top of the user's global permissions — it never removes
+        capability a user's global flags already give them.
       responses:
         "200":
           description: Array of grants
@@ -497,7 +503,9 @@ paths:
     put:
       tags: [maps]
       summary: Grant or replace a user's per-map permission
-      description: Requires the acting user's `is_admin` permission.
+      description: >-
+        Requires the acting user's `is_admin` permission, or being the map's
+        owner (its creator).
       requestBody:
         required: true
         content:
@@ -524,7 +532,9 @@ paths:
     delete:
       tags: [maps]
       summary: Revoke a user's per-map permission
-      description: Requires the acting user's `is_admin` permission. A no-op if no grant exists.
+      description: >-
+        Requires the acting user's `is_admin` permission, or being the map's
+        owner (its creator). A no-op if no grant exists.
       responses:
         "204":
           description: Grant revoked
@@ -595,9 +605,9 @@ paths:
       summary: Create or replace a version alias
       description: >-
         Requires the acting user's `can_edit` permission (global or
-        per-map) — the same rule as editing a map's `currentVersion` via
-        `PUT /maps/{id}`. Unlike the permissions API, this is not
-        admin-only.
+        per-map), or being the map's owner — the same rule as editing a
+        map's `currentVersion` via `PUT /maps/{id}`. Unlike the permissions
+        API, this is not admin-only.
       requestBody:
         required: true
         content:
@@ -626,7 +636,9 @@ paths:
     delete:
       tags: [maps]
       summary: Delete a version alias
-      description: Requires the acting user's `can_edit` permission. A no-op if no such alias exists.
+      description: >-
+        Requires the acting user's `can_edit` permission, or being the map's
+        owner. A no-op if no such alias exists.
       responses:
         "204":
           description: Alias deleted
@@ -1317,7 +1329,9 @@ paths:
     post:
       tags: [geo-objects]
       summary: Create a geo object
-      description: Requires the acting user's `can_edit` permission (global or per-map).
+      description: >-
+        Requires the acting user's `can_edit` permission (global or
+        per-map), or being the map's owner.
       requestBody:
         required: true
         content:
@@ -1389,8 +1403,9 @@ paths:
       tags: [geo-objects]
       summary: Replace a geo object's fields
       description: >-
-        Requires the acting user's `can_edit` permission (global or per-map).
-        The geo object's map and version are immutable after creation.
+        Requires the acting user's `can_edit` permission (global or
+        per-map), or being the map's owner. The geo object's map and version
+        are immutable after creation.
       requestBody:
         required: true
         content:
@@ -1419,7 +1434,9 @@ paths:
     delete:
       tags: [geo-objects]
       summary: Delete a geo object
-      description: Requires the acting user's `can_delete` permission (global or per-map).
+      description: >-
+        Requires the acting user's `can_delete` permission (global or
+        per-map), or being the map's owner.
       responses:
         "204":
           description: Geo object deleted

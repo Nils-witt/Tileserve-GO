@@ -180,30 +180,48 @@ func filterMapsByAPIKeyScope(ctx context.Context, st *store.Store, maps []store.
 	return filtered, nil
 }
 
+// isMapOwner reports whether username is mapID's owner — the user who
+// created it. An owner can do everything with their own map, regardless of
+// global or per-map grants (see requireMapPermission/requireMapAdmin). A
+// nonexistent map reports false rather than an error, matching
+// requireMapPermission's existing behavior of deferring the not-found case
+// to the underlying store operation.
+func isMapOwner(ctx context.Context, st *store.Store, mapID uuid.UUID, username string) (bool, error) {
+	m, err := st.GetMap(ctx, mapID)
+	if errors.Is(err, store.ErrMapNotFound) {
+		return false, nil
+	}
+
+	if err != nil {
+		return false, err
+	}
+
+	return m.CreatedBy == username, nil
+}
+
 // requireMapPermission checks whether the acting user may perform an action
 // on a specific map: it passes if their global permissions allow it (admins
-// always pass), or failing that, if they hold a matching per-map grant. A
-// per-map grant only ever adds capability on top of the global flags, never
-// removes it. Regardless of that outcome, an API-key-authenticated request
+// always pass), if they own the map (its creator, who can do everything with
+// it), or failing that, if they hold a matching per-map grant. A per-map
+// grant only ever adds capability on top of the global flags, never removes
+// it. Regardless of that outcome, an API-key-authenticated request
 // additionally requires mapID to be within the key's scope (see
 // apiKeyMapAllowed) — scope only ever narrows what the request could
 // otherwise do.
 func requireMapPermission(w http.ResponseWriter, r *http.Request, st *store.Store, mapID uuid.UUID, globalAllowed func(store.Permissions) bool, mapAllowed func(store.MapPermission) bool) bool {
-	username := usernameFromContext(r.Context())
-
 	perms, ok := getPermissionsOrFail(w, r, st)
 	if !ok {
 		return false
 	}
 
 	if !perms.IsAdmin && !globalAllowed(perms) {
-		mp, err := st.GetMapPermission(r.Context(), mapID, username)
+		allowed, err := ownerOrMapAllowed(r.Context(), st, mapID, usernameFromContext(r.Context()), mapAllowed)
 		if err != nil {
 			http.Error(w, "failed to check permissions", http.StatusInternalServerError)
 			return false
 		}
 
-		if !mapAllowed(mp) {
+		if !allowed {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return false
 		}
@@ -221,6 +239,57 @@ func requireMapPermission(w http.ResponseWriter, r *http.Request, st *store.Stor
 	}
 
 	return true
+}
+
+// ownerOrMapAllowed reports whether username may proceed on mapID because
+// they own it (see isMapOwner) or, failing that, because their per-map grant
+// satisfies mapAllowed.
+func ownerOrMapAllowed(ctx context.Context, st *store.Store, mapID uuid.UUID, username string, mapAllowed func(store.MapPermission) bool) (bool, error) {
+	owner, err := isMapOwner(ctx, st, mapID, username)
+	if err != nil {
+		return false, err
+	}
+
+	if owner {
+		return true, nil
+	}
+
+	mp, err := st.GetMapPermission(ctx, mapID, username)
+	if err != nil {
+		return false, err
+	}
+
+	return mapAllowed(mp), nil
+}
+
+// requireMapAdmin checks whether the acting user may administer a specific
+// map's permission grants: global admins always pass, and so does the map's
+// owner (its creator) — managing who else can access their own map is part
+// of an owner being able to do everything with it. Anyone else gets a 403,
+// same as requireMapPermission, without revealing whether mapID exists.
+func requireMapAdmin(w http.ResponseWriter, r *http.Request, st *store.Store, mapID uuid.UUID) bool {
+	perms, ok := getPermissionsOrFail(w, r, st)
+	if !ok {
+		return false
+	}
+
+	if perms.IsAdmin {
+		return true
+	}
+
+	owner, err := isMapOwner(r.Context(), st, mapID, usernameFromContext(r.Context()))
+	if err != nil {
+		http.Error(w, "failed to check permissions", http.StatusInternalServerError)
+		return false
+	}
+
+	if owner {
+		return true
+	}
+
+	http.Error(w, "forbidden", http.StatusForbidden)
+
+	return false
 }
 
 // canViewMap reports whether username may see m. Maps are private by
@@ -827,10 +896,11 @@ type mapPermissionRequest struct {
 }
 
 // mapPermissionsCollectionHandler lists a map's per-user permission grants.
-// Managing per-map permissions is admin-only, same as the global Users API.
+// Managing per-map permissions requires either the global is_admin
+// permission (same as the Users API) or being the map's own owner.
 func mapPermissionsCollectionHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, st) {
+		if !requireMapAdmin(w, r, st, id) {
 			return
 		}
 
@@ -850,11 +920,11 @@ func mapPermissionsCollectionHandler(st *store.Store, id uuid.UUID) http.Handler
 }
 
 // mapPermissionItemHandler grants or revokes a single user's per-map
-// permission. Managing per-map permissions is admin-only, same as the global
-// Users API.
+// permission. Managing per-map permissions requires either the global
+// is_admin permission (same as the Users API) or being the map's own owner.
 func mapPermissionItemHandler(st *store.Store, id uuid.UUID, username string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, st) {
+		if !requireMapAdmin(w, r, st, id) {
 			return
 		}
 
