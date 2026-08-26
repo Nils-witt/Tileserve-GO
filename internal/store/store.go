@@ -489,6 +489,17 @@ var migrationSteps = []struct {
 			ALTER TABLE sync_remotes DROP COLUMN IF EXISTS private_key_pem;
 		`,
 	},
+	{
+		// Unlike the other global permission columns, this defaults to
+		// false: it's a wholly new, broad capability (view every map
+		// regardless of that map's own visibility settings or any per-map
+		// grant), so an upgrading deployment's existing users don't
+		// suddenly gain it without an admin opting them in.
+		errContext: "migrate users view-all-maps column",
+		sql: `
+			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_all BOOLEAN NOT NULL DEFAULT false;
+		`,
+	},
 }
 
 // Authenticate looks up username and verifies password against its bcrypt hash.
@@ -518,15 +529,17 @@ type Permissions struct {
 	CanDelete           bool
 	CanEditGeoObjects   bool
 	CanDeleteGeoObjects bool
+	CanViewAll          bool
 	IsAdmin             bool
 }
 
 // GrantsMapVisibility reports whether p, on its own, is enough to make
 // every map visible to its holder regardless of that map's own visibility
 // settings or any per-map grant: being able to modify a map or its geo
-// objects without being able to see it first would be nonsensical.
+// objects without being able to see it first would be nonsensical, and
+// CanViewAll exists precisely to grant that blanket visibility on its own.
 func (p Permissions) GrantsMapVisibility() bool {
-	return p.IsAdmin || p.CanEdit || p.CanDelete || p.CanEditGeoObjects || p.CanDeleteGeoObjects
+	return p.IsAdmin || p.CanEdit || p.CanDelete || p.CanEditGeoObjects || p.CanDeleteGeoObjects || p.CanViewAll
 }
 
 // GetPermissions returns the global permissions for username. Results are
@@ -541,8 +554,8 @@ func (s *Store) GetPermissions(ctx context.Context, username string) (Permission
 	var p Permissions
 
 	err := s.pool.QueryRow(ctx, `
-		SELECT can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin FROM users WHERE username = $1
-	`, username).Scan(&p.CanCreate, &p.CanEdit, &p.CanDelete, &p.CanEditGeoObjects, &p.CanDeleteGeoObjects, &p.IsAdmin)
+		SELECT can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin FROM users WHERE username = $1
+	`, username).Scan(&p.CanCreate, &p.CanEdit, &p.CanDelete, &p.CanEditGeoObjects, &p.CanDeleteGeoObjects, &p.CanViewAll, &p.IsAdmin)
 	if err != nil {
 		return Permissions{}, fmt.Errorf("get permissions for %q: %w", username, err)
 	}

@@ -77,6 +77,36 @@ func (s *Store) GetMapPermission(ctx context.Context, mapID uuid.UUID, username 
 	return mp, nil
 }
 
+// MapPermissionEntry pairs a per-map permission grant with the map it
+// applies to, letting an admin audit every per-map grant across every map
+// (see ListAllMapPermissions) without listing them one map at a time.
+type MapPermissionEntry struct {
+	Map        MapRecord           `json:"map"`
+	Permission MapPermissionRecord `json:"permission"`
+}
+
+// ListAllMapPermissions returns every per-map permission grant across every
+// map, oldest-granted first, each paired with the map it applies to.
+func (s *Store) ListAllMapPermissions(ctx context.Context) ([]MapPermissionEntry, error) {
+	return collectRows(ctx, s.pool, "list all map permissions", `
+		SELECT
+			m.uuid, m.name, m.current_version, m.visible_to_all, m.anonymous_allowed, m.created_at, m.updated_at, m.created_by, m.updated_by,
+			mp.username, mp.can_view, mp.can_edit, mp.can_delete, mp.can_edit_geo_objects, mp.can_delete_geo_objects, mp.granted_at, mp.granted_by
+		FROM map_permissions mp
+		JOIN maps m ON m.uuid = mp.map_uuid
+		ORDER BY mp.granted_at ASC
+	`, func(rows pgx.Rows) (MapPermissionEntry, error) {
+		var e MapPermissionEntry
+
+		err := rows.Scan(
+			&e.Map.UUID, &e.Map.Name, &e.Map.CurrentVersion, &e.Map.VisibleToAll, &e.Map.AnonymousAllowed, &e.Map.CreatedAt, &e.Map.UpdatedAt, &e.Map.CreatedBy, &e.Map.UpdatedBy,
+			&e.Permission.Username, &e.Permission.CanView, &e.Permission.CanEdit, &e.Permission.CanDelete, &e.Permission.CanEditGeoObjects, &e.Permission.CanDeleteGeoObjects, &e.Permission.GrantedAt, &e.Permission.GrantedBy,
+		)
+
+		return e, err
+	})
+}
+
 // ListMapPermissions returns every per-map grant for mapID, oldest first.
 func (s *Store) ListMapPermissions(ctx context.Context, mapID uuid.UUID) ([]MapPermissionRecord, error) {
 	return collectRows(ctx, s.pool, "list map permissions", `

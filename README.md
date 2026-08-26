@@ -114,18 +114,21 @@ coordinates blindly. On startup, the server also walks `-data-root` and backfill
 existing map/version directory that doesn't already have one (e.g. one extracted by an older build), so this never
 requires a re-upload.
 
-Every user has four global permission flags — `can_create`, `can_edit`, `can_delete`, and `is_admin` — checked on
-the corresponding requests (`is_admin` also gates the Users API below). Seeded/new users default to all four
-`true`.
+Every user has global permission flags — `can_create`, `can_edit`, `can_delete`, `can_edit_geo_objects`,
+`can_delete_geo_objects`, `can_view_all`, and `is_admin` — checked on the corresponding requests (`is_admin` also
+gates the Users API below). Seeded/new users default to `true` for every flag except `can_view_all`, which defaults
+to `false` and must be granted explicitly (see below).
 
 #### Map visibility
 
 Maps are **private by default** (`visibleToAll: false`). A map is visible to a user if any of the following is
-true: it's marked `visibleToAll`, the user created it, the user is an admin, the user's global `can_edit` or
-`can_delete` permission already lets them act on every map (so hiding one from view would be inconsistent), or the
-user holds a per-map `can_view`/`can_edit`/`can_delete` grant (see below). `GET /maps` only returns maps the acting
-user can see; `GET /maps/<uuid>`, `.../versions`, `.../version/<version>/...`, and `.../version/<version>/bounds`
-all return `403 Forbidden` for a map the acting user can't see.
+true: it's marked `visibleToAll`, the user created it, the user is an admin, the user's global `can_edit`,
+`can_delete`, `can_edit_geo_objects`, or `can_delete_geo_objects` permission already lets them act on every map (so
+hiding one from view would be inconsistent), the user holds `can_view_all` (a standalone permission granting view
+access to every map without also granting any ability to modify one), or the user holds a per-map
+`can_view`/`can_edit`/`can_delete` grant (see below). `GET /maps` only returns maps the acting user can see; `GET
+/maps/<uuid>`, `.../versions`, `.../version/<version>/...`, and `.../version/<version>/bounds` all return `403
+Forbidden` for a map the acting user can't see.
 
 #### Anonymous tile access
 
@@ -230,18 +233,18 @@ curl localhost:8085/users -H "Authorization: Bearer <token>"
 
 # create a user
 curl -X POST localhost:8085/users -H "Authorization: Bearer <token>" \
-  -d '{"username":"alice","password":"changeme","canCreate":true,"canEdit":true,"canDelete":false,"isAdmin":false}'
+  -d '{"username":"alice","password":"changeme","canCreate":true,"canEdit":true,"canDelete":false,"canViewAll":false,"isAdmin":false}'
 
 # update permissions (and optionally password — omit/empty to leave it unchanged)
 curl -X PUT localhost:8085/users/alice -H "Authorization: Bearer <token>" \
-  -d '{"canCreate":true,"canEdit":true,"canDelete":true,"isAdmin":false,"password":"newpassword"}'
+  -d '{"canCreate":true,"canEdit":true,"canDelete":true,"canViewAll":true,"isAdmin":false,"password":"newpassword"}'
 
 # delete a user (you cannot delete your own account this way)
 curl -X DELETE localhost:8085/users/alice -H "Authorization: Bearer <token>"
 ```
 
-`PUT` always replaces all four permission flags (they're not optional/partial); `password` is the one optional
-field, left unchanged when omitted or empty.
+`PUT` always replaces every permission flag (they're not optional/partial); `password` is the one optional field,
+left unchanged when omitted or empty.
 
 ## OpenID Connect login
 

@@ -1059,6 +1059,9 @@
       const deleteGeoCb = document.createElement('input');
       deleteGeoCb.type = 'checkbox';
       deleteGeoCb.checked = u.canDeleteGeoObjects;
+      const viewAllCb = document.createElement('input');
+      viewAllCb.type = 'checkbox';
+      viewAllCb.checked = u.canViewAll;
       const adminCb = document.createElement('input');
       adminCb.type = 'checkbox';
       adminCb.checked = u.isAdmin;
@@ -1080,6 +1083,7 @@
         canDelete: deleteCb.checked,
         canEditGeoObjects: editGeoCb.checked,
         canDeleteGeoObjects: deleteGeoCb.checked,
+        canViewAll: viewAllCb.checked,
         isAdmin: adminCb.checked,
         password: passwordInput.value,
       });
@@ -1120,11 +1124,14 @@
       const deleteGeoTd = document.createElement('td');
       deleteGeoTd.className = 'checkbox-cell';
       deleteGeoTd.appendChild(deleteGeoCb);
+      const viewAllTd = document.createElement('td');
+      viewAllTd.className = 'checkbox-cell';
+      viewAllTd.appendChild(viewAllCb);
       const adminTd = document.createElement('td');
       adminTd.className = 'checkbox-cell';
       adminTd.appendChild(adminCb);
 
-      tr.append(usernameTd, createTd, editTd, deleteTd, editGeoTd, deleteGeoTd, adminTd, passwordTd, createdTd, actionsTd);
+      tr.append(usernameTd, createTd, editTd, deleteTd, editGeoTd, deleteGeoTd, viewAllTd, adminTd, passwordTd, createdTd, actionsTd);
       return tr;
     }
 
@@ -2018,6 +2025,7 @@
         canDelete: document.getElementById('cu-delete').checked,
         canEditGeoObjects: document.getElementById('cu-edit-geo').checked,
         canDeleteGeoObjects: document.getElementById('cu-delete-geo').checked,
+        canViewAll: document.getElementById('cu-view-all').checked,
         isAdmin: document.getElementById('cu-admin').checked,
       };
       createUser(payload).then(() => {

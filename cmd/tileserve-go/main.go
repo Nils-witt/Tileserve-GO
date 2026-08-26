@@ -222,6 +222,9 @@ func run(dataRoot, keysDir, jwtSecret, dbDSN, seedUsername, seedPassword, port, 
 	mux.Handle("/server/public-key", handler.RequireAuth(secret, st, handler.ServerPublicKeyHandler(st, keysDir)))
 	// GET /audit-logs: lists recorded audit entries (admin-only).
 	mux.Handle("/audit-logs", handler.RequireAuth(secret, st, handler.AuditLogsCollectionHandler(st)))
+	// GET /permissions: lists every per-map permission grant across every
+	// map, paired with the map it applies to (admin-only).
+	mux.Handle("/permissions", handler.RequireAuth(secret, st, handler.PermissionsCollectionHandler(st)))
 
 	addr := ":" + port
 	srv := &http.Server{

@@ -16,6 +16,7 @@ type userRequest struct {
 	CanDelete           bool   `json:"canDelete"`
 	CanEditGeoObjects   bool   `json:"canEditGeoObjects"`
 	CanDeleteGeoObjects bool   `json:"canDeleteGeoObjects"`
+	CanViewAll          bool   `json:"canViewAll"`
 	IsAdmin             bool   `json:"isAdmin"`
 }
 
@@ -27,6 +28,7 @@ func (req userRequest) permissions() store.Permissions {
 		CanDelete:           req.CanDelete,
 		CanEditGeoObjects:   req.CanEditGeoObjects,
 		CanDeleteGeoObjects: req.CanDeleteGeoObjects,
+		CanViewAll:          req.CanViewAll,
 		IsAdmin:             req.IsAdmin,
 	}
 }
@@ -70,6 +72,11 @@ func userFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter store.U
 		return store.UserFilter{}, false
 	}
 
+	canViewAll, ok := queryBoolParam(w, r, "canViewAll")
+	if !ok {
+		return store.UserFilter{}, false
+	}
+
 	return store.UserFilter{
 		Search:              r.URL.Query().Get("search"),
 		IsAdmin:             isAdmin,
@@ -78,6 +85,7 @@ func userFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter store.U
 		CanDelete:           canDelete,
 		CanEditGeoObjects:   canEditGeoObjects,
 		CanDeleteGeoObjects: canDeleteGeoObjects,
+		CanViewAll:          canViewAll,
 	}, true
 }
 

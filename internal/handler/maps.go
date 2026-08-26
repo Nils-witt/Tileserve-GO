@@ -297,10 +297,12 @@ func requireMapAdmin(w http.ResponseWriter, r *http.Request, st *store.Store, ma
 // because they created it, because they're an admin or already hold a
 // global permission letting them modify any map (can_edit/can_delete —
 // hiding a map from someone who can already act on it would be
-// nonsensical), or because they hold a per-map grant (view, edit, or
-// delete — any of the three implies visibility). Regardless of that
-// outcome, an API-key-authenticated request additionally requires m to be
-// within the key's scope (see apiKeyMapAllowed).
+// nonsensical), because they hold can_view_all (a standalone permission
+// granting blanket visibility without any modify capability), or because
+// they hold a per-map grant (view, edit, or delete — any of the three
+// implies visibility). Regardless of that outcome, an API-key-authenticated
+// request additionally requires m to be within the key's scope (see
+// apiKeyMapAllowed).
 func canViewMap(ctx context.Context, st *store.Store, m store.MapRecord, username string) (bool, error) {
 	visible, err := userCanViewMap(ctx, st, m, username)
 	if err != nil || !visible {
