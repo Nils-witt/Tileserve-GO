@@ -18,14 +18,25 @@ import (
 func (s *Store) UpsertSyncedMap(ctx context.Context, id uuid.UUID, name string, visibleToAll, anonymousAllowed bool, syncRemoteID uuid.UUID, actor string) (MapRecord, error) {
 	var m MapRecord
 
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO maps (uuid, name, current_version, visible_to_all, anonymous_allowed, sync_remote_id, created_by, updated_by)
-		VALUES ($1, $2, '', $3, $4, $5, $6, $6)
-		ON CONFLICT (uuid) DO UPDATE
-		SET name = $2, visible_to_all = $3, anonymous_allowed = $4, sync_remote_id = $5, updated_by = $6, updated_at = now()
-		RETURNING uuid, name, current_version, visible_to_all, anonymous_allowed, created_at, updated_at, created_by, updated_by
-	`, id, name, visibleToAll, anonymousAllowed, syncRemoteID, actor).
-		Scan(&m.UUID, &m.Name, &m.CurrentVersion, &m.VisibleToAll, &m.AnonymousAllowed, &m.CreatedAt, &m.UpdatedAt, &m.CreatedBy, &m.UpdatedBy)
+	// owner_id is deliberately absent from the ON CONFLICT SET list: it's
+	// resolved from actor on first insert only, so a later local ownership
+	// transfer (see UpdateMapOwner) survives subsequent sync ticks
+	// re-applying name/visibility from the remote. RETURNING can't reach
+	// across the join needed to resolve owner_id back to a username (a
+	// plain INSERT/ON CONFLICT RETURNING only sees the target table), so
+	// the upsert is wrapped in a CTE and the join happens in the outer
+	// SELECT instead.
+	err := scanMap(s.pool.QueryRow(ctx, `
+		WITH upserted AS (
+			INSERT INTO maps (uuid, name, current_version, visible_to_all, anonymous_allowed, sync_remote_id, created_by, updated_by, owner_id)
+			VALUES ($1, $2, '', $3, $4, $5, $6, $6, (SELECT id FROM users WHERE username = $6))
+			ON CONFLICT (uuid) DO UPDATE
+			SET name = $2, visible_to_all = $3, anonymous_allowed = $4, sync_remote_id = $5, updated_by = $6, updated_at = now()
+			RETURNING *
+		)
+		SELECT upserted.uuid, upserted.name, upserted.current_version, upserted.visible_to_all, upserted.anonymous_allowed, upserted.created_at, upserted.updated_at, upserted.created_by, upserted.updated_by, owner_user.username
+		FROM upserted JOIN users owner_user ON owner_user.id = upserted.owner_id
+	`, id, name, visibleToAll, anonymousAllowed, syncRemoteID, actor), &m)
 	if err != nil {
 		return MapRecord{}, fmt.Errorf("upsert synced map: %w", err)
 	}

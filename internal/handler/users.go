@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -193,7 +194,13 @@ func UserItemHandler(st *store.Store) http.HandlerFunc {
 			}
 
 			if err := st.DeleteUser(r.Context(), username); err != nil {
+				if errors.Is(err, store.ErrUserOwnsMaps) {
+					http.Error(w, "user still owns one or more maps; transfer ownership first", http.StatusConflict)
+					return
+				}
+
 				writeStoreError(w, err, store.ErrUserNotFound, http.StatusNotFound, "user not found", "failed to delete user")
+
 				return
 			}
 

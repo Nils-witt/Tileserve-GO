@@ -167,6 +167,26 @@ var migrationSteps = []struct {
 		`,
 	},
 	{
+		// owner_id starts out as a map's creator but, unlike created_by (a
+		// fixed audit fact of who made it), can be transferred later (see
+		// UpdateMapOwner) — e.g. when a map needs to change hands without
+		// rewriting its creation history. It's a foreign key to the owning
+		// user's stable numeric id, not a copy of their username text like
+		// every other actor field in this schema — so a map's ownership
+		// stays a real relationship the database enforces (an owning user
+		// can't be deleted out from under a map they still own; see
+		// ErrUserOwnsMaps) rather than a string that could silently point
+		// at nobody. Existing rows backfill from created_by so upgrading a
+		// deployment doesn't strip ownership from anyone.
+		errContext: "migrate maps owner_id column",
+		sql: `
+			ALTER TABLE maps ADD COLUMN IF NOT EXISTS owner_id BIGINT REFERENCES users(id);
+			UPDATE maps SET owner_id = (SELECT id FROM users WHERE users.username = maps.created_by) WHERE owner_id IS NULL;
+			UPDATE maps SET owner_id = (SELECT id FROM users LIMIT 1) WHERE owner_id IS NULL;
+			ALTER TABLE maps ALTER COLUMN owner_id SET NOT NULL;
+		`,
+	},
+	{
 		errContext: "migrate map_versions table",
 		sql: `
 			CREATE TABLE IF NOT EXISTS map_versions (

@@ -338,7 +338,7 @@ paths:
       summary: Replace a map's name/currentVersion/visibleToAll/anonymousAllowed
       description: >
         Requires the acting user's `can_edit` permission (global or per-map),
-        or being the map's owner (its creator, who can do everything with
+        or being the map's owner (who can do everything with
         their own map). `name`, `currentVersion`, `visibleToAll`, and
         `anonymousAllowed` are replaced; this does not touch the
         map_versions history or any extracted files on disk.
@@ -372,7 +372,7 @@ paths:
       summary: Delete a map
       description: >-
         Requires the acting user's `can_delete` permission, or being the
-        map's owner (its creator). Cascades and deletes the map's version
+        map's owner. Cascades and deletes the map's version
         history.
       responses:
         "204":
@@ -417,7 +417,7 @@ paths:
       summary: Upload a new map version
       description: >
         Requires the acting user's global `can_create` permission, a per-map
-        `can_edit` grant, or being the map's owner (its creator). The
+        `can_edit` grant, or being the map's owner. The
         request body is a zip file (max 1 GiB), extracted to
         `<data-root>/<uuid>/<version>/`. `<version>` is one more than the
         highest version recorded in this map's history (0 if none yet); it is
@@ -473,7 +473,7 @@ paths:
       summary: List a map's per-user permission grants
       description: >-
         Requires the acting user's `is_admin` permission (same as the global
-        Users API) or being the map's owner (its creator, who can do
+        Users API) or being the map's owner (who can do
         everything with their own map). A grant only adds
         `can_view`/`can_edit`/`can_delete` capability for that specific map
         on top of the user's global permissions — it never removes
@@ -505,7 +505,7 @@ paths:
       summary: Grant or replace a user's per-map permission
       description: >-
         Requires the acting user's `is_admin` permission, or being the map's
-        owner (its creator).
+        owner.
       requestBody:
         required: true
         content:
@@ -534,7 +534,7 @@ paths:
       summary: Revoke a user's per-map permission
       description: >-
         Requires the acting user's `is_admin` permission, or being the map's
-        owner (its creator). A no-op if no grant exists.
+        owner. A no-op if no grant exists.
       responses:
         "204":
           description: Grant revoked
@@ -646,6 +646,60 @@ paths:
           $ref: "#/components/responses/Unauthorized"
         "403":
           $ref: "#/components/responses/Forbidden"
+
+  /maps/{id}/owner:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+    get:
+      tags: [maps]
+      summary: Get a map's owner
+      description: Requires view access to this map (see `GET /maps`).
+      responses:
+        "200":
+          description: The map's owner
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MapOwner"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [maps]
+      summary: Transfer a map's ownership
+      description: >-
+        Requires the acting user's `is_admin` permission, or being the map's
+        current owner — the same rule as managing the map's permission
+        grants. The new owner replaces the previous one entirely: they alone
+        gain the "can do everything with this map" capability going forward.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MapOwner"
+      responses:
+        "200":
+          description: Ownership transferred
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MapOwner"
+        "400":
+          description: Missing owner, or the named user doesn't exist
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
 
   /users:
     get:
@@ -1637,7 +1691,7 @@ components:
           type: boolean
           description: >-
             Whether every authenticated user can see this map. When false,
-            only admins, the creator, users whose global `can_edit`/`can_delete`
+            only admins, the owner, users whose global `can_edit`/`can_delete`
             already lets them act on any map, and users with a per-map grant
             can see it.
         anonymousAllowed:
@@ -1654,6 +1708,20 @@ components:
         createdBy:
           type: string
         updatedBy:
+          type: string
+        owner:
+          type: string
+          description: >-
+            The user who can do everything with this map regardless of
+            global or per-map grants. Starts out equal to `createdBy` but,
+            unlike it, can be transferred to another user later via
+            `PUT /maps/{id}/owner`.
+
+    MapOwner:
+      type: object
+      required: [owner]
+      properties:
+        owner:
           type: string
 
     MapVersion:

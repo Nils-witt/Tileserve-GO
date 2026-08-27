@@ -15,6 +15,11 @@ var (
 	ErrUserNotFound = errors.New("user not found")
 	// ErrUserExists is returned when creating a user whose username is already taken.
 	ErrUserExists = errors.New("user already exists")
+	// ErrUserOwnsMaps is returned by DeleteUser when username still owns
+	// one or more maps (maps.owner_id references users(id) with no cascade,
+	// see the "migrate maps owner_id column" migration step) — ownership
+	// must be transferred to someone else first via UpdateMapOwner.
+	ErrUserOwnsMaps = errors.New("user owns one or more maps")
 )
 
 // UserRecord is the persisted form of a user account.
@@ -192,10 +197,15 @@ func (s *Store) UpdateUser(ctx context.Context, username string, perms Permissio
 	return u, nil
 }
 
-// DeleteUser deletes username. It returns ErrUserNotFound if it doesn't exist.
+// DeleteUser deletes username. It returns ErrUserNotFound if it doesn't
+// exist, or ErrUserOwnsMaps if username still owns one or more maps.
 func (s *Store) DeleteUser(ctx context.Context, username string) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM users WHERE username = $1`, username)
 	if err != nil {
+		if isPgErrCode(err, "23503") {
+			return ErrUserOwnsMaps
+		}
+
 		return fmt.Errorf("delete user: %w", err)
 	}
 

@@ -180,9 +180,11 @@ func filterMapsByAPIKeyScope(ctx context.Context, st *store.Store, maps []store.
 	return filtered, nil
 }
 
-// isMapOwner reports whether username is mapID's owner — the user who
-// created it. An owner can do everything with their own map, regardless of
-// global or per-map grants (see requireMapPermission/requireMapAdmin). A
+// isMapOwner reports whether username is mapID's owner. An owner can do
+// everything with their own map, regardless of global or per-map grants (see
+// requireMapPermission/requireMapAdmin). A map's owner starts out as its
+// creator but can be transferred to someone else later (see
+// updateMapOwnerItem), so this is not always the same as who created it. A
 // nonexistent map reports false rather than an error, matching
 // requireMapPermission's existing behavior of deferring the not-found case
 // to the underlying store operation.
@@ -196,13 +198,13 @@ func isMapOwner(ctx context.Context, st *store.Store, mapID uuid.UUID, username 
 		return false, err
 	}
 
-	return m.CreatedBy == username, nil
+	return m.Owner == username, nil
 }
 
 // requireMapPermission checks whether the acting user may perform an action
 // on a specific map: it passes if their global permissions allow it (admins
-// always pass), if they own the map (its creator, who can do everything with
-// it), or failing that, if they hold a matching per-map grant. A per-map
+// always pass), if they own the map (who can do everything with it), or
+// failing that, if they hold a matching per-map grant. A per-map
 // grant only ever adds capability on top of the global flags, never removes
 // it. Regardless of that outcome, an API-key-authenticated request
 // additionally requires mapID to be within the key's scope (see
@@ -263,10 +265,11 @@ func ownerOrMapAllowed(ctx context.Context, st *store.Store, mapID uuid.UUID, us
 }
 
 // requireMapAdmin checks whether the acting user may administer a specific
-// map's permission grants: global admins always pass, and so does the map's
-// owner (its creator) — managing who else can access their own map is part
-// of an owner being able to do everything with it. Anyone else gets a 403,
-// same as requireMapPermission, without revealing whether mapID exists.
+// map: global admins always pass, and so does the map's owner — managing who
+// else can access their own map (and transferring ownership itself, see
+// updateMapOwnerItem) is part of an owner being able to do everything with
+// it. Anyone else gets a 403, same as requireMapPermission, without
+// revealing whether mapID exists.
 func requireMapAdmin(w http.ResponseWriter, r *http.Request, st *store.Store, mapID uuid.UUID) bool {
 	perms, ok := getPermissionsOrFail(w, r, st)
 	if !ok {
@@ -294,7 +297,7 @@ func requireMapAdmin(w http.ResponseWriter, r *http.Request, st *store.Store, ma
 
 // canViewMap reports whether username may see m. Maps are private by
 // default: a user can see one because it's marked visible to everyone,
-// because they created it, because they're an admin or already hold a
+// because they own it, because they're an admin or already hold a
 // global permission letting them modify any map (can_edit/can_delete —
 // hiding a map from someone who can already act on it would be
 // nonsensical), because they hold can_view_all (a standalone permission
@@ -315,7 +318,7 @@ func canViewMap(ctx context.Context, st *store.Store, m store.MapRecord, usernam
 // userCanViewMap is canViewMap's check of the acting user's own
 // visibility, without regard to any API-key scope restriction.
 func userCanViewMap(ctx context.Context, st *store.Store, m store.MapRecord, username string) (bool, error) {
-	if m.VisibleToAll || m.CreatedBy == username {
+	if m.VisibleToAll || m.Owner == username {
 		return true, nil
 	}
 
@@ -468,6 +471,7 @@ func MapsCollectionHandler(st *store.Store) http.HandlerFunc {
 //     mapPermissionItemHandler
 //   - /maps/{id}/aliases[/{alias}]:  mapAliasesCollectionHandler /
 //     mapAliasItemHandler
+//   - /maps/{id}/owner            (GET/PUT): mapOwnerItemHandler
 //   - /maps/{id}/version/{version}/bounds (GET): mapVersionBoundsHandler
 //   - /maps/{id}/version/{version}/geo-objects[/{uuid}]:  geoObjectsCollectionHandler /
 //     geoObjectItemHandler
@@ -577,11 +581,24 @@ func routeMapSubResource(w http.ResponseWriter, r *http.Request, st *store.Store
 		return routeMapPermissions(w, r, st, id, segments)
 	case "aliases":
 		return routeMapAliases(w, r, st, id, segments)
+	case "owner":
+		return routeMapOwner(w, r, st, id, segments)
 	case versionPathSegment:
 		return routeMapVersionSubResource(w, r, st, dataRoot, id, segments)
 	default:
 		return false
 	}
+}
+
+// routeMapOwner dispatches /maps/{id}/owner.
+func routeMapOwner(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID, segments []string) bool {
+	if len(segments) != 2 {
+		return false
+	}
+
+	mapOwnerItemHandler(st, id)(w, r)
+
+	return true
 }
 
 func routeMapUpload(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, segments []string) bool {
@@ -956,6 +973,62 @@ func mapPermissionItemHandler(st *store.Store, id uuid.UUID, username string) ht
 			recordAudit(r, st, "revoke", "map_permission", id.String()+":"+username, "")
 
 			w.WriteHeader(http.StatusNoContent)
+
+		default:
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}
+}
+
+type mapOwnerRequest struct {
+	Owner string `json:"owner"`
+}
+
+// mapOwnerItemHandler fetches (GET, requires view access) or transfers (PUT)
+// a map's owner. Transferring ownership requires the same access as managing
+// the map's permission grants (requireMapAdmin: global admin or the map's
+// current owner) — an owner able to do everything with their own map,
+// including handing it off to someone else.
+func mapOwnerItemHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			m, ok := getViewableMap(w, r, st, id)
+			if !ok {
+				return
+			}
+
+			writeJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
+
+		case http.MethodPut:
+			if !requireMapAdmin(w, r, st, id) {
+				return
+			}
+
+			var req mapOwnerRequest
+			if !decodeJSON(w, r, &req) {
+				return
+			}
+
+			if req.Owner == "" {
+				http.Error(w, "owner is required", http.StatusBadRequest)
+				return
+			}
+
+			m, err := st.UpdateMapOwner(r.Context(), id, req.Owner)
+			if errors.Is(err, store.ErrMapNotFound) {
+				http.Error(w, "map not found", http.StatusNotFound)
+				return
+			}
+
+			if err != nil {
+				writeStoreError(w, err, store.ErrUserNotFound, http.StatusBadRequest, "owner does not exist", "failed to update map owner")
+				return
+			}
+
+			recordAudit(r, st, "update", "map_owner", id.String(), "owner="+req.Owner)
+
+			writeJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

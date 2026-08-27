@@ -90,16 +90,17 @@ type MapPermissionEntry struct {
 func (s *Store) ListAllMapPermissions(ctx context.Context) ([]MapPermissionEntry, error) {
 	return collectRows(ctx, s.pool, "list all map permissions", `
 		SELECT
-			m.uuid, m.name, m.current_version, m.visible_to_all, m.anonymous_allowed, m.created_at, m.updated_at, m.created_by, m.updated_by,
+			m.uuid, m.name, m.current_version, m.visible_to_all, m.anonymous_allowed, m.created_at, m.updated_at, m.created_by, m.updated_by, owner_user.username,
 			mp.username, mp.can_view, mp.can_edit, mp.can_delete, mp.can_edit_geo_objects, mp.can_delete_geo_objects, mp.granted_at, mp.granted_by
 		FROM map_permissions mp
 		JOIN maps m ON m.uuid = mp.map_uuid
+		JOIN users owner_user ON owner_user.id = m.owner_id
 		ORDER BY mp.granted_at ASC
 	`, func(rows pgx.Rows) (MapPermissionEntry, error) {
 		var e MapPermissionEntry
 
 		err := rows.Scan(
-			&e.Map.UUID, &e.Map.Name, &e.Map.CurrentVersion, &e.Map.VisibleToAll, &e.Map.AnonymousAllowed, &e.Map.CreatedAt, &e.Map.UpdatedAt, &e.Map.CreatedBy, &e.Map.UpdatedBy,
+			&e.Map.UUID, &e.Map.Name, &e.Map.CurrentVersion, &e.Map.VisibleToAll, &e.Map.AnonymousAllowed, &e.Map.CreatedAt, &e.Map.UpdatedAt, &e.Map.CreatedBy, &e.Map.UpdatedBy, &e.Map.Owner,
 			&e.Permission.Username, &e.Permission.CanView, &e.Permission.CanEdit, &e.Permission.CanDelete, &e.Permission.CanEditGeoObjects, &e.Permission.CanDeleteGeoObjects, &e.Permission.GrantedAt, &e.Permission.GrantedBy,
 		)
 

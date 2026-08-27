@@ -232,6 +232,9 @@
       anonymousCb.onchange = () => updateMapFlag(m, { anonymousAllowed: anonymousCb.checked });
       anonymousTd.appendChild(anonymousCb);
 
+      const ownerTd = document.createElement('td');
+      ownerTd.appendChild(document.createTextNode(m.owner));
+
       const createdTd = document.createElement('td');
       createdTd.innerHTML = fmtDate(m.createdAt) + '<br><span class="muted">by ' + m.createdBy + '</span>';
 
@@ -282,6 +285,12 @@
       permBtn.onclick = () => openPermissions(m);
       actions.append(permBtn);
 
+      const ownerBtn = document.createElement('button');
+      ownerBtn.className = 'secondary';
+      ownerBtn.textContent = 'Transfer owner';
+      ownerBtn.onclick = () => transferOwner(m);
+      actions.append(ownerBtn);
+
       const aliasBtn = document.createElement('button');
       aliasBtn.className = 'secondary';
       aliasBtn.textContent = 'Aliases';
@@ -302,8 +311,28 @@
       versionsDiv.className = 'versions hidden';
 
       actionsTd.append(actions, versionsDiv);
-      tr.append(nameTd, versionTd, visibleTd, anonymousTd, createdTd, updatedTd, actionsTd);
+      tr.append(nameTd, versionTd, visibleTd, anonymousTd, ownerTd, createdTd, updatedTd, actionsTd);
       return tr;
+    }
+
+    // transferOwner prompts for a new owner username and, if one is given,
+    // transfers m's ownership to them via PUT /maps/{id}/owner. Requires
+    // being an admin or m's current owner.
+    async function transferOwner(m) {
+      const newOwner = prompt('Transfer ownership of "' + m.name + '" to username:', m.owner);
+      if (!newOwner || newOwner === m.owner) return;
+
+      appError(null);
+      try {
+        await api('/maps/' + m.uuid + '/owner', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ owner: newOwner }),
+        });
+        await loadMaps();
+      } catch (err) {
+        if (err.message !== 'unauthorized') appError(err.message);
+      }
     }
 
     async function toggleVersions(id, container, button) {
