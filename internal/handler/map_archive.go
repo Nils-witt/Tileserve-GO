@@ -14,11 +14,14 @@ import (
 )
 
 // mapVersionArchiveHandler streams a zip of an entire map version's
-// extracted tile directory (tiles + index.json) in one response, so a
-// server-to-server sync puller (internal/sync) can pull a whole version
-// without one HTTP request per tile file. Unlike serveMapVersionFile, this
-// is not reachable anonymously — it's gated the same way as bounds/
-// geo-objects, via getViewableMap in the caller (routeMapVersionSubResource).
+// extracted tile directory (tiles + index.json) in one response. It backs
+// two routes with different gating, both dispatched from
+// routeMapVersionSubResource: .../archive, so a server-to-server sync
+// puller (internal/sync) can pull a whole version without one HTTP request
+// per tile file (gated the same way as bounds/geo-objects, via
+// getViewableMap); and .../download, the UI's per-version download button
+// (admin-only, via requireAdmin). Unlike serveMapVersionFile, neither is
+// reachable anonymously.
 func mapVersionArchiveHandler(dataRoot string, id uuid.UUID, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireMethod(w, r, http.MethodGet) {

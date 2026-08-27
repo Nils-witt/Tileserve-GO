@@ -21,6 +21,7 @@ const (
 	boundsPathSegment     = "bounds"
 	geoObjectsPathSegment = "geo-objects"
 	archivePathSegment    = "archive"
+	downloadPathSegment   = "download"
 	// currentVersionKeyword, used in place of a literal version segment,
 	// resolves to the map's MapRecord.CurrentVersion.
 	currentVersionKeyword = "current"
@@ -29,15 +30,16 @@ const (
 // isVersionSubResourcePath reports whether segments (the /maps/{id}/...
 // path, split on "/") addresses one of the JSON/binary sub-resources nested
 // under a map version — .../version/{version}/bounds,
-// .../version/{version}/geo-objects[/{uuid}], or
-// .../version/{version}/archive — rather than a raw extracted tile file.
-// Reserving these path segments is safe: uploaded tile entries are validated
-// at extraction time to be purely numeric directories or <number>.png
-// files, so a real extracted path can never start with "bounds",
-// "geo-objects", or "archive".
+// .../version/{version}/geo-objects[/{uuid}], .../version/{version}/archive,
+// or .../version/{version}/download — rather than a raw extracted tile
+// file. Reserving these path segments is safe: uploaded tile entries are
+// validated at extraction time to be purely numeric directories or
+// <number>.png files, so a real extracted path can never start with
+// "bounds", "geo-objects", "archive", or "download".
 func isVersionSubResourcePath(segments []string) bool {
 	return len(segments) >= 4 && segments[1] == versionPathSegment &&
-		(segments[3] == boundsPathSegment || segments[3] == geoObjectsPathSegment || segments[3] == archivePathSegment)
+		(segments[3] == boundsPathSegment || segments[3] == geoObjectsPathSegment ||
+			segments[3] == archivePathSegment || segments[3] == downloadPathSegment)
 }
 
 type mapRequest struct {
@@ -730,9 +732,10 @@ func resolveVersionSegment(w http.ResponseWriter, r *http.Request, st *store.Sto
 }
 
 // routeMapVersionSubResource dispatches .../version/{v}/bounds,
-// .../version/{v}/geo-objects[/{uuid}], and .../version/{v}/archive to their
-// respective sub-routers below. {v} may be currentVersionKeyword or a
-// user-defined alias, resolved via resolveVersionSegment.
+// .../version/{v}/geo-objects[/{uuid}], .../version/{v}/archive, and
+// .../version/{v}/download to their respective sub-routers below. {v} may be
+// currentVersionKeyword or a user-defined alias, resolved via
+// resolveVersionSegment.
 func routeMapVersionSubResource(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, segments []string) bool {
 	if len(segments) < 4 {
 		return false
@@ -748,6 +751,8 @@ func routeMapVersionSubResource(w http.ResponseWriter, r *http.Request, st *stor
 		return routeMapVersionBounds(w, r, st, dataRoot, id, version, segments)
 	case archivePathSegment:
 		return routeMapVersionArchive(w, r, st, dataRoot, id, version, segments)
+	case downloadPathSegment:
+		return routeMapVersionDownload(w, r, st, dataRoot, id, version, segments)
 	case geoObjectsPathSegment:
 		return routeMapVersionGeoObjects(w, r, st, id, version, segments)
 	default:
@@ -775,6 +780,24 @@ func routeMapVersionArchive(w http.ResponseWriter, r *http.Request, st *store.St
 	}
 
 	if _, ok := getViewableMap(w, r, st, id); ok {
+		mapVersionArchiveHandler(dataRoot, id, version)(w, r)
+	}
+
+	return true
+}
+
+// routeMapVersionDownload dispatches .../version/{v}/download: the UI's
+// per-version "download this version as a zip" button. It streams the same
+// zip as .../archive (see mapVersionArchiveHandler) but, unlike that route
+// (used by the server-to-server sync puller and gated by ordinary
+// view/edit permissions, see routeMapVersionArchive), this one is
+// admin-only — requireAdmin, the global is_admin permission.
+func routeMapVersionDownload(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, version string, segments []string) bool {
+	if len(segments) != 4 {
+		return false
+	}
+
+	if requireAdmin(w, r, st) {
 		mapVersionArchiveHandler(dataRoot, id, version)(w, r)
 	}
 

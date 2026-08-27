@@ -344,10 +344,53 @@
       try {
         const res = await api('/maps/' + id + '/versions');
         const versions = await res.json();
-        container.innerHTML = versions.length
-          ? '<ul>' + versions.map(v => '<li>v' + v.version + ' — ' + fmtDate(v.createdAt) + ' by ' + v.createdBy + '</li>').join('') + '</ul>'
-          : '<span class="muted">No versions uploaded yet.</span>';
+        container.innerHTML = '';
+        if (!versions.length) {
+          const empty = document.createElement('span');
+          empty.className = 'muted';
+          empty.textContent = 'No versions uploaded yet.';
+          container.appendChild(empty);
+        } else {
+          const ul = document.createElement('ul');
+          for (const v of versions) {
+            const li = document.createElement('li');
+            li.appendChild(document.createTextNode('v' + v.version + ' — ' + fmtDate(v.createdAt) + ' by ' + v.createdBy + ' '));
+            // Downloading a version's raw tile archive is admin-only
+            // (server-enforced too — see routeMapVersionDownload).
+            if (isAdmin) {
+              const downloadBtn = document.createElement('button');
+              downloadBtn.className = 'secondary';
+              downloadBtn.textContent = 'Download';
+              downloadBtn.onclick = () => downloadVersion(id, v.version);
+              li.appendChild(downloadBtn);
+            }
+            ul.appendChild(li);
+          }
+          container.appendChild(ul);
+        }
         container.classList.remove('hidden');
+      } catch (err) {
+        if (err.message !== 'unauthorized') appError(err.message);
+      }
+    }
+
+    // downloadVersion fetches a single map version's zip archive (admin-only,
+    // see routeMapVersionDownload) via the authenticated api() helper — a
+    // plain <a href> can't carry the bearer token — and saves it through a
+    // throwaway object URL.
+    async function downloadVersion(mapId, version) {
+      appError(null);
+      try {
+        const res = await api('/maps/' + mapId + '/version/' + encodeURIComponent(version) + '/download');
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = mapName(mapId) + '-v' + version + '.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
       } catch (err) {
         if (err.message !== 'unauthorized') appError(err.message);
       }

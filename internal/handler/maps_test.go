@@ -19,6 +19,8 @@ func TestIsVersionSubResourcePath(t *testing.T) {
 		want     bool
 	}{
 		{"bounds", []string{"id", versionPathSegment, "3", boundsPathSegment}, true},
+		{"archive", []string{"id", versionPathSegment, "3", archivePathSegment}, true},
+		{"download", []string{"id", versionPathSegment, "3", downloadPathSegment}, true},
 		{"geo-objects collection", []string{"id", versionPathSegment, "3", geoObjectsPathSegment}, true},
 		{"geo-objects item", []string{"id", versionPathSegment, "3", geoObjectsPathSegment, "obj-uuid"}, true},
 		{"raw tile file", []string{"id", versionPathSegment, "3", "0", "0", "0.png"}, false},
