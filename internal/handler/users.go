@@ -90,11 +90,14 @@ func userFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter store.U
 	}, true
 }
 
-// UsersCollectionHandler serves the /users collection route (admin-only):
-// GET lists all users, POST creates a new one.
+// UsersCollectionHandler serves the /users collection route: GET lists all
+// users and is open to any authenticated user (e.g. so a map owner can pick
+// a username to grant a per-map permission to, or to transfer ownership to
+// — see mapPermissionItemHandler and mapOwnerItemHandler), while POST
+// creates a new one and remains admin-only.
 func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, st) {
+		if !requireAuthenticated(w, r) {
 			return
 		}
 
@@ -114,6 +117,10 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 			writeJSON(w, http.StatusOK, users)
 
 		case http.MethodPost:
+			if !requireAdmin(w, r, st) {
+				return
+			}
+
 			var req userRequest
 			if !decodeJSON(w, r, &req) {
 				return

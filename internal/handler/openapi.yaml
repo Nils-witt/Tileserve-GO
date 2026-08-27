@@ -705,7 +705,10 @@ paths:
     get:
       tags: [users]
       summary: List users
-      description: Requires the acting user's `is_admin` permission. Responses never include the password hash.
+      description: >-
+        Open to any authenticated user (e.g. so a map owner can pick a
+        username to grant a per-map permission to, or to transfer ownership
+        to). Responses never include the password hash.
       parameters:
         - name: search
           in: query
@@ -739,8 +742,6 @@ paths:
                   $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Unauthorized"
-        "403":
-          $ref: "#/components/responses/Forbidden"
     post:
       tags: [users]
       summary: Create a user

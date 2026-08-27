@@ -121,22 +121,25 @@
     async function showApp() {
       loginCard.classList.add('hidden');
       app.classList.remove('hidden');
-      whoami.textContent = sessionStorage.getItem(USER_KEY) || '';
+      const username = sessionStorage.getItem(USER_KEY) || '';
+      whoami.textContent = username;
       loadMaps();
 
-      // GET /users itself doubles as the "am I admin" check: only admins are
-      // allowed to call it, so a 403 here just means "hide the Users/Sync
-      // tabs" (sync remote configuration is admin-only, same as user
-      // management).
+      // GET /users is open to every authenticated user (so a map owner can
+      // pick a username when granting a per-map permission or transferring
+      // ownership — see the "Permissions" and "Transfer owner" map
+      // actions), so it no longer doubles as an "am I admin" check. Instead,
+      // find the caller's own entry in the list and read isAdmin off of it.
       try {
         const res = await api('/users');
         const users = await res.json();
-        isAdmin = true;
         allUsers = users;
-        tabUsersBtn.classList.remove('hidden');
-        tabSyncBtn.classList.remove('hidden');
-        tabAuditBtn.classList.remove('hidden');
-        renderUsers(users);
+        isAdmin = users.some(u => u.username === username && u.isAdmin);
+        tabUsersBtn.classList.toggle('hidden', !isAdmin);
+        tabSyncBtn.classList.toggle('hidden', !isAdmin);
+        tabAuditBtn.classList.toggle('hidden', !isAdmin);
+        if (isAdmin) renderUsers(users);
+        else showTab('maps');
       } catch (err) {
         isAdmin = false;
         allUsers = [];
