@@ -1,4 +1,4 @@
-package handler
+package oidc
 
 import "testing"
 
@@ -35,16 +35,16 @@ func TestSanitizeRedirectPath(t *testing.T) {
 func TestFirstNonEmpty(t *testing.T) {
 	t.Parallel()
 
-	if got := firstNonEmpty("", "", "c"); got != "c" {
-		t.Errorf("firstNonEmpty() = %q, want %q", got, "c")
+	if got := FirstNonEmpty("", "", "c"); got != "c" {
+		t.Errorf("FirstNonEmpty() = %q, want %q", got, "c")
 	}
 
-	if got := firstNonEmpty("a", "b"); got != "a" {
-		t.Errorf("firstNonEmpty() = %q, want %q", got, "a")
+	if got := FirstNonEmpty("a", "b"); got != "a" {
+		t.Errorf("FirstNonEmpty() = %q, want %q", got, "a")
 	}
 
-	if got := firstNonEmpty("", ""); got != "" {
-		t.Errorf("firstNonEmpty() = %q, want empty string", got)
+	if got := FirstNonEmpty("", ""); got != "" {
+		t.Errorf("FirstNonEmpty() = %q, want empty string", got)
 	}
 }
 

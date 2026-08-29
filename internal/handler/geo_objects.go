@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
 )
@@ -122,7 +123,7 @@ func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version strin
 				return
 			}
 
-			writeJSON(w, http.StatusOK, objs)
+			utils.WriteJSON(w, http.StatusOK, objs)
 
 		case http.MethodPost:
 			if !requireMapPermission(w, r, st, mapID,
@@ -145,7 +146,7 @@ func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version strin
 
 			recordAudit(r, st, "create", "geo_object", g.UUID.String(), fmt.Sprintf("map=%s version=%s name=%q", mapID, version, g.Name))
 
-			writeJSON(w, http.StatusCreated, g)
+			utils.WriteJSON(w, http.StatusCreated, g)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -191,7 +192,7 @@ func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id u
 
 			g, ok := getScopedGeoObject(w, r, st, mapID, version, id)
 			if ok {
-				writeJSON(w, http.StatusOK, g)
+				utils.WriteJSON(w, http.StatusOK, g)
 			}
 
 		case http.MethodPut:
@@ -215,7 +216,7 @@ func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id u
 
 			recordAudit(r, st, "update", "geo_object", g.UUID.String(), fmt.Sprintf("map=%s version=%s name=%q", mapID, version, g.Name))
 
-			writeJSON(w, http.StatusOK, g)
+			utils.WriteJSON(w, http.StatusOK, g)
 
 		case http.MethodDelete:
 			if !requireMapPermission(w, r, st, mapID,

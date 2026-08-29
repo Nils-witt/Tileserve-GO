@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
@@ -114,7 +115,7 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
-			writeJSON(w, http.StatusOK, users)
+			utils.WriteJSON(w, http.StatusOK, users)
 
 		case http.MethodPost:
 			if !requireAdmin(w, r, st) {
@@ -139,7 +140,7 @@ func UsersCollectionHandler(st *store.Store) http.HandlerFunc {
 
 			recordAudit(r, st, "create", "user", u.Username, fmt.Sprintf("isAdmin=%v", u.IsAdmin))
 
-			writeJSON(w, http.StatusCreated, u)
+			utils.WriteJSON(w, http.StatusCreated, u)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -192,7 +193,7 @@ func UserItemHandler(st *store.Store) http.HandlerFunc {
 
 			recordAudit(r, st, "update", "user", u.Username, fmt.Sprintf("isAdmin=%v passwordChanged=%v", u.IsAdmin, req.Password != ""))
 
-			writeJSON(w, http.StatusOK, u)
+			utils.WriteJSON(w, http.StatusOK, u)
 
 		case http.MethodDelete:
 			if username == usernameFromContext(r.Context()) {

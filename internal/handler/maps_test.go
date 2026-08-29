@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 )
 
 func TestIsVersionSubResourcePath(t *testing.T) {
@@ -43,7 +45,7 @@ func TestWriteJSON(t *testing.T) {
 	t.Parallel()
 
 	w := httptest.NewRecorder()
-	writeJSON(w, http.StatusCreated, map[string]string{"hello": "world"})
+	utils.WriteJSON(w, http.StatusCreated, map[string]string{"hello": "world"})
 
 	if w.Code != http.StatusCreated {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusCreated)
@@ -114,7 +116,7 @@ func TestRequireMethod(t *testing.T) {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 
 		w := httptest.NewRecorder()
-		if ok := requireMethod(w, r, http.MethodGet); !ok {
+		if ok := utils.RequireMethod(w, r, http.MethodGet); !ok {
 			t.Fatal("requireMethod() = false, want true")
 		}
 
@@ -129,7 +131,7 @@ func TestRequireMethod(t *testing.T) {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
 
 		w := httptest.NewRecorder()
-		if ok := requireMethod(w, r, http.MethodGet); ok {
+		if ok := utils.RequireMethod(w, r, http.MethodGet); ok {
 			t.Fatal("requireMethod() = true, want false")
 		}
 

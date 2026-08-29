@@ -15,12 +15,32 @@ import (
 	"time"
 
 	"nilswitt.dev/tileserve-go/internal/handler"
+	"nilswitt.dev/tileserve-go/internal/handler/auth"
+	"nilswitt.dev/tileserve-go/internal/handler/auth/oidc"
 	"nilswitt.dev/tileserve-go/internal/ldapauth"
 	"nilswitt.dev/tileserve-go/internal/serverkey"
 	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/sync"
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
+
+type ApplicationConfig struct {
+	DataRoot string
+	KeysDir  string
+
+	JWTSecret string
+
+	DBDSN string
+
+	SeedUsername string
+	SeedPassword string
+
+	Port string
+
+	OIDC auth.ApplicationOIDCConfig
+
+	LDAP auth.ApplicationLDAPConfig
+}
 
 // envOrDefault returns the value of the environment variable key, or
 // fallback if it is unset or empty.
@@ -64,7 +84,34 @@ func main() {
 
 	flag.Parse()
 
-	if err := run(*dataRoot, *keysDir, *jwtSecret, *dbDSN, *seedUsername, *seedPassword, *port, *oidcIssuerURL, *oidcClientID, *oidcClientSecret, *oidcRedirectURL, *ldapURL, *ldapBindDN, *ldapBindPassword, *ldapBaseDN, *ldapUserFilter, *ldapCACertFile, *ldapStartTLS, *ldapInsecureSkipVerify, *ldapDebug); err != nil {
+	config := ApplicationConfig{
+		DataRoot:     *dataRoot,
+		KeysDir:      *keysDir,
+		DBDSN:        *dbDSN,
+		SeedUsername: *seedUsername,
+		SeedPassword: *seedPassword,
+		Port:         *port,
+		JWTSecret:    *jwtSecret,
+		OIDC: auth.ApplicationOIDCConfig{
+			IssuerURL:    *oidcIssuerURL,
+			ClientID:     *oidcClientID,
+			ClientSecret: *oidcClientSecret,
+			RedirectURL:  *oidcRedirectURL,
+		},
+		LDAP: auth.ApplicationLDAPConfig{
+			URL:                *ldapURL,
+			BindDN:             *ldapBindDN,
+			BindPassword:       *ldapBindPassword,
+			BaseDN:             *ldapBaseDN,
+			UserFilter:         *ldapUserFilter,
+			CACertFile:         *ldapCACertFile,
+			StartTLS:           *ldapStartTLS,
+			InsecureSkipVerify: *ldapInsecureSkipVerify,
+			Debug:              *ldapDebug,
+		},
+	}
+
+	if err := run(&config); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -107,15 +154,12 @@ func statusCmd(args []string) {
 	fmt.Printf("tileserve-go is running on port %s\n", *port)
 }
 
-// run wires up storage and the HTTP server and blocks until the server
-// exits. It returns an error instead of calling log.Fatal directly so that
-// deferred cleanup (closing the store) always runs.
-func run(dataRoot, keysDir, jwtSecret, dbDSN, seedUsername, seedPassword, port, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile string, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug bool) error {
-	if jwtSecret == "" || dbDSN == "" {
-		return errors.New("jwt-secret and db-dsn are both required")
+func run(config *ApplicationConfig) error {
+	if config.DBDSN == "" {
+		return errors.New("db-dsn is required")
 	}
 
-	secret := []byte(jwtSecret)
+	secret := []byte(config.JWTSecret)
 
 	// ctx is canceled on SIGINT/SIGTERM, giving the sync manager and the
 	// HTTP server a chance to shut down cleanly (see the goroutine after
@@ -124,16 +168,16 @@ func run(dataRoot, keysDir, jwtSecret, dbDSN, seedUsername, seedPassword, port, 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	if err := serverkey.EnsureKeyPair(keysDir); err != nil {
+	if err := serverkey.EnsureKeyPair(config.KeysDir); err != nil {
 		return fmt.Errorf("ensure server key pair: %w", err)
 	}
 
-	serverPrivateKey, err := serverkey.LoadPrivateKey(keysDir)
+	serverPrivateKey, err := serverkey.LoadPrivateKey(config.KeysDir)
 	if err != nil {
 		return fmt.Errorf("load server key pair: %w", err)
 	}
 
-	st, err := initStore(ctx, dbDSN, seedUsername, seedPassword)
+	st, err := initStore(ctx, config.DBDSN, config.SeedUsername, config.SeedPassword)
 	if err != nil {
 		return err
 	}
@@ -143,108 +187,67 @@ func run(dataRoot, keysDir, jwtSecret, dbDSN, seedUsername, seedPassword, port, 
 	// serving traffic (see EnsureTileIndexes) — run it in the background
 	// rather than delaying server startup on a full data-root filesystem walk.
 	go func() {
-		if err := tilearchive.EnsureTileIndexes(dataRoot); err != nil {
+		if err := tilearchive.EnsureTileIndexes(config.DataRoot); err != nil {
 			log.Printf("backfill tile indexes: %v", err)
 		}
 	}()
 
-	// The sync manager starts/stops one background puller goroutine per
-	// enabled sync_remotes row (see internal/sync.Manager); it reconciles
-	// against the database periodically, so remotes added/edited/disabled
-	// via the /sync/remotes API take effect without a restart.
-	syncManager := sync.NewManager(st, dataRoot, serverPrivateKey)
+	syncManager := sync.NewManager(st, config.DataRoot, serverPrivateKey)
 	go syncManager.Start(ctx)
 
-	oidcAuth, ldapAuth, err := newAuthenticators(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug)
+	oidcAuth, ldapAuth, err := newAuthenticators(ctx, config.LDAP, config.OIDC)
 	if err != nil {
 		return err
 	}
 
 	mux := http.NewServeMux()
-	// GET /healthz: liveness probe, always returns 200 "ok".
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	// GET /version: build metadata (commit, and tag/version if tagged), public.
 	mux.HandleFunc("/version", handler.VersionHandler())
-	// GET /login: serves the login HTML page. POST /login: exchanges
-	// username/password for a JWT and a refresh token.
 	mux.HandleFunc("/login", handler.LoginHandler(secret, st, ldapAuth))
-	// GET /login.js: serves the login page's script.
 	mux.HandleFunc("/login.js", handler.LoginScriptHandler())
-	// POST /refresh: exchanges a refresh token for a new JWT and refresh token.
 	mux.HandleFunc("/refresh", handler.RefreshHandler(secret, st))
-	// GET /auth/methods: reports which login methods are available (public),
-	// so the login pages' script knows whether to show the SSO button.
-	mux.HandleFunc("/auth/methods", handler.AuthMethodsHandler(oidcAuth != nil))
+	mux.HandleFunc("/auth/methods", oidc.AuthMethodsHandler(oidcAuth != nil))
 
 	if oidcAuth != nil {
-		// GET /login/oidc: starts the OpenID Connect login redirect.
-		mux.HandleFunc("/login/oidc", handler.OIDCLoginHandler(oidcAuth))
-		// GET /login/oidc/callback: the provider's redirect back; on success
-		// issues a normal login JWT and refresh token, same as /login.
-		mux.HandleFunc("/login/oidc/callback", handler.OIDCCallbackHandler(oidcAuth, secret, st))
+		mux.HandleFunc("/login/oidc", oidc.LoginHandler(oidcAuth))
+		mux.HandleFunc("/login/oidc/callback", oidc.CallbackHandler(oidcAuth, secret, st))
 	}
-	// GET /ui/: serves the self-contained management UI (public, unauthenticated).
-	mux.HandleFunc("/ui/", handler.UIHandler())
-	// GET /openapi.yaml: serves the OpenAPI 3.0 spec (public, unauthenticated).
-	mux.HandleFunc("/openapi.yaml", handler.OpenAPIHandler())
-	// GET /maps, POST /maps: list maps visible to the caller / create a map.
-	// RequireAuth/OptionalAuth accept both a login JWT and an API key JWT
-	// (see handler.parseBearerToken) — st satisfies
-	// handler.apiKeySigningKeyResolver.
-	mux.Handle("/maps", handler.RequireAuth(secret, st, handler.MapsCollectionHandler(st)))
-	// /maps/{id}, /maps/{id}/upload, /maps/{id}/versions,
-	// /maps/{id}/permissions[/{username}], /maps/{id}/version/{v}[/bounds|...]:
-	// see handler.MapsItemHandler for the full per-route breakdown.
-	//
-	// OptionalAuth, not RequireAuth: a map's version file serving route may
-	// be reachable without a token at all if that map has anonymousAllowed
-	// set — MapsItemHandler enforces auth itself on every other route.
-	mux.Handle("/maps/", handler.OptionalAuth(secret, st, handler.MapsItemHandler(st, dataRoot)))
-	// GET /users, POST /users: list users / create a user (admin-only).
-	mux.Handle("/users", handler.RequireAuth(secret, st, handler.UsersCollectionHandler(st)))
-	// PUT /users/{username}, DELETE /users/{username}: update / delete a user
-	// (admin-only), plus /users/{username}/api-keys[/{id}] (also admin-only).
-	mux.Handle("/users/", handler.RequireAuth(secret, st, handler.UserItemHandler(st)))
-	// GET /sync/remotes, POST /sync/remotes: list / register remotes to
-	// pull a full mirror from (admin-only).
-	mux.Handle("/sync/remotes", handler.RequireAuth(secret, st, handler.SyncRemotesCollectionHandler(st)))
-	// GET/PUT/DELETE /sync/remotes/{id}, POST /sync/remotes/{id}/trigger
-	// (admin-only).
-	mux.Handle("/sync/remotes/", handler.RequireAuth(secret, st, handler.SyncRemoteItemHandler(st, syncManager)))
-	// POST /keys/generate: server-side RSA key pair generation convenience
-	// for the admin UI (admin-only, nothing persisted).
-	mux.Handle("/keys/generate", handler.RequireAuth(secret, st, handler.GenerateKeyPairHandler(st)))
-	// GET /server/public-key: this server's own persistent public key
-	// (admin-only, see internal/serverkey).
-	mux.Handle("/server/public-key", handler.RequireAuth(secret, st, handler.ServerPublicKeyHandler(st, keysDir)))
-	// GET /audit-logs: lists recorded audit entries (admin-only).
-	mux.Handle("/audit-logs", handler.RequireAuth(secret, st, handler.AuditLogsCollectionHandler(st)))
-	// GET /permissions: lists every per-map permission grant across every
-	// map, paired with the map it applies to (admin-only).
-	mux.Handle("/permissions", handler.RequireAuth(secret, st, handler.PermissionsCollectionHandler(st)))
 
-	addr := ":" + port
+	guardAuth := func(h http.Handler) http.Handler {
+		return handler.AuthMiddleware(secret, st, h, true)
+	}
+
+	checkAuth := func(h http.Handler) http.Handler {
+		return handler.AuthMiddleware(secret, st, h, false)
+	}
+
+	mux.HandleFunc("/ui/", handler.UIHandler())
+	mux.HandleFunc("/openapi.yaml", handler.OpenAPIHandler())
+	mux.Handle("/maps", guardAuth(handler.MapsCollectionHandler(st)))
+	mux.Handle("/maps/", checkAuth(handler.MapsItemHandler(st, config.DataRoot)))
+
+	mux.Handle("/users", guardAuth(handler.UsersCollectionHandler(st)))
+	mux.Handle("/users/", guardAuth(handler.UserItemHandler(st)))
+	mux.Handle("/sync/remotes", guardAuth(handler.SyncRemotesCollectionHandler(st)))
+	mux.Handle("/sync/remotes/", guardAuth(handler.SyncRemoteItemHandler(st, syncManager)))
+	mux.Handle("/keys/generate", guardAuth(handler.GenerateKeyPairHandler(st)))
+	mux.Handle("/server/public-key", guardAuth(handler.ServerPublicKeyHandler(st, config.KeysDir)))
+	mux.Handle("/audit-logs", guardAuth(handler.AuditLogsCollectionHandler(st)))
+	mux.Handle("/permissions", guardAuth(handler.PermissionsCollectionHandler(st)))
+
+	addr := ":" + config.Port
 	srv := &http.Server{
-		Addr:    addr,
-		Handler: mux,
-		// ReadHeaderTimeout guards against slow-loris style connections that
-		// trickle in headers without ever completing a request. The other
-		// timeouts are deliberately generous: tile archive uploads and large
-		// tile pyramid downloads are legitimate long-running transfers.
+		Addr:              addr,
+		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       5 * time.Minute,
 		WriteTimeout:      5 * time.Minute,
 		IdleTimeout:       2 * time.Minute,
 	}
 
-	// On shutdown (ctx canceled by SIGINT/SIGTERM), stop accepting new sync
-	// work and let the HTTP server drain in-flight requests before exiting.
-	// A sync worker's in-flight step is safe to abandon mid-way (see
-	// internal/sync.pullVersion's crash-safe ordering), so Stop need not be
-	// awaited before shutting down the server.
 	go func() {
 		<-ctx.Done()
 		syncManager.Stop()
@@ -261,9 +264,6 @@ func run(dataRoot, keysDir, jwtSecret, dbDSN, seedUsername, seedPassword, port, 
 	return nil
 }
 
-// initStore connects to Postgres, runs migrations, and seeds the initial
-// admin user if configured, closing the store again on any failure so run
-// doesn't leak a connection pool it never returns to the caller.
 func initStore(ctx context.Context, dbDSN, seedUsername, seedPassword string) (*store.Store, error) {
 	st, err := store.NewStore(ctx, dbDSN)
 	if err != nil {
@@ -287,65 +287,16 @@ func initStore(ctx context.Context, dbDSN, seedUsername, seedPassword string) (*
 	return st, nil
 }
 
-// newAuthenticators builds the optional OIDC and LDAP authenticators from
-// their respective -oidc-*/-ldap-* settings (see newOIDCAuthenticator and
-// newLDAPAuthenticator), bundled into one call so run only has a single
-// error check to make for both.
-func newAuthenticators(ctx context.Context, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL, ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile string, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug bool) (*handler.OIDCAuthenticator, *ldapauth.Authenticator, error) {
-	oidcAuth, err := newOIDCAuthenticator(ctx, oidcIssuerURL, oidcClientID, oidcClientSecret, oidcRedirectURL)
+func newAuthenticators(ctx context.Context, ldapConfig auth.ApplicationLDAPConfig, oidcConfig auth.ApplicationOIDCConfig) (*oidc.Authenticator, *ldapauth.Authenticator, error) {
+	oidcAuth, err := auth.NewOIDCAuthenticator(ctx, oidcConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("init oidc: %w", err)
 	}
 
-	ldapAuth, err := newLDAPAuthenticator(ldapURL, ldapBindDN, ldapBindPassword, ldapBaseDN, ldapUserFilter, ldapCACertFile, ldapStartTLS, ldapInsecureSkipVerify, ldapDebug)
+	ldapAuth, err := auth.NewLDAPAuthenticator(ldapConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("init ldap: %w", err)
 	}
 
 	return oidcAuth, ldapAuth, nil
-}
-
-// newOIDCAuthenticator builds the OIDC authenticator from the four
-// -oidc-* settings. They must either all be empty (feature off — nil, nil is
-// returned and /login/oidc[/callback] aren't registered at all, see run
-// above) or all be set (feature on); a partial set is almost certainly a
-// misconfiguration, so it's rejected outright rather than silently running
-// with SSO half-enabled.
-func newOIDCAuthenticator(ctx context.Context, issuerURL, clientID, clientSecret, redirectURL string) (*handler.OIDCAuthenticator, error) {
-	if issuerURL == "" && clientID == "" && clientSecret == "" && redirectURL == "" {
-		return nil, nil
-	}
-
-	if issuerURL == "" || clientID == "" || clientSecret == "" || redirectURL == "" {
-		return nil, errors.New("oidc-issuer-url, oidc-client-id, oidc-client-secret, and oidc-redirect-url must all be set together to enable OpenID Connect login")
-	}
-
-	return handler.NewOIDCAuthenticator(ctx, issuerURL, clientID, clientSecret, redirectURL)
-}
-
-// newLDAPAuthenticator builds the LDAP authenticator from the -ldap-*
-// settings. LDAP login is off (nil, nil) unless -ldap-url is set; once it
-// is, -ldap-base-dn is also required (-ldap-bind-dn/-ldap-bind-password,
-// -ldap-start-tls, -ldap-ca-cert-file, -ldap-insecure-skip-verify, and
-// -ldap-debug are optional, and -ldap-user-filter always has a default).
-func newLDAPAuthenticator(url, bindDN, bindPassword, baseDN, userFilter, caCertFile string, startTLS, insecureSkipVerify, debug bool) (*ldapauth.Authenticator, error) {
-	if url == "" {
-		return nil, nil
-	}
-
-	if baseDN == "" {
-		return nil, errors.New("ldap-base-dn is required when ldap-url is set")
-	}
-
-	return ldapauth.NewAuthenticator(ldapauth.Config{
-		URL:                url,
-		BindDN:             bindDN,
-		BindPassword:       bindPassword,
-		BaseDN:             baseDN,
-		UserFilter:         userFilter,
-		StartTLS:           startTLS,
-		InsecureSkipVerify: insecureSkipVerify,
-		CACertFile:         caCertFile,
-		Debug:              debug,
-	})
 }

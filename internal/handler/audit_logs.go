@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
@@ -99,17 +100,15 @@ func queryIntParam(w http.ResponseWriter, r *http.Request, name string) (value i
 	return n, true
 }
 
-// AuditLogsCollectionHandler serves the /audit-logs collection route
-// (admin-only): GET lists recorded audit entries, most recent first,
-// optionally filtered by actor/action/entityType/entityId/since/until and
-// paginated via limit/offset.
+// AuditLogsCollectionHandler serves GET /audit-logs: an admin-only listing
+// of audit log entries, optionally filtered via auditLogFilterFromQuery.
 func AuditLogsCollectionHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !requireAdmin(w, r, st) {
 			return
 		}
 
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 
@@ -124,6 +123,6 @@ func AuditLogsCollectionHandler(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, entries)
+		utils.WriteJSON(w, http.StatusOK, entries)
 	}
 }

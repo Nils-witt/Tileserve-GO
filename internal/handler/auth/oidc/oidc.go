@@ -1,4 +1,8 @@
-package handler
+// Package oidc implements the OpenID Connect authorization code flow for
+// tileserve-go: starting sign-in at GET /login/oidc, handling the provider's
+// callback, and resolving/provisioning the local account that a verified ID
+// token authenticates as.
+package oidc
 
 import (
 	"context"
@@ -14,31 +18,33 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
+	"nilswitt.dev/tileserve-go/internal/handler/auth/jwt"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
-// OIDCAuthenticator holds the state needed to run the OpenID Connect
+// Authenticator holds the state needed to run the OpenID Connect
 // authorization code flow against one configured provider: discovery
 // document, ID token verifier, and OAuth2 client config. Construct one with
-// NewOIDCAuthenticator at startup; a nil *OIDCAuthenticator means OIDC login
+// NewAuthenticator at startup; a nil *Authenticator means OIDC login
 // isn't configured, and /login/oidc[/callback] aren't registered at all (see
 // cmd/tileserve-go/main.go).
-type OIDCAuthenticator struct {
+type Authenticator struct {
 	verifier     *oidc.IDTokenVerifier
 	oauth2Config oauth2.Config
 }
 
-// NewOIDCAuthenticator discovers the OIDC provider at issuerURL (via its
+// NewAuthenticator discovers the OIDC provider at issuerURL (via its
 // /.well-known/openid-configuration document) and builds an authenticator
 // for the given client, redirecting back to redirectURL after login.
-func NewOIDCAuthenticator(ctx context.Context, issuerURL, clientID, clientSecret, redirectURL string) (*OIDCAuthenticator, error) {
+func NewAuthenticator(ctx context.Context, issuerURL, clientID, clientSecret, redirectURL string) (*Authenticator, error) {
 	provider, err := oidc.NewProvider(ctx, issuerURL)
 	if err != nil {
 		return nil, fmt.Errorf("discover oidc provider %q: %w", issuerURL, err)
 	}
 
-	return &OIDCAuthenticator{
+	return &Authenticator{
 		verifier: provider.Verifier(&oidc.Config{ClientID: clientID}),
 		oauth2Config: oauth2.Config{
 			ClientID:     clientID,
@@ -50,17 +56,15 @@ func NewOIDCAuthenticator(ctx context.Context, issuerURL, clientID, clientSecret
 	}, nil
 }
 
-// AuthMethodsHandler serves GET /auth/methods (public): reports which login
-// methods this server currently exposes, so the login pages' script can
-// show or hide the "Sign in with SSO" button without hardcoding whether OIDC
-// is configured.
+// AuthMethodsHandler serves GET /auth/methods, letting a client discover
+// whether OIDC login is enabled before showing that option in the UI.
 func AuthMethodsHandler(oidcEnabled bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]bool{"oidc": oidcEnabled})
+		utils.WriteJSON(w, http.StatusOK, map[string]bool{"oidc": oidcEnabled})
 	}
 }
 
@@ -78,15 +82,15 @@ const (
 	oidcFlowTTL = 5 * time.Minute
 )
 
-// OIDCLoginHandler serves GET /login/oidc: it starts the authorization code
+// LoginHandler serves GET /login/oidc: it starts the authorization code
 // flow by generating a fresh CSRF state value and replay-resistant nonce,
 // stashing both (plus the post-login redirect target) in short-lived
 // cookies, and redirecting the browser to the provider's authorization
-// endpoint. OIDCCallbackHandler verifies the state and nonce against these
+// endpoint. CallbackHandler verifies the state and nonce against these
 // same cookies when the provider redirects back.
-func OIDCLoginHandler(auth *OIDCAuthenticator) http.HandlerFunc {
+func LoginHandler(auth *Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 
@@ -112,17 +116,17 @@ func OIDCLoginHandler(auth *OIDCAuthenticator) http.HandlerFunc {
 	}
 }
 
-// OIDCCallbackHandler serves GET /login/oidc/callback: it validates the
-// state/nonce round-tripped via cookies (see OIDCLoginHandler), exchanges
+// CallbackHandler serves GET /login/oidc/callback: it validates the
+// state/nonce round-tripped via cookies (see LoginHandler), exchanges
 // the authorization code for an ID token, resolves the token's issuer+
 // subject to a local account — auto-provisioning one on first login — and
 // issues that account a normal login JWT and refresh token exactly like
 // LoginHandler, handing them to the browser via the redirect target's URL
 // fragment (never a query parameter, so they don't end up in server logs or
 // Referer headers).
-func OIDCCallbackHandler(auth *OIDCAuthenticator, secret []byte, st *store.Store) http.HandlerFunc {
+func CallbackHandler(auth *Authenticator, secret []byte, st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 
@@ -170,12 +174,13 @@ func OIDCCallbackHandler(auth *OIDCAuthenticator, secret []byte, st *store.Store
 		fragment.Set("refresh_token", refreshToken)
 		fragment.Set("username", username)
 
+		//nolint:gosec // G710 false positive: redirectTo is already validated by sanitizeRedirectPath (via consumeOIDCFlowCookies above) to be a same-origin absolute path, never attacker-controlled
 		http.Redirect(w, r, redirectTo+"#"+fragment.Encode(), http.StatusFound)
 	}
 }
 
 // consumeOIDCFlowCookies reads and clears the state/nonce/redirect cookies
-// set by OIDCLoginHandler, returning a safe redirect target (see
+// set by LoginHandler, returning a safe redirect target (see
 // sanitizeRedirectPath) alongside the expected state and nonce — either may
 // be "" if its cookie was missing or had already expired.
 func consumeOIDCFlowCookies(w http.ResponseWriter, r *http.Request) (redirectTo, state, nonce string) {
@@ -198,7 +203,7 @@ type oidcClaims struct {
 // rules out a replayed token from a different sign-in attempt — and decodes
 // its profile claims. Every error is already a safe, generic message: it's
 // returned as-is for the caller to hand straight to http.Error.
-func (auth *OIDCAuthenticator) exchangeAndVerify(ctx context.Context, code, expectedNonce string) (*oidc.IDToken, oidcClaims, error) {
+func (auth *Authenticator) exchangeAndVerify(ctx context.Context, code, expectedNonce string) (*oidc.IDToken, oidcClaims, error) {
 	oauth2Token, err := auth.oauth2Config.Exchange(ctx, code)
 	if err != nil {
 		return nil, oidcClaims{}, errors.New("failed to exchange authorization code")
@@ -239,7 +244,7 @@ func resolveOIDCUsername(ctx context.Context, st *store.Store, idToken *oidc.IDT
 		return "", err
 	}
 
-	candidate := firstNonEmpty(claims.PreferredUsername, claims.Email, idToken.Subject)
+	candidate := FirstNonEmpty(claims.PreferredUsername, claims.Email, idToken.Subject)
 
 	u, err := st.CreateOIDCUser(ctx, candidate, idToken.Issuer, idToken.Subject)
 	if err != nil {
@@ -252,12 +257,12 @@ func resolveOIDCUsername(ctx context.Context, st *store.Store, idToken *oidc.IDT
 // issueOIDCSession issues a login JWT and refresh token for username, same
 // as a password login (see issueLoginToken/LoginHandler).
 func issueOIDCSession(ctx context.Context, st *store.Store, secret []byte, username string) (token, refreshToken string, err error) {
-	token, err = issueLoginToken(secret, username, defaultTokenTTL)
+	token, err = jwt.IssueLoginToken(secret, username)
 	if err != nil {
 		return "", "", err
 	}
 
-	refreshToken, _, err = st.CreateRefreshToken(ctx, username, refreshTokenTTL)
+	refreshToken, _, err = st.CreateRefreshToken(ctx, username, jwt.RefreshTokenTTL)
 	if err != nil {
 		return "", "", err
 	}
@@ -265,9 +270,9 @@ func issueOIDCSession(ctx context.Context, st *store.Store, secret []byte, usern
 	return token, refreshToken, nil
 }
 
-// firstNonEmpty returns the first non-empty string among values, or "" if
+// FirstNonEmpty returns the first non-empty string among values, or "" if
 // all are empty.
-func firstNonEmpty(values ...string) string {
+func FirstNonEmpty(values ...string) string {
 	for _, v := range values {
 		if v != "" {
 			return v

@@ -14,6 +14,8 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+
+	authjwt "nilswitt.dev/tileserve-go/internal/handler/auth/jwt"
 )
 
 // testUsername is the JWT subject used throughout this file's test tokens.
@@ -76,7 +78,7 @@ func signAPIKeyToken(t *testing.T, key *rsa.PrivateKey, keyID uuid.UUID, subject
 	return signed
 }
 
-// fakeAPIKeyResolver is a minimal apiKeySigningKeyResolver for tests that
+// fakeAPIKeyResolver is a minimal authjwt.APIKeySigningKeyResolver implementation for tests that
 // don't need a live Postgres connection: it resolves exactly one key id to
 // one username/public key.
 type fakeAPIKeyResolver struct {
@@ -122,7 +124,7 @@ type parseBearerTokenCase struct {
 
 // runParseBearerTokenCases runs tests against secret/resolver, one subtest
 // per case.
-func runParseBearerTokenCases(t *testing.T, secret []byte, resolver apiKeySigningKeyResolver, tests []parseBearerTokenCase) {
+func runParseBearerTokenCases(t *testing.T, secret []byte, resolver authjwt.APIKeySigningKeyResolver, tests []parseBearerTokenCase) {
 	t.Helper()
 
 	for _, tc := range tests {
@@ -140,9 +142,9 @@ func runParseBearerTokenCases(t *testing.T, secret []byte, resolver apiKeySignin
 				r.URL.RawQuery = q.Encode()
 			}
 
-			username, apiKeyID, hadToken, valid := parseBearerToken(secret, resolver, r)
+			username, apiKeyID, hadToken, valid := authjwt.ParseBearerToken(secret, resolver, r)
 			if username != tc.wantUsername || apiKeyID != tc.wantAPIKeyID || hadToken != tc.wantHadToken || valid != tc.wantValid {
-				t.Fatalf("parseBearerToken() = (%q, %s, %v, %v), want (%q, %s, %v, %v)",
+				t.Fatalf("authjwt.ParseBearerToken() = (%q, %s, %v, %v), want (%q, %s, %v, %v)",
 					username, apiKeyID, hadToken, valid, tc.wantUsername, tc.wantAPIKeyID, tc.wantHadToken, tc.wantValid)
 			}
 		})
@@ -261,6 +263,17 @@ func TestParseBearerTokenAPIKey(t *testing.T) {
 	})
 }
 
+// requireAuth and optionalAuth adapt AuthMiddleware's requireToken bool into
+// the two-arg-plus-next shape the old RequireAuth/OptionalAuth middlewares
+// had, which the rest of this file's tests are written against.
+func requireAuth(secret []byte, resolver authjwt.APIKeySigningKeyResolver, next http.Handler) http.Handler {
+	return AuthMiddleware(secret, resolver, next, true)
+}
+
+func optionalAuth(secret []byte, resolver authjwt.APIKeySigningKeyResolver, next http.Handler) http.Handler {
+	return AuthMiddleware(secret, resolver, next, false)
+}
+
 // authProbe wraps an http.HandlerFunc with an isolated record of whether it
 // was invoked, and with which context username, for one subtest.
 type authProbe struct {
@@ -284,7 +297,7 @@ func (p *authProbe) handler() http.Handler {
 // a garbage bearer token with a 401 without ever calling next. Shared by
 // TestRequireAuth and TestOptionalAuth, since both middlewares reject an
 // invalid token identically.
-func assertInvalidTokenRejected(t *testing.T, secret []byte, resolver apiKeySigningKeyResolver, wrap func([]byte, apiKeySigningKeyResolver, http.Handler) http.Handler) {
+func assertInvalidTokenRejected(t *testing.T, secret []byte, resolver authjwt.APIKeySigningKeyResolver, wrap func([]byte, authjwt.APIKeySigningKeyResolver, http.Handler) http.Handler) {
 	t.Helper()
 
 	probe := &authProbe{}
@@ -316,7 +329,7 @@ func TestRequireAuth(t *testing.T) {
 		probe := &authProbe{}
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/maps", nil)
 		w := httptest.NewRecorder()
-		RequireAuth(secret, resolver, probe.handler()).ServeHTTP(w, r)
+		requireAuth(secret, resolver, probe.handler()).ServeHTTP(w, r)
 
 		if probe.called {
 			t.Fatal("next should not be called without a token")
@@ -329,7 +342,7 @@ func TestRequireAuth(t *testing.T) {
 
 	t.Run("invalid token is rejected", func(t *testing.T) {
 		t.Parallel()
-		assertInvalidTokenRejected(t, secret, resolver, RequireAuth)
+		assertInvalidTokenRejected(t, secret, resolver, requireAuth)
 	})
 
 	t.Run("valid token passes through with username in context", func(t *testing.T) {
@@ -340,7 +353,7 @@ func TestRequireAuth(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+validToken)
 
 		w := httptest.NewRecorder()
-		RequireAuth(secret, resolver, probe.handler()).ServeHTTP(w, r)
+		requireAuth(secret, resolver, probe.handler()).ServeHTTP(w, r)
 
 		if !probe.called {
 			t.Fatal("next should be called with a valid token")
@@ -372,7 +385,7 @@ func TestRequireAuth(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+token)
 
 		w := httptest.NewRecorder()
-		RequireAuth(secret, keyResolver, probe.handler()).ServeHTTP(w, r)
+		requireAuth(secret, keyResolver, probe.handler()).ServeHTTP(w, r)
 
 		if !probe.called {
 			t.Fatal("next should be called with a valid api key token")
@@ -401,7 +414,7 @@ func TestOptionalAuth(t *testing.T) {
 		probe := &authProbe{}
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/maps/some-id/version/1/0/0.png", nil)
 		w := httptest.NewRecorder()
-		OptionalAuth(secret, resolver, probe.handler()).ServeHTTP(w, r)
+		optionalAuth(secret, resolver, probe.handler()).ServeHTTP(w, r)
 
 		if !probe.called {
 			t.Fatal("next should be called even without a token")
@@ -418,7 +431,7 @@ func TestOptionalAuth(t *testing.T) {
 
 	t.Run("invalid token is still rejected", func(t *testing.T) {
 		t.Parallel()
-		assertInvalidTokenRejected(t, secret, resolver, OptionalAuth)
+		assertInvalidTokenRejected(t, secret, resolver, optionalAuth)
 	})
 
 	t.Run("valid token passes through with username in context", func(t *testing.T) {
@@ -429,7 +442,7 @@ func TestOptionalAuth(t *testing.T) {
 		r.Header.Set("Authorization", "Bearer "+validToken)
 
 		w := httptest.NewRecorder()
-		OptionalAuth(secret, resolver, probe.handler()).ServeHTTP(w, r)
+		optionalAuth(secret, resolver, probe.handler()).ServeHTTP(w, r)
 
 		if !probe.called {
 			t.Fatal("next should be called with a valid token")

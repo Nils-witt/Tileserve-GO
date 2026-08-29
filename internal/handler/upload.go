@@ -8,23 +8,17 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
 
-// maxUploadSize caps the size of an uploaded map version archive.
 const maxUploadSize = 1 << 30 // 1 GiB
 
-// uploadMapVersionHandler accepts a zip or tar (optionally gzip-compressed)
-// archive as the raw request body, extracts it, and atomically bumps the
-// map's current_version. Extraction happens into a staging directory next to
-// the map's final location first; the DB version is only reserved (and the
-// directory put in place) once extraction fully succeeds, so a bad upload
-// never leaves the map pointing at a broken version.
 func uploadMapVersionHandler(st *store.Store, dataRoot string, id uuid.UUID) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodPost) {
+		if !utils.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
 
@@ -70,14 +64,10 @@ func uploadMapVersionHandler(st *store.Store, dataRoot string, id uuid.UUID) htt
 
 		recordAudit(r, st, "upload", "map_version", id.String()+":"+m.CurrentVersion, "")
 
-		writeJSON(w, http.StatusCreated, m)
+		utils.WriteJSON(w, http.StatusCreated, m)
 	}
 }
 
-// receiveUpload buffers r's body (capped at maxUploadSize) into a closed
-// temp file and returns its path. On success the caller is responsible for
-// removing it; on failure receiveUpload has already written the appropriate
-// error response and cleaned up.
 func receiveUpload(w http.ResponseWriter, r *http.Request) (string, bool) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 	"nilswitt.dev/tileserve-go/internal/serverkey"
 	"nilswitt.dev/tileserve-go/internal/store"
 )
@@ -38,7 +39,7 @@ func GenerateKeyPairHandler(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if !requireMethod(w, r, http.MethodPost) {
+		if !utils.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
 
@@ -60,7 +61,7 @@ func GenerateKeyPairHandler(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, keyPairResponse{
+		utils.WriteJSON(w, http.StatusOK, keyPairResponse{
 			PrivateKeyPEM: string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER})),
 			PublicKeyPEM:  string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER})),
 		})
@@ -84,7 +85,7 @@ func ServerPublicKeyHandler(st *store.Store, keysDir string) http.HandlerFunc {
 			return
 		}
 
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 
@@ -94,6 +95,6 @@ func ServerPublicKeyHandler(st *store.Store, keysDir string) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, serverPublicKeyResponse{PublicKeyPEM: string(pemBytes)})
+		utils.WriteJSON(w, http.StatusOK, serverPublicKeyResponse{PublicKeyPEM: string(pemBytes)})
 	}
 }

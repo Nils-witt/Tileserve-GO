@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
 )
@@ -57,7 +58,7 @@ func apiKeysCollectionHandler(st *store.Store, username string) http.HandlerFunc
 				return
 			}
 
-			writeJSON(w, http.StatusOK, keys)
+			utils.WriteJSON(w, http.StatusOK, keys)
 
 		case http.MethodPost:
 			var req apiKeyRequest
@@ -84,7 +85,7 @@ func apiKeysCollectionHandler(st *store.Store, username string) http.HandlerFunc
 
 			recordAudit(r, st, "create", "api_key", rec.ID.String(), fmt.Sprintf("owner=%s name=%q", username, req.Name))
 
-			writeJSON(w, http.StatusCreated, rec)
+			utils.WriteJSON(w, http.StatusCreated, rec)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -95,7 +96,7 @@ func apiKeysCollectionHandler(st *store.Store, username string) http.HandlerFunc
 // apiKeyItemHandler revokes (DELETE) a single API key belonging to username.
 func apiKeyItemHandler(st *store.Store, username, idStr string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodDelete) {
+		if !utils.RequireMethod(w, r, http.MethodDelete) {
 			return
 		}
 
@@ -116,15 +117,10 @@ func apiKeyItemHandler(st *store.Store, username, idStr string) http.HandlerFunc
 	}
 }
 
-// apiKeyScopeRequest carries a scope grant's version whitelist: omitted or
-// null means every version of the map is in scope.
 type apiKeyScopeRequest struct {
 	Versions []string `json:"versions"`
 }
 
-// apiKeyScopesCollectionHandler lists (GET) a key's scope entries, or clears
-// all of them (DELETE), restoring the key to unrestricted access (see
-// store.ClearAPIKeyScope). Admin-only, same as the rest of the /users API.
 func apiKeyScopesCollectionHandler(st *store.Store, username, idStr string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(idStr)
@@ -137,11 +133,11 @@ func apiKeyScopesCollectionHandler(st *store.Store, username, idStr string) http
 		case http.MethodGet:
 			scopes, err := st.ListAPIKeyScopes(r.Context(), username, id)
 			if err != nil {
-				http.Error(w, "failed to list api key scopes", http.StatusInternalServerError)
+				utils.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list api key scopes"})
 				return
 			}
 
-			writeJSON(w, http.StatusOK, scopes)
+			utils.WriteJSON(w, http.StatusOK, scopes)
 
 		case http.MethodDelete:
 			if err := st.ClearAPIKeyScope(r.Context(), username, id); err != nil {
@@ -159,8 +155,6 @@ func apiKeyScopesCollectionHandler(st *store.Store, username, idStr string) http
 	}
 }
 
-// apiKeyScopeItemHandler grants (PUT) or revokes (DELETE) a key's access to
-// a single map. Admin-only, same as the rest of the /users API.
 func apiKeyScopeItemHandler(st *store.Store, username, idStr, mapIDStr string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, err := uuid.Parse(idStr)
@@ -196,7 +190,7 @@ func apiKeyScopeItemHandler(st *store.Store, username, idStr, mapIDStr string) h
 
 			recordAudit(r, st, "grant", "api_key_scope", id.String()+":"+mapID.String(), fmt.Sprintf("owner=%s versions=%v", username, req.Versions))
 
-			writeJSON(w, http.StatusOK, scope)
+			utils.WriteJSON(w, http.StatusOK, scope)
 
 		case http.MethodDelete:
 			if err := st.DeleteAPIKeyScope(r.Context(), username, id, mapID); err != nil {

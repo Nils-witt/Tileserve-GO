@@ -1,24 +1,28 @@
-package handler
+// Package ldap authenticates username/password logins against a local
+// store first, falling back to LDAP, and auto-provisions a local account for
+// a directory identity on first successful LDAP login.
+package ldap
 
 import (
 	"context"
 	"errors"
 	"log"
 
+	"nilswitt.dev/tileserve-go/internal/handler/auth/oidc"
 	"nilswitt.dev/tileserve-go/internal/ldapauth"
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
-// authenticatePassword verifies username/password for POST /login: it tries
+// AuthenticatePassword verifies username/password for POST /login: it tries
 // the local store first, and only falls back to LDAP (when ldapAuth is
-// configured, i.e. non-nil — see *OIDCAuthenticator for the same
+// configured, i.e. non-nil — see oidc.Authenticator for the same
 // nil-means-disabled convention) if that account is unknown or its password
 // doesn't match — an existing local account's password is never shadowed by
 // a directory lookup. A successful LDAP bind resolves to a local account via
 // resolveLDAPUsername, auto-provisioning one on first login; the returned
 // username is the one to issue a session for, which may differ from the
 // caller-supplied username if provisioning had to disambiguate a collision.
-func authenticatePassword(ctx context.Context, st *store.Store, ldapAuth *ldapauth.Authenticator, username, password string) (string, error) {
+func AuthenticatePassword(ctx context.Context, st *store.Store, ldapAuth *ldapauth.Authenticator, username, password string) (string, error) {
 	err := st.Authenticate(ctx, username, password)
 	if err == nil {
 		return username, nil
@@ -58,7 +62,7 @@ func resolveLDAPUsername(ctx context.Context, st *store.Store, preferredUsername
 		return "", err
 	}
 
-	candidate := firstNonEmpty(preferredUsername, identity.DN)
+	candidate := oidc.FirstNonEmpty(preferredUsername, identity.DN)
 	log.Printf("ldap: dn=%q: no local account yet, auto-provisioning as %q", identity.DN, candidate)
 
 	u, err := st.CreateLDAPUser(ctx, candidate, identity.DN)

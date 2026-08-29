@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
@@ -49,13 +50,6 @@ type mapRequest struct {
 	AnonymousAllowed bool   `json:"anonymousAllowed"`
 }
 
-// writeJSON writes v as a JSON response body with the given HTTP status code.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
 // decodeJSON decodes r's body as JSON into v, writing a 400 response and
 // returning false if the body isn't valid JSON.
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -77,17 +71,6 @@ func writeStoreError(w http.ResponseWriter, err, sentinel error, sentinelStatus 
 	}
 
 	http.Error(w, failMsg, http.StatusInternalServerError)
-}
-
-// requireMethod rejects a request whose method isn't method with a 405. It
-// returns true when the caller may continue.
-func requireMethod(w http.ResponseWriter, r *http.Request, method string) bool {
-	if r.Method != method {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return false
-	}
-
-	return true
 }
 
 // getPermissionsOrFail fetches the acting user's global permissions, writing
@@ -418,7 +401,7 @@ func listMaps(w http.ResponseWriter, r *http.Request, st *store.Store) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, maps)
+	utils.WriteJSON(w, http.StatusOK, maps)
 }
 
 // MapsCollectionHandler serves the /maps collection route: GET lists the
@@ -453,7 +436,7 @@ func MapsCollectionHandler(st *store.Store) http.HandlerFunc {
 
 			recordAudit(r, st, "create", "map", m.UUID.String(), fmt.Sprintf("name=%q visibleToAll=%v anonymousAllowed=%v", m.Name, m.VisibleToAll, m.AnonymousAllowed))
 
-			writeJSON(w, http.StatusCreated, m)
+			utils.WriteJSON(w, http.StatusCreated, m)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -833,7 +816,7 @@ func handleMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 	case http.MethodGet:
 		m, ok := getViewableMap(w, r, st, id)
 		if ok {
-			writeJSON(w, http.StatusOK, m)
+			utils.WriteJSON(w, http.StatusOK, m)
 		}
 
 	case http.MethodPut:
@@ -873,7 +856,7 @@ func updateMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 
 	recordAudit(r, st, "update", "map", m.UUID.String(), fmt.Sprintf("name=%q visibleToAll=%v anonymousAllowed=%v", m.Name, m.VisibleToAll, m.AnonymousAllowed))
 
-	writeJSON(w, http.StatusOK, m)
+	utils.WriteJSON(w, http.StatusOK, m)
 }
 
 func deleteMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) {
@@ -901,7 +884,7 @@ func deleteMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 // request outright if id itself isn't within the key's scope.
 func mapVersionsHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 
@@ -925,7 +908,7 @@ func mapVersionsHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
 			}
 		}
 
-		writeJSON(w, http.StatusOK, versions)
+		utils.WriteJSON(w, http.StatusOK, versions)
 	}
 }
 
@@ -957,7 +940,7 @@ func mapPermissionsCollectionHandler(st *store.Store, id uuid.UUID) http.Handler
 			return
 		}
 
-		writeJSON(w, http.StatusOK, perms)
+		utils.WriteJSON(w, http.StatusOK, perms)
 	}
 }
 
@@ -985,7 +968,7 @@ func mapPermissionItemHandler(st *store.Store, id uuid.UUID, username string) ht
 
 			recordAudit(r, st, "grant", "map_permission", id.String()+":"+username, fmt.Sprintf("view=%v edit=%v delete=%v editGeo=%v deleteGeo=%v", req.CanView, req.CanEdit, req.CanDelete, req.CanEditGeoObjects, req.CanDeleteGeoObjects))
 
-			writeJSON(w, http.StatusOK, p)
+			utils.WriteJSON(w, http.StatusOK, p)
 
 		case http.MethodDelete:
 			if err := st.DeleteMapPermission(r.Context(), id, username); err != nil {
@@ -1021,7 +1004,7 @@ func mapOwnerItemHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
 				return
 			}
 
-			writeJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
+			utils.WriteJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
 
 		case http.MethodPut:
 			if !requireMapAdmin(w, r, st, id) {
@@ -1051,7 +1034,7 @@ func mapOwnerItemHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
 
 			recordAudit(r, st, "update", "map_owner", id.String(), "owner="+req.Owner)
 
-			writeJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
+			utils.WriteJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

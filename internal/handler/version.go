@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 	"nilswitt.dev/tileserve-go/internal/version"
 )
 
@@ -21,7 +22,7 @@ func VersionHandler() http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, versionResponse{
+		utils.WriteJSON(w, http.StatusOK, versionResponse{
 			Commit:  version.Commit,
 			Version: version.Version,
 		})

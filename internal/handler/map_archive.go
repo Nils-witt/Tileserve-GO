@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
@@ -24,7 +25,7 @@ import (
 // reachable anonymously.
 func mapVersionArchiveHandler(dataRoot string, id uuid.UUID, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 

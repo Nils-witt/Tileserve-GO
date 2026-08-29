@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
@@ -58,7 +59,7 @@ func routeMapAliases(w http.ResponseWriter, r *http.Request, st *store.Store, id
 // updateMapItem, since editing currentVersion itself only requires can_edit.
 func mapAliasesCollectionHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 
@@ -72,7 +73,7 @@ func mapAliasesCollectionHandler(st *store.Store, id uuid.UUID) http.HandlerFunc
 			return
 		}
 
-		writeJSON(w, http.StatusOK, aliases)
+		utils.WriteJSON(w, http.StatusOK, aliases)
 	}
 }
 
@@ -93,7 +94,7 @@ func mapAliasItemHandler(st *store.Store, id uuid.UUID, alias string) http.Handl
 				return
 			}
 
-			writeJSON(w, http.StatusOK, store.MapVersionAlias{Alias: alias, Version: version})
+			utils.WriteJSON(w, http.StatusOK, store.MapVersionAlias{Alias: alias, Version: version})
 
 		case http.MethodPut:
 			if !requireMapPermission(w, r, st, id,
@@ -125,7 +126,7 @@ func mapAliasItemHandler(st *store.Store, id uuid.UUID, alias string) http.Handl
 
 			recordAudit(r, st, "update", "map_alias", id.String()+":"+alias, "version="+req.Version)
 
-			writeJSON(w, http.StatusOK, a)
+			utils.WriteJSON(w, http.StatusOK, a)
 
 		case http.MethodDelete:
 			if !requireMapPermission(w, r, st, id,

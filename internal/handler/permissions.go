@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
@@ -17,7 +18,7 @@ func PermissionsCollectionHandler(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 
@@ -27,6 +28,6 @@ func PermissionsCollectionHandler(st *store.Store) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, perms)
+		utils.WriteJSON(w, http.StatusOK, perms)
 	}
 }

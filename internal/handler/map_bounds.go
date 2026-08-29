@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
@@ -38,7 +39,7 @@ type tileBounds struct {
 // as a preview map's initial view.
 func mapVersionBoundsHandler(dataRoot string, id uuid.UUID, version string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMethod(w, r, http.MethodGet) {
+		if !utils.RequireMethod(w, r, http.MethodGet) {
 			return
 		}
 
@@ -53,7 +54,7 @@ func mapVersionBoundsHandler(dataRoot string, id uuid.UUID, version string) http
 			return
 		}
 
-		writeJSON(w, http.StatusOK, bounds)
+		utils.WriteJSON(w, http.StatusOK, bounds)
 	}
 }
 

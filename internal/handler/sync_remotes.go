@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
 )
@@ -59,7 +60,7 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 				return
 			}
 
-			writeJSON(w, http.StatusOK, remotes)
+			utils.WriteJSON(w, http.StatusOK, remotes)
 
 		case http.MethodPost:
 			var req syncRemoteRequest
@@ -95,7 +96,7 @@ func SyncRemotesCollectionHandler(st *store.Store) http.HandlerFunc {
 
 			recordAudit(r, st, "create", "sync_remote", sr.ID.String(), fmt.Sprintf("name=%q baseUrl=%q", sr.Name, sr.BaseURL))
 
-			writeJSON(w, http.StatusCreated, sr)
+			utils.WriteJSON(w, http.StatusCreated, sr)
 
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -220,7 +221,7 @@ func parseSyncRemoteItemPath(w http.ResponseWriter, r *http.Request) (id uuid.UU
 }
 
 func getSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) {
-	if !requireMethod(w, r, http.MethodGet) {
+	if !utils.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -230,7 +231,7 @@ func getSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 		return
 	}
 
-	writeJSON(w, http.StatusOK, sr)
+	utils.WriteJSON(w, http.StatusOK, sr)
 }
 
 func updateSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) {
@@ -273,11 +274,11 @@ func updateSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 
 	recordAudit(r, st, "update", "sync_remote", sr.ID.String(), fmt.Sprintf("name=%q baseUrl=%q enabled=%v", sr.Name, sr.BaseURL, sr.Enabled))
 
-	writeJSON(w, http.StatusOK, sr)
+	utils.WriteJSON(w, http.StatusOK, sr)
 }
 
 func deleteSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) {
-	if !requireMethod(w, r, http.MethodDelete) {
+	if !utils.RequireMethod(w, r, http.MethodDelete) {
 		return
 	}
 
@@ -292,7 +293,7 @@ func deleteSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, i
 }
 
 func triggerSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, mgr syncManager, id uuid.UUID) {
-	if !requireMethod(w, r, http.MethodPost) {
+	if !utils.RequireMethod(w, r, http.MethodPost) {
 		return
 	}
 
@@ -311,11 +312,11 @@ func triggerSyncRemote(w http.ResponseWriter, r *http.Request, st *store.Store, 
 // or never-synced id simply has no entries yet, same as a freshly created
 // one, so there's nothing useful a 404 would add here.
 func getSyncRemoteLogs(w http.ResponseWriter, r *http.Request, mgr syncManager, id uuid.UUID) {
-	if !requireMethod(w, r, http.MethodGet) {
+	if !utils.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, mgr.Logs(id))
+	utils.WriteJSON(w, http.StatusOK, mgr.Logs(id))
 }
 
 // getSyncRemoteRemoteMaps proxies a live GET .../maps call to id's remote
@@ -325,7 +326,7 @@ func getSyncRemoteLogs(w http.ResponseWriter, r *http.Request, mgr syncManager, 
 // reported as a 502, since it reflects the remote's availability, not this
 // server's.
 func getSyncRemoteRemoteMaps(w http.ResponseWriter, r *http.Request, mgr syncManager, id uuid.UUID) {
-	if !requireMethod(w, r, http.MethodGet) {
+	if !utils.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -341,14 +342,14 @@ func getSyncRemoteRemoteMaps(w http.ResponseWriter, r *http.Request, mgr syncMan
 		return
 	}
 
-	writeJSON(w, http.StatusOK, maps)
+	utils.WriteJSON(w, http.StatusOK, maps)
 }
 
 // getSyncRemoteSelectedMaps returns id's saved explicit map selection
 // (used when its sync_all_maps is false), for the admin UI to pre-check the
 // right boxes in the selective-sync map picker.
 func getSyncRemoteSelectedMaps(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) {
-	if !requireMethod(w, r, http.MethodGet) {
+	if !utils.RequireMethod(w, r, http.MethodGet) {
 		return
 	}
 
@@ -358,5 +359,5 @@ func getSyncRemoteSelectedMaps(w http.ResponseWriter, r *http.Request, st *store
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ids)
+	utils.WriteJSON(w, http.StatusOK, ids)
 }
