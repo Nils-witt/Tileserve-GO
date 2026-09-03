@@ -543,6 +543,84 @@ paths:
         "403":
           $ref: "#/components/responses/Forbidden"
 
+  /maps/{id}/group-permissions:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+    get:
+      tags: [maps]
+      summary: List a map's per-group permission grants
+      description: >-
+        Requires the acting user's `is_admin` permission (same as the global
+        Users API) or being the map's owner (who can do everything with
+        their own map). A grant only adds capability for that specific map
+        on top of the group's members' own global/personal permissions —
+        every current member of the group inherits it.
+      responses:
+        "200":
+          description: Array of group grants
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroupMapPermission"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /maps/{id}/group-permissions/{groupId}:
+    parameters:
+      - $ref: "#/components/parameters/MapId"
+      - name: groupId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      tags: [maps]
+      summary: Grant or replace a group's per-map permission
+      description: >-
+        Requires the acting user's `is_admin` permission, or being the map's
+        owner.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupMapPermissionRequest"
+      responses:
+        "200":
+          description: Grant created or updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroupMapPermission"
+        "400":
+          description: Invalid request body, or the map/group doesn't exist
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      tags: [maps]
+      summary: Revoke a group's per-map permission
+      description: >-
+        Requires the acting user's `is_admin` permission, or being the map's
+        owner. A no-op if no grant exists.
+      responses:
+        "204":
+          description: Grant revoked
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
   /maps/{id}/aliases:
     parameters:
       - $ref: "#/components/parameters/MapId"
@@ -939,6 +1017,153 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           description: API key not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
+  /groups:
+    get:
+      tags: [groups]
+      summary: List groups
+      description: >-
+        Open to any authenticated user (e.g. so a map owner can pick a
+        group to grant a per-map permission to).
+      parameters:
+        - name: search
+          in: query
+          description: Case-insensitive substring match against name.
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Array of groups
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [groups]
+      summary: Create a group
+      description: Requires the acting user's `is_admin` permission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupRequest"
+      responses:
+        "201":
+          description: Group created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "400":
+          description: Invalid request body, or missing name
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: Group name already taken
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+
+  /groups/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [groups]
+      summary: Get a single group
+      description: >-
+        Open to any authenticated user, same rationale as `GET /groups`.
+      responses:
+        "200":
+          description: The group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: Group not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+    put:
+      tags: [groups]
+      summary: Update a group's name and permission bundle
+      description: >-
+        Requires the acting user's `is_admin` permission. All fields are
+        replaced (not partial).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroupRequest"
+      responses:
+        "200":
+          description: Updated group
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Group"
+        "400":
+          description: Invalid request body, or missing name
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Group not found
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+        "409":
+          description: Group name already taken
+          content:
+            text/plain:
+              schema:
+                $ref: "#/components/schemas/ErrorMessage"
+    delete:
+      tags: [groups]
+      summary: Delete a group
+      description: >-
+        Requires the acting user's `is_admin` permission. Its memberships and
+        per-map grants are removed along with it.
+      responses:
+        "204":
+          description: Group deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Group not found
           content:
             text/plain:
               schema:
@@ -1888,6 +2113,113 @@ components:
         canEdit:
           type: boolean
         canDelete:
+          type: boolean
+        grantedAt:
+          type: string
+          format: date-time
+        grantedBy:
+          type: string
+
+    GroupRequest:
+      type: object
+      required: [name, canCreate, canEdit, canDelete, isAdmin]
+      properties:
+        name:
+          type: string
+        canCreate:
+          type: boolean
+        canEdit:
+          type: boolean
+        canDelete:
+          type: boolean
+        canEditGeoObjects:
+          type: boolean
+        canDeleteGeoObjects:
+          type: boolean
+        canViewAll:
+          type: boolean
+        isAdmin:
+          type: boolean
+        ldapGroupDn:
+          type: string
+          description: >-
+            The LDAP directory group (memberOf value) whose members are
+            synced into this group on every login. Empty if this group isn't
+            LDAP-linked.
+        oidcGroupClaim:
+          type: string
+          description: >-
+            The OIDC ID token "groups" claim value whose holders are synced
+            into this group on every login. Empty if this group isn't
+            OIDC-linked.
+
+    Group:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        canCreate:
+          type: boolean
+        canEdit:
+          type: boolean
+        canDelete:
+          type: boolean
+        canEditGeoObjects:
+          type: boolean
+        canDeleteGeoObjects:
+          type: boolean
+        canViewAll:
+          type: boolean
+        isAdmin:
+          type: boolean
+        ldapGroupDn:
+          type: string
+        oidcGroupClaim:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        createdBy:
+          type: string
+        updatedBy:
+          type: string
+
+    GroupMapPermissionRequest:
+      type: object
+      required: [canView, canEdit, canDelete]
+      properties:
+        canView:
+          type: boolean
+        canEdit:
+          type: boolean
+        canDelete:
+          type: boolean
+        canEditGeoObjects:
+          type: boolean
+        canDeleteGeoObjects:
+          type: boolean
+
+    GroupMapPermission:
+      type: object
+      properties:
+        groupId:
+          type: string
+          format: uuid
+        canView:
+          type: boolean
+        canEdit:
+          type: boolean
+        canDelete:
+          type: boolean
+        canEditGeoObjects:
+          type: boolean
+        canDeleteGeoObjects:
           type: boolean
         grantedAt:
           type: string

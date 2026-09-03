@@ -166,6 +166,40 @@ func TestUserFilterClauses(t *testing.T) {
 	})
 }
 
+func TestGroupFilterClauses(t *testing.T) {
+	t.Parallel()
+
+	t.Run("zero value", func(t *testing.T) {
+		t.Parallel()
+
+		qb := &queryBuilder{}
+		if got := (GroupFilter{}).clauses(qb); len(got) != 0 {
+			t.Fatalf("clauses() = %v, want none", got)
+		}
+
+		if len(qb.args) != 0 {
+			t.Fatalf("qb.args = %v, want none", qb.args)
+		}
+	})
+
+	t.Run("search set", func(t *testing.T) {
+		t.Parallel()
+
+		qb := &queryBuilder{}
+		got := GroupFilter{Search: "edit"}.clauses(qb)
+
+		want := []string{"name ILIKE $1"}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("clauses() = %v, want %v", got, want)
+		}
+
+		wantArgs := []any{"%edit%"}
+		if !reflect.DeepEqual(qb.args, wantArgs) {
+			t.Fatalf("qb.args = %v, want %v", qb.args, wantArgs)
+		}
+	})
+}
+
 func TestQueryBuilderBind(t *testing.T) {
 	t.Parallel()
 

@@ -611,6 +611,105 @@ func MapPermissionDeleteHandler(st *store.Store) http.HandlerFunc {
 	}
 }
 
+type groupMapPermissionRequest struct {
+	CanView             bool `json:"canView"`
+	CanEdit             bool `json:"canEdit"`
+	CanDelete           bool `json:"canDelete"`
+	CanEditGeoObjects   bool `json:"canEditGeoObjects"`
+	CanDeleteGeoObjects bool `json:"canDeleteGeoObjects"`
+}
+
+// GroupMapPermissionsListHandler serves GET /maps/{id}/group-permissions: a
+// map's per-group permission grants. See MapPermissionsListHandler for the
+// access rule.
+func GroupMapPermissionsListHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if !requireMapAdmin(w, r, st, id) {
+			return
+		}
+
+		perms, err := st.ListGroupMapPermissions(r.Context(), id)
+		if err != nil {
+			http.Error(w, "failed to list group map permissions", http.StatusInternalServerError)
+			return
+		}
+
+		utils.WriteJSON(w, http.StatusOK, perms)
+	}
+}
+
+// GroupMapPermissionSetHandler serves PUT
+// /maps/{id}/group-permissions/{groupId}: grants a single group's per-map
+// permission, inherited by every current member of that group. See
+// MapPermissionSetHandler for the access rule.
+func GroupMapPermissionSetHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if !requireMapAdmin(w, r, st, id) {
+			return
+		}
+
+		groupID, ok := utils.PathUUID(w, r, "groupId", "group id")
+		if !ok {
+			return
+		}
+
+		var req groupMapPermissionRequest
+		if !utils.DecodeJSON(w, r, &req) {
+			return
+		}
+
+		p, err := st.SetGroupMapPermission(r.Context(), id, groupID, req.CanView, req.CanEdit, req.CanDelete, req.CanEditGeoObjects, req.CanDeleteGeoObjects, usernameFromContext(r.Context()))
+		if err != nil {
+			writeStoreError(w, err, store.ErrMapPermissionInvalid, http.StatusBadRequest, "map or group does not exist", "failed to set group map permission")
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "grant", "group_map_permission", id.String()+":"+groupID.String(), fmt.Sprintf("view=%v edit=%v delete=%v editGeo=%v deleteGeo=%v", req.CanView, req.CanEdit, req.CanDelete, req.CanEditGeoObjects, req.CanDeleteGeoObjects))
+
+		utils.WriteJSON(w, http.StatusOK, p)
+	}
+}
+
+// GroupMapPermissionDeleteHandler serves DELETE
+// /maps/{id}/group-permissions/{groupId}: revokes a single group's per-map
+// permission. See MapPermissionSetHandler for the access rule.
+func GroupMapPermissionDeleteHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if !requireMapAdmin(w, r, st, id) {
+			return
+		}
+
+		groupID, ok := utils.PathUUID(w, r, "groupId", "group id")
+		if !ok {
+			return
+		}
+
+		if err := st.DeleteGroupMapPermission(r.Context(), id, groupID); err != nil {
+			http.Error(w, "failed to delete group map permission", http.StatusInternalServerError)
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "revoke", "group_map_permission", id.String()+":"+groupID.String(), "")
+
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
 type mapOwnerRequest struct {
 	Owner string `json:"owner"`
 }

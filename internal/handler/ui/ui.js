@@ -13,12 +13,17 @@
     const emptyEl = document.getElementById('empty');
     const usersBody = document.getElementById('users-body');
     const usersErrorEl = document.getElementById('users-error');
+    const groupsBody = document.getElementById('groups-body');
+    const groupsEmptyEl = document.getElementById('groups-empty');
+    const groupsErrorEl = document.getElementById('groups-error');
     const tabMapsBtn = document.getElementById('tab-maps-btn');
     const tabUsersBtn = document.getElementById('tab-users-btn');
+    const tabGroupsBtn = document.getElementById('tab-groups-btn');
     const tabSyncBtn = document.getElementById('tab-sync-btn');
     const tabAuditBtn = document.getElementById('tab-audit-btn');
     const tabMaps = document.getElementById('tab-maps');
     const tabUsers = document.getElementById('tab-users');
+    const tabGroups = document.getElementById('tab-groups');
     const tabSync = document.getElementById('tab-sync');
     const tabAudit = document.getElementById('tab-audit');
     const auditBody = document.getElementById('audit-body');
@@ -57,6 +62,7 @@
     let isAdmin = false;
     let allUsers = [];
     let allMaps = [];
+    let allGroups = [];
 
     function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
     function setSession(token, username) {
@@ -136,6 +142,7 @@
         allUsers = users;
         isAdmin = users.some(u => u.username === username && u.isAdmin);
         tabUsersBtn.classList.toggle('hidden', !isAdmin);
+        tabGroupsBtn.classList.toggle('hidden', !isAdmin);
         tabSyncBtn.classList.toggle('hidden', !isAdmin);
         tabAuditBtn.classList.toggle('hidden', !isAdmin);
         if (isAdmin) renderUsers(users);
@@ -144,19 +151,34 @@
         isAdmin = false;
         allUsers = [];
         tabUsersBtn.classList.add('hidden');
+        tabGroupsBtn.classList.add('hidden');
         tabSyncBtn.classList.add('hidden');
         tabAuditBtn.classList.add('hidden');
         showTab('maps');
+      }
+
+      // GET /groups is open to every authenticated user too (so a map owner
+      // can pick a group when granting a per-map group permission — see the
+      // "Group permissions" section of the "Permissions" map action), same
+      // reasoning as /users above.
+      try {
+        const res = await api('/groups');
+        allGroups = await res.json();
+        if (isAdmin) renderGroups(allGroups);
+      } catch (err) {
+        allGroups = [];
       }
     }
 
     function showTab(name) {
       tabMaps.classList.toggle('hidden', name !== 'maps');
       tabUsers.classList.toggle('hidden', name !== 'users');
+      tabGroups.classList.toggle('hidden', name !== 'groups');
       tabSync.classList.toggle('hidden', name !== 'sync');
       tabAudit.classList.toggle('hidden', name !== 'audit');
       tabMapsBtn.classList.toggle('active', name === 'maps');
       tabUsersBtn.classList.toggle('active', name === 'users');
+      tabGroupsBtn.classList.toggle('active', name === 'groups');
       tabSyncBtn.classList.toggle('active', name === 'sync');
       tabAuditBtn.classList.toggle('active', name === 'audit');
     }
@@ -193,6 +215,14 @@
     function mapName(uuid) {
       const m = allMaps.find(x => x.uuid === uuid);
       return m ? m.name : uuid;
+    }
+
+    // groupName looks up a group's display name by id from the groups list
+    // loaded on app start, falling back to the raw id if it isn't (or is no
+    // longer) in that list.
+    function groupName(id) {
+      const g = allGroups.find(x => x.id === id);
+      return g ? g.name : id;
     }
 
     function renderMaps(maps) {
@@ -541,6 +571,17 @@
     const permAddBtn = document.getElementById('perm-add-btn');
     let permMapId = null;
 
+    const groupPermBody = document.getElementById('group-perm-body');
+    const groupPermEmptyEl = document.getElementById('group-perm-empty');
+    const groupPermErrorEl = document.getElementById('group-perm-error');
+    const groupPermAddGroup = document.getElementById('group-perm-add-group');
+    const groupPermAddView = document.getElementById('group-perm-add-view');
+    const groupPermAddEdit = document.getElementById('group-perm-add-edit');
+    const groupPermAddDelete = document.getElementById('group-perm-add-delete');
+    const groupPermAddEditGeo = document.getElementById('group-perm-add-edit-geo');
+    const groupPermAddDeleteGeo = document.getElementById('group-perm-add-delete-geo');
+    const groupPermAddBtn = document.getElementById('group-perm-add-btn');
+
     function permError(message) {
       if (!message) {
         permErrorEl.classList.add('hidden');
@@ -554,9 +595,11 @@
       permMapId = m.uuid;
       permTitle.textContent = 'Permissions — ' + m.name;
       permError(null);
+      groupPermError(null);
       permAddUser.innerHTML = allUsers.map(u => '<option value="' + u.username + '">' + u.username + '</option>').join('');
+      groupPermAddGroup.innerHTML = allGroups.map(g => '<option value="' + g.id + '">' + g.name + '</option>').join('');
       permOverlay.classList.remove('hidden');
-      await loadMapPermissions();
+      await Promise.all([loadMapPermissions(), loadMapGroupPermissions()]);
     }
 
     function closePermissions() {
@@ -664,6 +707,115 @@
       }
     }
 
+    function groupPermError(message) {
+      if (!message) {
+        groupPermErrorEl.classList.add('hidden');
+        return;
+      }
+      groupPermErrorEl.textContent = message;
+      groupPermErrorEl.classList.remove('hidden');
+    }
+
+    async function loadMapGroupPermissions() {
+      groupPermError(null);
+      try {
+        const res = await api('/maps/' + permMapId + '/group-permissions');
+        renderMapGroupPermissions(await res.json());
+      } catch (err) {
+        if (err.message !== 'unauthorized') groupPermError(err.message);
+      }
+    }
+
+    function renderMapGroupPermissions(grants) {
+      groupPermBody.innerHTML = '';
+      groupPermEmptyEl.classList.toggle('hidden', grants.length > 0);
+      for (const g of grants) {
+        groupPermBody.appendChild(renderMapGroupPermissionRow(g));
+      }
+    }
+
+    function renderMapGroupPermissionRow(g) {
+      const tr = document.createElement('tr');
+
+      const groupTd = document.createElement('td');
+      groupTd.textContent = groupName(g.groupId);
+
+      const viewCb = document.createElement('input');
+      viewCb.type = 'checkbox';
+      viewCb.checked = g.canView;
+      const editCb = document.createElement('input');
+      editCb.type = 'checkbox';
+      editCb.checked = g.canEdit;
+      const deleteCb = document.createElement('input');
+      deleteCb.type = 'checkbox';
+      deleteCb.checked = g.canDelete;
+      const editGeoCb = document.createElement('input');
+      editGeoCb.type = 'checkbox';
+      editGeoCb.checked = g.canEditGeoObjects;
+      const deleteGeoCb = document.createElement('input');
+      deleteGeoCb.type = 'checkbox';
+      deleteGeoCb.checked = g.canDeleteGeoObjects;
+
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'secondary';
+      saveBtn.textContent = 'Save';
+      saveBtn.onclick = () => grantMapGroupPermission(g.groupId, viewCb.checked, editCb.checked, deleteCb.checked, editGeoCb.checked, deleteGeoCb.checked);
+
+      const revokeBtn = document.createElement('button');
+      revokeBtn.className = 'danger';
+      revokeBtn.textContent = 'Revoke';
+      revokeBtn.onclick = () => revokeMapGroupPermission(g.groupId);
+
+      const actionsTd = document.createElement('td');
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      actions.append(saveBtn, revokeBtn);
+      actionsTd.append(actions);
+
+      const viewTd = document.createElement('td');
+      viewTd.className = 'checkbox-cell';
+      viewTd.appendChild(viewCb);
+      const editTd = document.createElement('td');
+      editTd.className = 'checkbox-cell';
+      editTd.appendChild(editCb);
+      const deleteTd = document.createElement('td');
+      deleteTd.className = 'checkbox-cell';
+      deleteTd.appendChild(deleteCb);
+      const editGeoTd = document.createElement('td');
+      editGeoTd.className = 'checkbox-cell';
+      editGeoTd.appendChild(editGeoCb);
+      const deleteGeoTd = document.createElement('td');
+      deleteGeoTd.className = 'checkbox-cell';
+      deleteGeoTd.appendChild(deleteGeoCb);
+
+      tr.append(groupTd, viewTd, editTd, deleteTd, editGeoTd, deleteGeoTd, actionsTd);
+      return tr;
+    }
+
+    async function grantMapGroupPermission(groupId, canView, canEdit, canDelete, canEditGeoObjects, canDeleteGeoObjects) {
+      groupPermError(null);
+      try {
+        await api('/maps/' + permMapId + '/group-permissions/' + encodeURIComponent(groupId), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ canView, canEdit, canDelete, canEditGeoObjects, canDeleteGeoObjects }),
+        });
+        await loadMapGroupPermissions();
+      } catch (err) {
+        if (err.message !== 'unauthorized') groupPermError(err.message);
+      }
+    }
+
+    async function revokeMapGroupPermission(groupId) {
+      groupPermError(null);
+      try {
+        await api('/maps/' + permMapId + '/group-permissions/' + encodeURIComponent(groupId), { method: 'DELETE' });
+        await loadMapGroupPermissions();
+      } catch (err) {
+        if (err.message !== 'unauthorized') groupPermError(err.message);
+      }
+    }
+
     permClose.addEventListener('click', closePermissions);
     permOverlay.addEventListener('click', (e) => {
       if (e.target === permOverlay) closePermissions();
@@ -671,6 +823,10 @@
     permAddBtn.addEventListener('click', () => {
       if (!permAddUser.value) return;
       grantMapPermission(permAddUser.value, permAddView.checked, permAddEdit.checked, permAddDelete.checked, permAddEditGeo.checked, permAddDeleteGeo.checked);
+    });
+    groupPermAddBtn.addEventListener('click', () => {
+      if (!groupPermAddGroup.value) return;
+      grantMapGroupPermission(groupPermAddGroup.value, groupPermAddView.checked, groupPermAddEdit.checked, groupPermAddDelete.checked, groupPermAddEditGeo.checked, groupPermAddDeleteGeo.checked);
     });
 
     const aliasOverlay = document.getElementById('alias-overlay');
@@ -1246,6 +1402,171 @@
         await loadUsers();
       } catch (err) {
         if (err.message !== 'unauthorized') usersError(err.message);
+      }
+    }
+
+    function groupsError(message) {
+      if (!message) {
+        groupsErrorEl.classList.add('hidden');
+        return;
+      }
+      groupsErrorEl.textContent = message;
+      groupsErrorEl.classList.remove('hidden');
+    }
+
+    async function loadGroups() {
+      groupsError(null);
+      try {
+        const res = await api('/groups');
+        allGroups = await res.json();
+        renderGroups(allGroups);
+      } catch (err) {
+        if (err.message !== 'unauthorized') groupsError(err.message);
+      }
+    }
+
+    function renderGroups(groups) {
+      groupsBody.innerHTML = '';
+      groupsEmptyEl.classList.toggle('hidden', groups.length > 0);
+      for (const g of groups) {
+        groupsBody.appendChild(renderGroupRow(g));
+      }
+    }
+
+    function renderGroupRow(g) {
+      const tr = document.createElement('tr');
+
+      const nameInput = document.createElement('input');
+      nameInput.value = g.name;
+      const nameTd = document.createElement('td');
+      nameTd.appendChild(nameInput);
+
+      const createCb = document.createElement('input');
+      createCb.type = 'checkbox';
+      createCb.checked = g.canCreate;
+      const editCb = document.createElement('input');
+      editCb.type = 'checkbox';
+      editCb.checked = g.canEdit;
+      const deleteCb = document.createElement('input');
+      deleteCb.type = 'checkbox';
+      deleteCb.checked = g.canDelete;
+      const editGeoCb = document.createElement('input');
+      editGeoCb.type = 'checkbox';
+      editGeoCb.checked = g.canEditGeoObjects;
+      const deleteGeoCb = document.createElement('input');
+      deleteGeoCb.type = 'checkbox';
+      deleteGeoCb.checked = g.canDeleteGeoObjects;
+      const viewAllCb = document.createElement('input');
+      viewAllCb.type = 'checkbox';
+      viewAllCb.checked = g.canViewAll;
+      const adminCb = document.createElement('input');
+      adminCb.type = 'checkbox';
+      adminCb.checked = g.isAdmin;
+
+      const ldapDnInput = document.createElement('input');
+      ldapDnInput.value = g.ldapGroupDn || '';
+      ldapDnInput.placeholder = 'not linked';
+      const ldapDnTd = document.createElement('td');
+      ldapDnTd.appendChild(ldapDnInput);
+
+      const oidcClaimInput = document.createElement('input');
+      oidcClaimInput.value = g.oidcGroupClaim || '';
+      oidcClaimInput.placeholder = 'not linked';
+      const oidcClaimTd = document.createElement('td');
+      oidcClaimTd.appendChild(oidcClaimInput);
+
+      const createdTd = document.createElement('td');
+      createdTd.textContent = fmtDate(g.createdAt);
+
+      const saveBtn = document.createElement('button');
+      saveBtn.className = 'secondary';
+      saveBtn.textContent = 'Save';
+      saveBtn.onclick = () => updateGroup(g.id, {
+        name: nameInput.value,
+        canCreate: createCb.checked,
+        canEdit: editCb.checked,
+        canDelete: deleteCb.checked,
+        canEditGeoObjects: editGeoCb.checked,
+        canDeleteGeoObjects: deleteGeoCb.checked,
+        canViewAll: viewAllCb.checked,
+        isAdmin: adminCb.checked,
+        ldapGroupDn: ldapDnInput.value,
+        oidcGroupClaim: oidcClaimInput.value,
+      });
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'danger';
+      deleteBtn.textContent = 'Delete';
+      deleteBtn.onclick = () => deleteGroup(g.id, g.name);
+
+      const actionsTd = document.createElement('td');
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      actions.append(saveBtn, deleteBtn);
+      actionsTd.append(actions);
+
+      const createTd = document.createElement('td');
+      createTd.className = 'checkbox-cell';
+      createTd.appendChild(createCb);
+      const editTd = document.createElement('td');
+      editTd.className = 'checkbox-cell';
+      editTd.appendChild(editCb);
+      const deleteTd = document.createElement('td');
+      deleteTd.className = 'checkbox-cell';
+      deleteTd.appendChild(deleteCb);
+      const editGeoTd = document.createElement('td');
+      editGeoTd.className = 'checkbox-cell';
+      editGeoTd.appendChild(editGeoCb);
+      const deleteGeoTd = document.createElement('td');
+      deleteGeoTd.className = 'checkbox-cell';
+      deleteGeoTd.appendChild(deleteGeoCb);
+      const viewAllTd = document.createElement('td');
+      viewAllTd.className = 'checkbox-cell';
+      viewAllTd.appendChild(viewAllCb);
+      const adminTd = document.createElement('td');
+      adminTd.className = 'checkbox-cell';
+      adminTd.appendChild(adminCb);
+
+      tr.append(nameTd, createTd, editTd, deleteTd, editGeoTd, deleteGeoTd, viewAllTd, adminTd, ldapDnTd, oidcClaimTd, createdTd, actionsTd);
+      return tr;
+    }
+
+    async function createGroup(payload) {
+      groupsError(null);
+      try {
+        await api('/groups', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        await loadGroups();
+      } catch (err) {
+        if (err.message !== 'unauthorized') groupsError(err.message);
+      }
+    }
+
+    async function updateGroup(id, payload) {
+      groupsError(null);
+      try {
+        await api('/groups/' + encodeURIComponent(id), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        await loadGroups();
+      } catch (err) {
+        if (err.message !== 'unauthorized') groupsError(err.message);
+      }
+    }
+
+    async function deleteGroup(id, name) {
+      if (!confirm('Delete group "' + name + '"?')) return;
+      groupsError(null);
+      try {
+        await api('/groups/' + encodeURIComponent(id), { method: 'DELETE' });
+        await loadGroups();
+      } catch (err) {
+        if (err.message !== 'unauthorized') groupsError(err.message);
       }
     }
 
@@ -2089,6 +2410,7 @@
 
     tabMapsBtn.addEventListener('click', () => showTab('maps'));
     tabUsersBtn.addEventListener('click', () => { showTab('users'); loadUsers(); });
+    tabGroupsBtn.addEventListener('click', () => { showTab('groups'); loadGroups(); });
 
     document.getElementById('create-user-form').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -2111,6 +2433,23 @@
         document.getElementById('cu-edit-geo').checked = true;
         document.getElementById('cu-delete-geo').checked = true;
       });
+    });
+
+    document.getElementById('create-group-form').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const payload = {
+        name: document.getElementById('cg-name').value,
+        ldapGroupDn: document.getElementById('cg-ldap-dn').value,
+        oidcGroupClaim: document.getElementById('cg-oidc-claim').value,
+        canCreate: document.getElementById('cg-create').checked,
+        canEdit: document.getElementById('cg-edit').checked,
+        canDelete: document.getElementById('cg-delete').checked,
+        canEditGeoObjects: document.getElementById('cg-edit-geo').checked,
+        canDeleteGeoObjects: document.getElementById('cg-delete-geo').checked,
+        canViewAll: document.getElementById('cg-view-all').checked,
+        isAdmin: document.getElementById('cg-admin').checked,
+      };
+      createGroup(payload).then(() => e.target.reset());
     });
 
     if (getToken()) {

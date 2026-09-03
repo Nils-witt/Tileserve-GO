@@ -51,3 +51,13 @@ func (c *ttlCache[K, V]) invalidate(key K) {
 	delete(c.m, key)
 	c.mu.Unlock()
 }
+
+// clear drops every cached entry. Used where a single change can affect an
+// unbounded/unenumerable set of keys — e.g. updating a group's permissions
+// or per-map grants affects every one of its members, which the cache has
+// no cheap way to look up in reverse.
+func (c *ttlCache[K, V]) clear() {
+	c.mu.Lock()
+	c.m = make(map[K]ttlEntry[V])
+	c.mu.Unlock()
+}

@@ -54,6 +54,8 @@ func resolveLDAPUsername(ctx context.Context, st *store.Store, preferredUsername
 	username, err := st.FindUserByLDAPIdentity(ctx, identity.DN)
 	if err == nil {
 		log.Printf("ldap: dn=%q: resolved to existing local account %q", identity.DN, username)
+		syncLDAPGroups(ctx, st, username, identity)
+
 		return username, nil
 	}
 
@@ -72,6 +74,19 @@ func resolveLDAPUsername(ctx context.Context, st *store.Store, preferredUsername
 	}
 
 	log.Printf("ldap: dn=%q: auto-provisioned local account %q", identity.DN, u.Username)
+	syncLDAPGroups(ctx, st, u.Username, identity)
 
 	return u.Username, nil
+}
+
+// syncLDAPGroups best-effort syncs username's group membership against
+// identity's directory groups on every login (see
+// store.SyncGroupMembershipByLDAPDNs) — a sync failure is logged, not
+// propagated as a login failure, since a stale/unsynced group membership is
+// far less disruptive than locking someone out of an otherwise-successful
+// login.
+func syncLDAPGroups(ctx context.Context, st *store.Store, username string, identity ldapauth.Identity) {
+	if err := st.SyncGroupMembershipByLDAPDNs(ctx, username, identity.Groups); err != nil {
+		log.Printf("ldap: %q: sync group membership failed: %v", username, err)
+	}
 }

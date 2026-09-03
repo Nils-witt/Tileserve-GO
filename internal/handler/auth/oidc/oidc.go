@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"strings"
@@ -196,6 +197,11 @@ func consumeOIDCFlowCookies(w http.ResponseWriter, r *http.Request) (redirectTo,
 type oidcClaims struct {
 	PreferredUsername string `json:"preferred_username"`
 	Email             string `json:"email"`
+	// Groups is the "groups" claim (a fixed name — the common convention
+	// for Keycloak/Okta/Azure AD v2), matched against groups.oidc_group_claim
+	// to sync membership on every login (see syncOIDCGroups). Absent on a
+	// provider that doesn't send it, which is simply empty, not an error.
+	Groups []string `json:"groups"`
 }
 
 // exchangeAndVerify exchanges an authorization code for tokens, verifies the
@@ -237,6 +243,7 @@ func (auth *Authenticator) exchangeAndVerify(ctx context.Context, code, expected
 func resolveOIDCUsername(ctx context.Context, st *store.Store, idToken *oidc.IDToken, claims oidcClaims) (string, error) {
 	username, err := st.FindUserByOIDCIdentity(ctx, idToken.Issuer, idToken.Subject)
 	if err == nil {
+		syncOIDCGroups(ctx, st, username, claims)
 		return username, nil
 	}
 
@@ -251,7 +258,21 @@ func resolveOIDCUsername(ctx context.Context, st *store.Store, idToken *oidc.IDT
 		return "", err
 	}
 
+	syncOIDCGroups(ctx, st, u.Username, claims)
+
 	return u.Username, nil
+}
+
+// syncOIDCGroups best-effort syncs username's group membership against
+// claims' "groups" claim on every login (see
+// store.SyncGroupMembershipByOIDCClaims) — a sync failure is logged, not
+// propagated as a login failure, matching syncLDAPGroups in the auth/ldap
+// package.
+func syncOIDCGroups(ctx context.Context, st *store.Store, username string, claims oidcClaims) {
+	if err := st.SyncGroupMembershipByOIDCClaims(ctx, username, claims.Groups); err != nil {
+		//nolint:gosec // G706 false positive: username here is always either an already-resolved local account name or one just assigned by CreateOIDCUser, never raw ID-token claim text; %q also quotes/escapes it against log-line forgery, matching this file's other log.Printf calls
+		log.Printf("oidc: %q: sync group membership failed: %v", username, err)
+	}
 }
 
 // issueOIDCSession issues a login JWT and refresh token for username, same

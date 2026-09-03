@@ -290,6 +290,10 @@ func registerRoutes(st *store.Store, config *ApplicationConfig, secret []byte, l
 	mux.Handle("PUT /maps/{id}/permissions/{username}", guardAuth(handler.MapPermissionSetHandler(st)))
 	mux.Handle("DELETE /maps/{id}/permissions/{username}", guardAuth(handler.MapPermissionDeleteHandler(st)))
 
+	mux.Handle("GET /maps/{id}/group-permissions", guardAuth(handler.GroupMapPermissionsListHandler(st)))
+	mux.Handle("PUT /maps/{id}/group-permissions/{groupId}", guardAuth(handler.GroupMapPermissionSetHandler(st)))
+	mux.Handle("DELETE /maps/{id}/group-permissions/{groupId}", guardAuth(handler.GroupMapPermissionDeleteHandler(st)))
+
 	mux.Handle("GET /maps/{id}/aliases", guardAuth(handler.MapAliasesListHandler(st)))
 	mux.Handle("GET /maps/{id}/aliases/{alias}", guardAuth(handler.MapAliasGetHandler(st)))
 	mux.Handle("PUT /maps/{id}/aliases/{alias}", guardAuth(handler.MapAliasSetHandler(st)))
@@ -322,6 +326,12 @@ func registerRoutes(st *store.Store, config *ApplicationConfig, secret []byte, l
 	mux.Handle("POST /users", guardAdmin(handler.UserCreateHandler(st)))
 	mux.Handle("PUT /users/{username}", guardAdmin(handler.UserUpdateHandler(st)))
 	mux.Handle("DELETE /users/{username}", guardAdmin(handler.UserDeleteHandler(st)))
+
+	mux.Handle("GET /groups", guardAuth(handler.GroupsListHandler(st)))
+	mux.Handle("POST /groups", guardAdmin(handler.GroupCreateHandler(st)))
+	mux.Handle("GET /groups/{id}", guardAuth(handler.GroupGetHandler(st)))
+	mux.Handle("PUT /groups/{id}", guardAdmin(handler.GroupUpdateHandler(st)))
+	mux.Handle("DELETE /groups/{id}", guardAdmin(handler.GroupDeleteHandler(st)))
 
 	mux.Handle("GET /users/{username}/api-keys", guardAdmin(handler.APIKeysListHandler(st)))
 	mux.Handle("POST /users/{username}/api-keys", guardAdmin(handler.APIKeyCreateHandler(st)))

@@ -216,6 +216,8 @@ func SyncRemoteUpdateHandler(st *store.Store) http.HandlerFunc {
 
 // SyncRemoteDeleteHandler serves DELETE /sync/remotes/{id} (admin-only):
 // removes a sync remote.
+//
+//nolint:dupl // structurally the same simple "delete by id" handler as GroupDeleteHandler; each entity's own delete endpoint follows this same idiom throughout the package, and a shared generic helper isn't worth the indirection for a handful of lines
 func SyncRemoteDeleteHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := utils.PathUUID(w, r, "id", "sync remote id")

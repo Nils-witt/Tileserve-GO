@@ -520,6 +520,87 @@ var migrationSteps = []struct {
 			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_all BOOLEAN NOT NULL DEFAULT false;
 		`,
 	},
+	{
+		// A Group carries the same shape of global permission bundle as a
+		// user (see Permissions below): every member inherits these flags
+		// OR'd with their own personal ones (see GetPermissions' UNION ALL
+		// query), and additionally gets any per-map grants made to the group
+		// (see group_map_permissions below). id is a separate, stable UUID
+		// rather than name itself (unlike users, which is keyed on
+		// username) so a group's membership and per-map grants never need
+		// rewriting if an admin renames it later — matching every other
+		// non-users table in this schema (maps, api_keys, sync_remotes all
+		// key off a UUID). ldap_group_dn/oidc_group_claim are what
+		// membership sync matches against (see group_membership.go), kept
+		// separate from the admin-facing name; the partial unique indexes
+		// mirror idx_users_ldap_identity/idx_users_oidc_identity so two
+		// groups can't claim the same directory group. Every permission
+		// column defaults to false (opt-in), unlike users' legacy true
+		// default, since a group is a wholly new capability grant.
+		errContext: "migrate groups table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS groups (
+				id                     UUID PRIMARY KEY,
+				name                   TEXT NOT NULL UNIQUE,
+				can_create             BOOLEAN NOT NULL DEFAULT false,
+				can_edit               BOOLEAN NOT NULL DEFAULT false,
+				can_delete             BOOLEAN NOT NULL DEFAULT false,
+				can_edit_geo_objects   BOOLEAN NOT NULL DEFAULT false,
+				can_delete_geo_objects BOOLEAN NOT NULL DEFAULT false,
+				can_view_all           BOOLEAN NOT NULL DEFAULT false,
+				is_admin               BOOLEAN NOT NULL DEFAULT false,
+				ldap_group_dn          TEXT NOT NULL DEFAULT '',
+				oidc_group_claim       TEXT NOT NULL DEFAULT '',
+				created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+				updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+				created_by             TEXT NOT NULL,
+				updated_by             TEXT NOT NULL
+			);
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_ldap_dn ON groups (ldap_group_dn) WHERE ldap_group_dn <> '';
+			CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_oidc_claim ON groups (oidc_group_claim) WHERE oidc_group_claim <> '';
+		`,
+	},
+	{
+		// group_members is a pure derived cache, never manually written: a
+		// user's membership is fully recomputed from their LDAP
+		// memberOf/OIDC groups claim on every login (see
+		// SyncGroupMembershipByLDAPDNs/SyncGroupMembershipByOIDCClaims in
+		// group_membership.go), so unlike map_permissions there's no
+		// granted_by — nobody grants membership, the identity provider just
+		// reports it.
+		errContext: "migrate group_members table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS group_members (
+				group_id  UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+				username  TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+				synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+				PRIMARY KEY (group_id, username)
+			);
+			CREATE INDEX IF NOT EXISTS idx_group_members_username ON group_members (username);
+		`,
+	},
+	{
+		// A group's per-map grant: identical shape to map_permissions above,
+		// but keyed by group_id instead of username. Every current member
+		// of the group inherits it (see GetMapPermission's UNION ALL
+		// query) — same "only ever adds capability" semantics as
+		// map_permissions.
+		errContext: "migrate group_map_permissions table",
+		sql: `
+			CREATE TABLE IF NOT EXISTS group_map_permissions (
+				map_uuid               UUID NOT NULL REFERENCES maps(uuid) ON DELETE CASCADE,
+				group_id               UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+				can_view               BOOLEAN NOT NULL DEFAULT false,
+				can_edit               BOOLEAN NOT NULL DEFAULT false,
+				can_delete             BOOLEAN NOT NULL DEFAULT false,
+				can_edit_geo_objects   BOOLEAN NOT NULL DEFAULT false,
+				can_delete_geo_objects BOOLEAN NOT NULL DEFAULT false,
+				granted_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+				granted_by             TEXT NOT NULL,
+				PRIMARY KEY (map_uuid, group_id)
+			);
+		`,
+	},
 }
 
 // Authenticate looks up username and verifies password against its bcrypt hash.
@@ -562,10 +643,17 @@ func (p Permissions) GrantsMapVisibility() bool {
 	return p.IsAdmin || p.CanEdit || p.CanDelete || p.CanEditGeoObjects || p.CanDeleteGeoObjects || p.CanViewAll
 }
 
-// GetPermissions returns the global permissions for username. Results are
-// cached for cacheTTL, since this is looked up on every authenticated
-// request (see requirePermission/canViewMap in internal/handler) but
-// changes rarely.
+// GetPermissions returns the global permissions for username, OR'd together
+// with the global permission bundle of every group username currently
+// belongs to (see group_members/groups) — a group only ever adds
+// capability, never removes it, same as a per-map grant. Results are cached
+// for cacheTTL, since this is looked up on every authenticated request (see
+// requirePermission/canViewMap in internal/handler) but changes rarely. A
+// nonexistent username still errors exactly as before: the UNION ALL
+// produces zero total rows (group_members.username FKs to users, so a
+// nonexistent user belongs to no groups either), and bool_or over zero rows
+// is NULL, which fails the Scan below just like the previous plain-SELECT's
+// ErrNoRows did.
 func (s *Store) GetPermissions(ctx context.Context, username string) (Permissions, error) {
 	if p, ok := s.permsCache.get(username); ok {
 		return p, nil
@@ -574,7 +662,19 @@ func (s *Store) GetPermissions(ctx context.Context, username string) (Permission
 	var p Permissions
 
 	err := s.pool.QueryRow(ctx, `
-		SELECT can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin FROM users WHERE username = $1
+		SELECT
+			bool_or(can_create), bool_or(can_edit), bool_or(can_delete),
+			bool_or(can_edit_geo_objects), bool_or(can_delete_geo_objects),
+			bool_or(can_view_all), bool_or(is_admin)
+		FROM (
+			SELECT can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin
+			FROM users WHERE username = $1
+			UNION ALL
+			SELECT g.can_create, g.can_edit, g.can_delete, g.can_edit_geo_objects, g.can_delete_geo_objects, g.can_view_all, g.is_admin
+			FROM groups g
+			JOIN group_members gm ON gm.group_id = g.id
+			WHERE gm.username = $1
+		) combined
 	`, username).Scan(&p.CanCreate, &p.CanEdit, &p.CanDelete, &p.CanEditGeoObjects, &p.CanDeleteGeoObjects, &p.CanViewAll, &p.IsAdmin)
 	if err != nil {
 		return Permissions{}, fmt.Errorf("get permissions for %q: %w", username, err)

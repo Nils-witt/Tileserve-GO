@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -49,8 +50,10 @@ type MapPermissionRecord struct {
 	GrantedBy           string    `json:"grantedBy"`
 }
 
-// GetMapPermission returns username's per-map grant for mapID, or the zero
-// value (no view/edit/delete) if none exists. Results are cached for
+// GetMapPermission returns username's per-map grant for mapID, OR'd together
+// with the per-map grant of every group username currently belongs to (see
+// group_members/group_map_permissions), or the zero value (no
+// view/edit/delete from any source) if none exists. Results are cached for
 // cacheTTL, since this is on the tile-serving/map-view hot path.
 func (s *Store) GetMapPermission(ctx context.Context, mapID uuid.UUID, username string) (MapPermission, error) {
 	key := mapPermKey{mapID: mapID, username: username}
@@ -58,18 +61,41 @@ func (s *Store) GetMapPermission(ctx context.Context, mapID uuid.UUID, username 
 		return mp, nil
 	}
 
-	var mp MapPermission
+	// Unlike GetPermissions, "no grant from any source" is the common case
+	// here, and the UNION ALL below always returns exactly one row (an
+	// aggregate with no GROUP BY never returns zero rows) — so, unlike the
+	// previous plain SELECT, there's no more ErrNoRows case, only an
+	// all-NULL row when neither source has a matching grant. Each column
+	// scans into sql.NullBool rather than plain bool for that reason;
+	// NullBool.Bool is already false when Valid is false, which correctly
+	// collapses to the same zero-value MapPermission{} the old ErrNoRows
+	// branch produced.
+	var canView, canEdit, canDelete, canEditGeo, canDeleteGeo sql.NullBool
 
 	err := s.pool.QueryRow(ctx, `
-		SELECT can_view, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects FROM map_permissions WHERE map_uuid = $1 AND username = $2
-	`, mapID, username).Scan(&mp.CanView, &mp.CanEdit, &mp.CanDelete, &mp.CanEditGeoObjects, &mp.CanDeleteGeoObjects)
-	if errors.Is(err, pgx.ErrNoRows) {
-		s.mapPermCache.set(key, MapPermission{})
-		return MapPermission{}, nil
-	}
-
+		SELECT
+			bool_or(can_view), bool_or(can_edit), bool_or(can_delete),
+			bool_or(can_edit_geo_objects), bool_or(can_delete_geo_objects)
+		FROM (
+			SELECT can_view, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects
+			FROM map_permissions WHERE map_uuid = $1 AND username = $2
+			UNION ALL
+			SELECT gmp.can_view, gmp.can_edit, gmp.can_delete, gmp.can_edit_geo_objects, gmp.can_delete_geo_objects
+			FROM group_map_permissions gmp
+			JOIN group_members gm ON gm.group_id = gmp.group_id
+			WHERE gmp.map_uuid = $1 AND gm.username = $2
+		) combined
+	`, mapID, username).Scan(&canView, &canEdit, &canDelete, &canEditGeo, &canDeleteGeo)
 	if err != nil {
 		return MapPermission{}, fmt.Errorf("get map permission: %w", err)
+	}
+
+	mp := MapPermission{
+		CanView:             canView.Bool,
+		CanEdit:             canEdit.Bool,
+		CanDelete:           canDelete.Bool,
+		CanEditGeoObjects:   canEditGeo.Bool,
+		CanDeleteGeoObjects: canDeleteGeo.Bool,
 	}
 
 	s.mapPermCache.set(key, mp)

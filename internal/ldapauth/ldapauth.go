@@ -122,6 +122,13 @@ type Identity struct {
 	// reassigned across entries over time but its DN is not.
 	DN    string
 	Email string
+	// Groups holds the raw memberOf DN values from the directory entry,
+	// unresolved against any local group (see store.groups' ldap_group_dn
+	// column and store.SyncGroupMembershipByLDAPDNs). memberOf is populated
+	// automatically by Active Directory; on OpenLDAP it requires the
+	// memberof overlay to be configured, and is simply absent (an empty
+	// Groups, not an error) otherwise.
+	Groups []string
 }
 
 // Authenticate verifies username/password against the directory: it binds
@@ -182,7 +189,7 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 		a.cfg.BaseDN,
 		ldap.ScopeWholeSubtree, ldap.NeverDerefAliases, 2, 0, false,
 		filter,
-		[]string{"mail"},
+		[]string{"mail", "memberOf"},
 		nil,
 	)
 
@@ -209,10 +216,12 @@ func (a *Authenticator) Authenticate(ctx context.Context, username, password str
 	}
 
 	a.debugf("ldapauth: %q: authenticated successfully as dn=%q", username, entry.DN)
+	a.debugf("ldapauth: %q: groups %v", entry.DN, entry.GetAttributeValues("memberOf"))
 
 	return Identity{
-		DN:    entry.DN,
-		Email: entry.GetAttributeValue("mail"),
+		DN:     entry.DN,
+		Email:  entry.GetAttributeValue("mail"),
+		Groups: entry.GetAttributeValues("memberOf"),
 	}, nil
 }
 
