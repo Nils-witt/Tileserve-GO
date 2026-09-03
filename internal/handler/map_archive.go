@@ -11,24 +11,21 @@ import (
 	"github.com/google/uuid"
 	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
+	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
 
 // mapVersionArchiveHandler streams a zip of an entire map version's
 // extracted tile directory (tiles + index.json) in one response. It backs
-// two routes with different gating, both dispatched from
-// routeMapVersionSubResource: .../archive, so a server-to-server sync
-// puller (internal/sync) can pull a whole version without one HTTP request
-// per tile file (gated the same way as bounds/geo-objects, via
-// getViewableMap); and .../download, the UI's per-version download button
-// (admin-only, via requireAdmin). Unlike serveMapVersionFile, neither is
-// reachable anonymously.
+// two routes with different gating: MapVersionArchiveHandler (a
+// server-to-server sync puller, internal/sync, can pull a whole version
+// without one HTTP request per tile file, gated the same way as
+// bounds/geo-objects, via getViewableMap) and MapVersionDownloadHandler (the
+// UI's per-version download button, admin-only, gated via guardAdmin at
+// registration). Unlike ServeMapVersionFileHandler, neither is reachable
+// anonymously.
 func mapVersionArchiveHandler(dataRoot string, id uuid.UUID, version string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !utils.RequireMethod(w, r, http.MethodGet) {
-			return
-		}
-
+	return func(w http.ResponseWriter, _ *http.Request) {
 		// Defense in depth: ensure version is a single numeric segment before
 		// using it in filesystem path construction.
 		if !tilearchive.NumericSegmentRE.MatchString(version) {
@@ -38,7 +35,6 @@ func mapVersionArchiveHandler(dataRoot string, id uuid.UUID, version string) htt
 
 		versionDir := tilearchive.MapVersionDir(dataRoot, id, version)
 
-		//nolint:gosec // G703: versionDir is built from a validated version (see comment above), not raw request input
 		if _, err := os.Stat(versionDir); err != nil {
 			http.Error(w, "version not found", http.StatusNotFound)
 			return
@@ -55,7 +51,6 @@ func mapVersionArchiveHandler(dataRoot string, id uuid.UUID, version string) htt
 		// just produces a truncated zip, which the puller's zip.OpenReader
 		// on the fully-downloaded file naturally rejects — the standard
 		// streaming-zip trade-off.
-		//nolint:gosec // G703: versionDir is validated (see comment above versionDir's declaration), not raw request input
 		_ = filepath.WalkDir(versionDir, func(path string, d fs.DirEntry, err error) error {
 			if err != nil || d.IsDir() {
 				return err
@@ -81,5 +76,48 @@ func mapVersionArchiveHandler(dataRoot string, id uuid.UUID, version string) htt
 
 			return err
 		})
+	}
+}
+
+// MapVersionArchiveHandler serves GET /maps/{id}/version/{version}/archive:
+// a whole-version zip for a server-to-server sync puller, gated the same
+// way as bounds/geo-objects (getViewableMap).
+func MapVersionArchiveHandler(st *store.Store, dataRoot string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if _, ok := getViewableMap(w, r, st, id); !ok {
+			return
+		}
+
+		version, ok := resolveVersionSegment(w, r, st, id, r.PathValue("version"))
+		if !ok {
+			return
+		}
+
+		mapVersionArchiveHandler(dataRoot, id, version)(w, r)
+	}
+}
+
+// MapVersionDownloadHandler serves GET /maps/{id}/version/{version}/download:
+// the UI's per-version "download this version as a zip" button. It streams
+// the same zip as MapVersionArchiveHandler, but is admin-only — gated via
+// guardAdmin at registration rather than getViewableMap.
+func MapVersionDownloadHandler(st *store.Store, dataRoot string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		version, ok := resolveVersionSegment(w, r, st, id, r.PathValue("version"))
+		if !ok {
+			return
+		}
+
+		mapVersionArchiveHandler(dataRoot, id, version)(w, r)
 	}
 }

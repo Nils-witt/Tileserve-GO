@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/auditlog"
 	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
@@ -27,7 +28,7 @@ type geoObjectRequest struct {
 // are missing. Latitude/longitude are pointers specifically so an omitted
 // value (nil) can be distinguished from an explicit 0.0 (a valid coordinate).
 func decodeGeoObjectRequest(w http.ResponseWriter, r *http.Request) (req geoObjectRequest, ok bool) {
-	if !decodeJSON(w, r, &req) {
+	if !utils.DecodeJSON(w, r, &req) {
 		return geoObjectRequest{}, false
 	}
 
@@ -49,22 +50,22 @@ func decodeGeoObjectRequest(w http.ResponseWriter, r *http.Request) (req geoObje
 // bbox parameter is malformed, or if only some of minLat/maxLat/minLon/
 // maxLon are given (they scope one bounding box and must be given together).
 func geoObjectFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter store.GeoObjectFilter, ok bool) {
-	minLat, ok := queryFloatParam(w, r, "minLat")
+	minLat, ok := utils.QueryFloatParam(w, r, "minLat")
 	if !ok {
 		return store.GeoObjectFilter{}, false
 	}
 
-	maxLat, ok := queryFloatParam(w, r, "maxLat")
+	maxLat, ok := utils.QueryFloatParam(w, r, "maxLat")
 	if !ok {
 		return store.GeoObjectFilter{}, false
 	}
 
-	minLon, ok := queryFloatParam(w, r, "minLon")
+	minLon, ok := utils.QueryFloatParam(w, r, "minLon")
 	if !ok {
 		return store.GeoObjectFilter{}, false
 	}
 
-	maxLon, ok := queryFloatParam(w, r, "maxLon")
+	maxLon, ok := utils.QueryFloatParam(w, r, "maxLon")
 	if !ok {
 		return store.GeoObjectFilter{}, false
 	}
@@ -97,60 +98,78 @@ func geoObjectFilterFromQuery(w http.ResponseWriter, r *http.Request) (filter st
 	}, true
 }
 
-// geoObjectsCollectionHandler serves the /maps/{id}/version/{version}/geo-objects
-// collection route: GET lists the geo objects tied to this map version
-// (requires view access to the map), POST creates a new one (requires the
-// can_edit_geo_objects permission, global or per-map — a permission separate
-// from the map's own can_edit, so it can be granted without also granting
-// the ability to edit the map itself. It implies view access, so no
-// separate check is needed).
-func geoObjectsCollectionHandler(st *store.Store, mapID uuid.UUID, version string) http.HandlerFunc {
+// GeoObjectsListHandler serves GET /maps/{id}/version/{version}/geo-objects:
+// lists the geo objects tied to this map version (requires view access to
+// the map).
+func GeoObjectsListHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			if _, ok := getViewableMap(w, r, st, mapID); !ok {
-				return
-			}
-
-			filter, ok := geoObjectFilterFromQuery(w, r)
-			if !ok {
-				return
-			}
-
-			objs, err := st.ListGeoObjects(r.Context(), mapID, version, filter)
-			if err != nil {
-				http.Error(w, "failed to list geo objects", http.StatusInternalServerError)
-				return
-			}
-
-			utils.WriteJSON(w, http.StatusOK, objs)
-
-		case http.MethodPost:
-			if !requireMapPermission(w, r, st, mapID,
-				func(p store.Permissions) bool { return p.CanEditGeoObjects },
-				func(mp store.MapPermission) bool { return mp.CanEditGeoObjects },
-			) {
-				return
-			}
-
-			req, ok := decodeGeoObjectRequest(w, r)
-			if !ok {
-				return
-			}
-
-			g, err := st.CreateGeoObject(r.Context(), mapID, version, req.Name, req.ExternalID, *req.Latitude, *req.Longitude, req.Street, req.HouseNumber, req.Postcode, req.City, req.CityDistrict, usernameFromContext(r.Context()))
-			if err != nil {
-				writeStoreError(w, err, store.ErrGeoObjectInvalid, http.StatusBadRequest, "map or version does not exist", "failed to create geo object")
-				return
-			}
-
-			recordAudit(r, st, "create", "geo_object", g.UUID.String(), fmt.Sprintf("map=%s version=%s name=%q", mapID, version, g.Name))
-
-			utils.WriteJSON(w, http.StatusCreated, g)
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		mapID, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
 		}
+
+		if _, ok := getViewableMap(w, r, st, mapID); !ok {
+			return
+		}
+
+		version, ok := resolveVersionSegment(w, r, st, mapID, r.PathValue("version"))
+		if !ok {
+			return
+		}
+
+		filter, ok := geoObjectFilterFromQuery(w, r)
+		if !ok {
+			return
+		}
+
+		objs, err := st.ListGeoObjects(r.Context(), mapID, version, filter)
+		if err != nil {
+			http.Error(w, "failed to list geo objects", http.StatusInternalServerError)
+			return
+		}
+
+		utils.WriteJSON(w, http.StatusOK, objs)
+	}
+}
+
+// GeoObjectCreateHandler serves POST /maps/{id}/version/{version}/geo-objects:
+// creates a new geo object (requires the can_edit_geo_objects permission,
+// global or per-map — a permission separate from the map's own can_edit, so
+// it can be granted without also granting the ability to edit the map
+// itself. It implies view access, so no separate check is needed).
+func GeoObjectCreateHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mapID, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if !requireMapPermission(w, r, st, mapID,
+			func(p store.Permissions) bool { return p.CanEditGeoObjects },
+			func(mp store.MapPermission) bool { return mp.CanEditGeoObjects },
+		) {
+			return
+		}
+
+		version, ok := resolveVersionSegment(w, r, st, mapID, r.PathValue("version"))
+		if !ok {
+			return
+		}
+
+		req, ok := decodeGeoObjectRequest(w, r)
+		if !ok {
+			return
+		}
+
+		g, err := st.CreateGeoObject(r.Context(), mapID, version, req.Name, req.ExternalID, *req.Latitude, *req.Longitude, req.Street, req.HouseNumber, req.Postcode, req.City, req.CityDistrict, usernameFromContext(r.Context()))
+		if err != nil {
+			writeStoreError(w, err, store.ErrGeoObjectInvalid, http.StatusBadRequest, "map or version does not exist", "failed to create geo object")
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "create", "geo_object", g.UUID.String(), fmt.Sprintf("map=%s version=%s name=%q", mapID, version, g.Name))
+
+		utils.WriteJSON(w, http.StatusCreated, g)
 	}
 }
 
@@ -175,68 +194,119 @@ func getScopedGeoObject(w http.ResponseWriter, r *http.Request, st *store.Store,
 	return g, true
 }
 
-// geoObjectItemHandler serves the
-// /maps/{id}/version/{version}/geo-objects/{uuid} route: GET fetches a geo
-// object (requires view access to the map), PUT replaces its fields
-// (requires can_edit_geo_objects), DELETE removes it (requires
-// can_delete_geo_objects). These are separate from the map's own can_edit/
-// can_delete (see geoObjectsCollectionHandler) and each imply view access,
-// so GET is the only method that checks it separately.
-func geoObjectItemHandler(st *store.Store, mapID uuid.UUID, version string, id uuid.UUID) http.HandlerFunc {
+// GeoObjectGetHandler serves GET
+// /maps/{id}/version/{version}/geo-objects/{objectId}: fetches a geo object
+// (requires view access to the map).
+func GeoObjectGetHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			if _, ok := getViewableMap(w, r, st, mapID); !ok {
-				return
-			}
-
-			g, ok := getScopedGeoObject(w, r, st, mapID, version, id)
-			if ok {
-				utils.WriteJSON(w, http.StatusOK, g)
-			}
-
-		case http.MethodPut:
-			if !requireMapPermission(w, r, st, mapID,
-				func(p store.Permissions) bool { return p.CanEditGeoObjects },
-				func(mp store.MapPermission) bool { return mp.CanEditGeoObjects },
-			) {
-				return
-			}
-
-			req, ok := decodeGeoObjectRequest(w, r)
-			if !ok {
-				return
-			}
-
-			g, err := st.UpdateGeoObject(r.Context(), mapID, version, id, req.Name, req.ExternalID, *req.Latitude, *req.Longitude, req.Street, req.HouseNumber, req.Postcode, req.City, req.CityDistrict, usernameFromContext(r.Context()))
-			if err != nil {
-				writeStoreError(w, err, store.ErrGeoObjectNotFound, http.StatusNotFound, "geo object not found", "failed to update geo object")
-				return
-			}
-
-			recordAudit(r, st, "update", "geo_object", g.UUID.String(), fmt.Sprintf("map=%s version=%s name=%q", mapID, version, g.Name))
-
-			utils.WriteJSON(w, http.StatusOK, g)
-
-		case http.MethodDelete:
-			if !requireMapPermission(w, r, st, mapID,
-				func(p store.Permissions) bool { return p.CanDeleteGeoObjects },
-				func(mp store.MapPermission) bool { return mp.CanDeleteGeoObjects },
-			) {
-				return
-			}
-
-			if err := st.DeleteGeoObject(r.Context(), mapID, version, id); err != nil {
-				writeStoreError(w, err, store.ErrGeoObjectNotFound, http.StatusNotFound, "geo object not found", "failed to delete geo object")
-				return
-			}
-
-			recordAudit(r, st, "delete", "geo_object", id.String(), fmt.Sprintf("map=%s version=%s", mapID, version))
-
-			w.WriteHeader(http.StatusNoContent)
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		mapID, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
 		}
+
+		if _, ok := getViewableMap(w, r, st, mapID); !ok {
+			return
+		}
+
+		version, ok := resolveVersionSegment(w, r, st, mapID, r.PathValue("version"))
+		if !ok {
+			return
+		}
+
+		id, ok := utils.PathUUID(w, r, "objectId", "geo object id")
+		if !ok {
+			return
+		}
+
+		g, ok := getScopedGeoObject(w, r, st, mapID, version, id)
+		if ok {
+			utils.WriteJSON(w, http.StatusOK, g)
+		}
+	}
+}
+
+// GeoObjectUpdateHandler serves PUT
+// /maps/{id}/version/{version}/geo-objects/{objectId}: replaces a geo
+// object's fields (requires can_edit_geo_objects — separate from the map's
+// own can_edit, see GeoObjectCreateHandler, and implies view access, so no
+// separate check is needed).
+func GeoObjectUpdateHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mapID, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if !requireMapPermission(w, r, st, mapID,
+			func(p store.Permissions) bool { return p.CanEditGeoObjects },
+			func(mp store.MapPermission) bool { return mp.CanEditGeoObjects },
+		) {
+			return
+		}
+
+		version, ok := resolveVersionSegment(w, r, st, mapID, r.PathValue("version"))
+		if !ok {
+			return
+		}
+
+		id, ok := utils.PathUUID(w, r, "objectId", "geo object id")
+		if !ok {
+			return
+		}
+
+		req, ok := decodeGeoObjectRequest(w, r)
+		if !ok {
+			return
+		}
+
+		g, err := st.UpdateGeoObject(r.Context(), mapID, version, id, req.Name, req.ExternalID, *req.Latitude, *req.Longitude, req.Street, req.HouseNumber, req.Postcode, req.City, req.CityDistrict, usernameFromContext(r.Context()))
+		if err != nil {
+			writeStoreError(w, err, store.ErrGeoObjectNotFound, http.StatusNotFound, "geo object not found", "failed to update geo object")
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "update", "geo_object", g.UUID.String(), fmt.Sprintf("map=%s version=%s name=%q", mapID, version, g.Name))
+
+		utils.WriteJSON(w, http.StatusOK, g)
+	}
+}
+
+// GeoObjectDeleteHandler serves DELETE
+// /maps/{id}/version/{version}/geo-objects/{objectId}: removes a geo object
+// (requires can_delete_geo_objects — separate from the map's own
+// can_delete, see GeoObjectCreateHandler, and implies view access, so no
+// separate check is needed).
+func GeoObjectDeleteHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		mapID, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if !requireMapPermission(w, r, st, mapID,
+			func(p store.Permissions) bool { return p.CanDeleteGeoObjects },
+			func(mp store.MapPermission) bool { return mp.CanDeleteGeoObjects },
+		) {
+			return
+		}
+
+		version, ok := resolveVersionSegment(w, r, st, mapID, r.PathValue("version"))
+		if !ok {
+			return
+		}
+
+		id, ok := utils.PathUUID(w, r, "objectId", "geo object id")
+		if !ok {
+			return
+		}
+
+		if err := st.DeleteGeoObject(r.Context(), mapID, version, id); err != nil {
+			writeStoreError(w, err, store.ErrGeoObjectNotFound, http.StatusNotFound, "geo object not found", "failed to delete geo object")
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "delete", "geo_object", id.String(), fmt.Sprintf("map=%s version=%s", mapID, version))
+
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/auditlog"
 	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
@@ -18,91 +18,64 @@ type apiKeyRequest struct {
 	PublicKeyPEM string `json:"publicKeyPem"`
 }
 
-// routeUserAPIKeys dispatches /users/{username}/api-keys[/{id}[/scopes[/{mapId}]]],
-// mirroring routeMapAliases's shape. The caller (UserItemHandler) has already
-// verified the request is from an admin.
-func routeUserAPIKeys(w http.ResponseWriter, r *http.Request, st *store.Store, username string, segments []string) {
-	switch len(segments) {
-	case 2:
-		apiKeysCollectionHandler(st, username)(w, r)
-	case 3:
-		apiKeyItemHandler(st, username, segments[2])(w, r)
-	case 4:
-		if segments[3] != "scopes" {
-			http.NotFound(w, r)
-			return
-		}
-
-		apiKeyScopesCollectionHandler(st, username, segments[2])(w, r)
-	case 5:
-		if segments[3] != "scopes" {
-			http.NotFound(w, r)
-			return
-		}
-
-		apiKeyScopeItemHandler(st, username, segments[2], segments[4])(w, r)
-	default:
-		http.NotFound(w, r)
-	}
-}
-
-// apiKeysCollectionHandler lists (GET) or creates (POST) API keys for
-// username. Admin-only, same as the rest of the /users API.
-func apiKeysCollectionHandler(st *store.Store, username string) http.HandlerFunc {
+// APIKeysListHandler serves GET /users/{username}/api-keys (admin-only):
+// lists API keys for username.
+func APIKeysListHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			keys, err := st.ListAPIKeys(r.Context(), username)
-			if err != nil {
-				http.Error(w, "failed to list api keys", http.StatusInternalServerError)
-				return
-			}
+		username := r.PathValue("username")
 
-			utils.WriteJSON(w, http.StatusOK, keys)
-
-		case http.MethodPost:
-			var req apiKeyRequest
-			if !decodeJSON(w, r, &req) {
-				return
-			}
-
-			if req.PublicKeyPEM == "" {
-				http.Error(w, "publicKeyPem is required", http.StatusBadRequest)
-				return
-			}
-
-			rec, err := st.CreateAPIKey(r.Context(), username, req.Name, usernameFromContext(r.Context()), req.PublicKeyPEM)
-			if err != nil {
-				if errors.Is(err, store.ErrInvalidPublicKeyPEM) {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
-
-				writeStoreError(w, err, store.ErrUserNotFound, http.StatusNotFound, "user not found", "failed to create api key")
-
-				return
-			}
-
-			recordAudit(r, st, "create", "api_key", rec.ID.String(), fmt.Sprintf("owner=%s name=%q", username, req.Name))
-
-			utils.WriteJSON(w, http.StatusCreated, rec)
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	}
-}
-
-// apiKeyItemHandler revokes (DELETE) a single API key belonging to username.
-func apiKeyItemHandler(st *store.Store, username, idStr string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !utils.RequireMethod(w, r, http.MethodDelete) {
-			return
-		}
-
-		id, err := uuid.Parse(idStr)
+		keys, err := st.ListAPIKeys(r.Context(), username)
 		if err != nil {
-			http.Error(w, "invalid api key id", http.StatusBadRequest)
+			http.Error(w, "failed to list api keys", http.StatusInternalServerError)
+			return
+		}
+
+		utils.WriteJSON(w, http.StatusOK, keys)
+	}
+}
+
+// APIKeyCreateHandler serves POST /users/{username}/api-keys (admin-only):
+// registers a new API key for username.
+func APIKeyCreateHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		username := r.PathValue("username")
+
+		var req apiKeyRequest
+		if !utils.DecodeJSON(w, r, &req) {
+			return
+		}
+
+		if req.PublicKeyPEM == "" {
+			http.Error(w, "publicKeyPem is required", http.StatusBadRequest)
+			return
+		}
+
+		rec, err := st.CreateAPIKey(r.Context(), username, req.Name, usernameFromContext(r.Context()), req.PublicKeyPEM)
+		if err != nil {
+			if errors.Is(err, store.ErrInvalidPublicKeyPEM) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			writeStoreError(w, err, store.ErrUserNotFound, http.StatusNotFound, "user not found", "failed to create api key")
+
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "create", "api_key", rec.ID.String(), fmt.Sprintf("owner=%s name=%q", username, req.Name))
+
+		utils.WriteJSON(w, http.StatusCreated, rec)
+	}
+}
+
+// APIKeyDeleteHandler serves DELETE /users/{username}/api-keys/{id}
+// (admin-only): revokes a single API key belonging to username.
+func APIKeyDeleteHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		username := r.PathValue("username")
+
+		id, ok := utils.PathUUID(w, r, "id", "api key id")
+		if !ok {
 			return
 		}
 
@@ -111,7 +84,7 @@ func apiKeyItemHandler(st *store.Store, username, idStr string) http.HandlerFunc
 			return
 		}
 
-		recordAudit(r, st, "revoke", "api_key", id.String(), "owner="+username)
+		auditlog.RecordAudit(r, st, "revoke", "api_key", id.String(), "owner="+username)
 
 		w.WriteHeader(http.StatusNoContent)
 	}
@@ -121,89 +94,114 @@ type apiKeyScopeRequest struct {
 	Versions []string `json:"versions"`
 }
 
-func apiKeyScopesCollectionHandler(st *store.Store, username, idStr string) http.HandlerFunc {
+// APIKeyScopesListHandler serves GET
+// /users/{username}/api-keys/{id}/scopes (admin-only).
+func APIKeyScopesListHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := uuid.Parse(idStr)
-		if err != nil {
-			http.Error(w, "invalid api key id", http.StatusBadRequest)
+		username := r.PathValue("username")
+
+		id, ok := utils.PathUUID(w, r, "id", "api key id")
+		if !ok {
 			return
 		}
 
-		switch r.Method {
-		case http.MethodGet:
-			scopes, err := st.ListAPIKeyScopes(r.Context(), username, id)
-			if err != nil {
-				utils.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list api key scopes"})
-				return
-			}
-
-			utils.WriteJSON(w, http.StatusOK, scopes)
-
-		case http.MethodDelete:
-			if err := st.ClearAPIKeyScope(r.Context(), username, id); err != nil {
-				writeStoreError(w, err, store.ErrAPIKeyNotFound, http.StatusNotFound, "api key not found", "failed to clear api key scope")
-				return
-			}
-
-			recordAudit(r, st, "revoke", "api_key_scope", id.String(), "owner="+username+" cleared all scopes")
-
-			w.WriteHeader(http.StatusNoContent)
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		scopes, err := st.ListAPIKeyScopes(r.Context(), username, id)
+		if err != nil {
+			utils.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list api key scopes"})
+			return
 		}
+
+		utils.WriteJSON(w, http.StatusOK, scopes)
 	}
 }
 
-func apiKeyScopeItemHandler(st *store.Store, username, idStr, mapIDStr string) http.HandlerFunc {
+// APIKeyScopesClearHandler serves DELETE
+// /users/{username}/api-keys/{id}/scopes (admin-only): clears every scope
+// grant for the key, reverting it to unrestricted (all-maps) access.
+func APIKeyScopesClearHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		id, err := uuid.Parse(idStr)
-		if err != nil {
-			http.Error(w, "invalid api key id", http.StatusBadRequest)
+		username := r.PathValue("username")
+
+		id, ok := utils.PathUUID(w, r, "id", "api key id")
+		if !ok {
 			return
 		}
 
-		mapID, err := uuid.Parse(mapIDStr)
-		if err != nil {
-			http.Error(w, "invalid map id", http.StatusBadRequest)
+		if err := st.ClearAPIKeyScope(r.Context(), username, id); err != nil {
+			writeStoreError(w, err, store.ErrAPIKeyNotFound, http.StatusNotFound, "api key not found", "failed to clear api key scope")
 			return
 		}
 
-		switch r.Method {
-		case http.MethodPut:
-			var req apiKeyScopeRequest
-			if !decodeJSON(w, r, &req) {
-				return
-			}
+		auditlog.RecordAudit(r, st, "revoke", "api_key_scope", id.String(), "owner="+username+" cleared all scopes")
 
-			scope, err := st.SetAPIKeyScope(r.Context(), username, id, mapID, req.Versions)
-			if err != nil {
-				if errors.Is(err, store.ErrAPIKeyScopeInvalid) {
-					http.Error(w, err.Error(), http.StatusBadRequest)
-					return
-				}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
 
-				writeStoreError(w, err, store.ErrAPIKeyNotFound, http.StatusNotFound, "api key not found", "failed to set api key scope")
+// APIKeyScopeSetHandler serves PUT
+// /users/{username}/api-keys/{id}/scopes/{mapId} (admin-only): grants (or
+// replaces) a scope restricting the key to specific versions of mapId.
+func APIKeyScopeSetHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		username := r.PathValue("username")
 
-				return
-			}
-
-			recordAudit(r, st, "grant", "api_key_scope", id.String()+":"+mapID.String(), fmt.Sprintf("owner=%s versions=%v", username, req.Versions))
-
-			utils.WriteJSON(w, http.StatusOK, scope)
-
-		case http.MethodDelete:
-			if err := st.DeleteAPIKeyScope(r.Context(), username, id, mapID); err != nil {
-				writeStoreError(w, err, store.ErrAPIKeyNotFound, http.StatusNotFound, "api key not found", "failed to delete api key scope")
-				return
-			}
-
-			recordAudit(r, st, "revoke", "api_key_scope", id.String()+":"+mapID.String(), "owner="+username)
-
-			w.WriteHeader(http.StatusNoContent)
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		id, ok := utils.PathUUID(w, r, "id", "api key id")
+		if !ok {
+			return
 		}
+
+		mapID, ok := utils.PathUUID(w, r, "mapId", "map id")
+		if !ok {
+			return
+		}
+
+		var req apiKeyScopeRequest
+		if !utils.DecodeJSON(w, r, &req) {
+			return
+		}
+
+		scope, err := st.SetAPIKeyScope(r.Context(), username, id, mapID, req.Versions)
+		if err != nil {
+			if errors.Is(err, store.ErrAPIKeyScopeInvalid) {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+
+			writeStoreError(w, err, store.ErrAPIKeyNotFound, http.StatusNotFound, "api key not found", "failed to set api key scope")
+
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "grant", "api_key_scope", id.String()+":"+mapID.String(), fmt.Sprintf("owner=%s versions=%v", username, req.Versions))
+
+		utils.WriteJSON(w, http.StatusOK, scope)
+	}
+}
+
+// APIKeyScopeDeleteHandler serves DELETE
+// /users/{username}/api-keys/{id}/scopes/{mapId} (admin-only): revokes the
+// key's scope grant for a single map.
+func APIKeyScopeDeleteHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		username := r.PathValue("username")
+
+		id, ok := utils.PathUUID(w, r, "id", "api key id")
+		if !ok {
+			return
+		}
+
+		mapID, ok := utils.PathUUID(w, r, "mapId", "map id")
+		if !ok {
+			return
+		}
+
+		if err := st.DeleteAPIKeyScope(r.Context(), username, id, mapID); err != nil {
+			writeStoreError(w, err, store.ErrAPIKeyNotFound, http.StatusNotFound, "api key not found", "failed to delete api key scope")
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "revoke", "api_key_scope", id.String()+":"+mapID.String(), "owner="+username)
+
+		w.WriteHeader(http.StatusNoContent)
 	}
 }

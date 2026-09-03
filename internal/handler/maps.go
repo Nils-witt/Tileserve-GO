@@ -2,63 +2,28 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 
 	"github.com/google/uuid"
+	"nilswitt.dev/tileserve-go/internal/handler/auditlog"
 	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
 	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
 
-// Path segments used when routing /maps/{id}/... requests in MapsItemHandler.
-const (
-	versionPathSegment    = "version"
-	boundsPathSegment     = "bounds"
-	geoObjectsPathSegment = "geo-objects"
-	archivePathSegment    = "archive"
-	downloadPathSegment   = "download"
-	// currentVersionKeyword, used in place of a literal version segment,
-	// resolves to the map's MapRecord.CurrentVersion.
-	currentVersionKeyword = "current"
-)
-
-// isVersionSubResourcePath reports whether segments (the /maps/{id}/...
-// path, split on "/") addresses one of the JSON/binary sub-resources nested
-// under a map version — .../version/{version}/bounds,
-// .../version/{version}/geo-objects[/{uuid}], .../version/{version}/archive,
-// or .../version/{version}/download — rather than a raw extracted tile
-// file. Reserving these path segments is safe: uploaded tile entries are
-// validated at extraction time to be purely numeric directories or
-// <number>.png files, so a real extracted path can never start with
-// "bounds", "geo-objects", "archive", or "download".
-func isVersionSubResourcePath(segments []string) bool {
-	return len(segments) >= 4 && segments[1] == versionPathSegment &&
-		(segments[3] == boundsPathSegment || segments[3] == geoObjectsPathSegment ||
-			segments[3] == archivePathSegment || segments[3] == downloadPathSegment)
-}
+// currentVersionKeyword, used in place of a literal version segment,
+// resolves to the map's MapRecord.CurrentVersion.
+const currentVersionKeyword = "current"
 
 type mapRequest struct {
 	Name             string `json:"name"`
 	CurrentVersion   string `json:"currentVersion"`
 	VisibleToAll     bool   `json:"visibleToAll"`
 	AnonymousAllowed bool   `json:"anonymousAllowed"`
-}
-
-// decodeJSON decodes r's body as JSON into v, writing a 400 response and
-// returning false if the body isn't valid JSON.
-func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return false
-	}
-
-	return true
 }
 
 // writeStoreError maps a Store error to an HTTP response: sentinel maps to
@@ -71,49 +36,6 @@ func writeStoreError(w http.ResponseWriter, err, sentinel error, sentinelStatus 
 	}
 
 	http.Error(w, failMsg, http.StatusInternalServerError)
-}
-
-// getPermissionsOrFail fetches the acting user's global permissions, writing
-// a 500 response and returning ok=false if that fails.
-func getPermissionsOrFail(w http.ResponseWriter, r *http.Request, st *store.Store) (perms store.Permissions, ok bool) {
-	perms, err := st.GetPermissions(r.Context(), usernameFromContext(r.Context()))
-	if err != nil {
-		http.Error(w, "failed to check permissions", http.StatusInternalServerError)
-		return store.Permissions{}, false
-	}
-
-	return perms, true
-}
-
-// requireAuthenticated rejects a request with no bearer token. /maps/ is
-// mounted behind OptionalAuth (see cmd/tileserve-go/main.go) so that a
-// map's version file serving route can allow anonymous requests when that
-// map opts in via anonymousAllowed; every other route under /maps/ calls
-// this to restore the usual "must be logged in" requirement.
-func requireAuthenticated(w http.ResponseWriter, r *http.Request) bool {
-	if usernameFromContext(r.Context()) == "" {
-		http.Error(w, "missing bearer token", http.StatusUnauthorized)
-		return false
-	}
-
-	return true
-}
-
-// requirePermission checks the acting user's global permissions and writes an
-// error response if the request should not proceed. It returns true when the
-// caller may continue.
-func requirePermission(w http.ResponseWriter, r *http.Request, st *store.Store, allowed func(store.Permissions) bool) bool {
-	perms, ok := getPermissionsOrFail(w, r, st)
-	if !ok {
-		return false
-	}
-
-	if !allowed(perms) {
-		http.Error(w, "forbidden", http.StatusForbidden)
-		return false
-	}
-
-	return true
 }
 
 // apiKeyMapAllowed reports whether the API key (if any) authenticating this
@@ -138,31 +60,6 @@ func apiKeyMapVersionAllowed(ctx context.Context, st *store.Store, mapID uuid.UU
 	}
 
 	return st.APIKeyCanAccessMapVersion(ctx, apiKeyID, mapID, version)
-}
-
-// filterMapsByAPIKeyScope drops any map outside the scope of the API key (if
-// any) authenticating this request, preserving order. It's a no-op — maps
-// returned unchanged — for a request with no API key in context.
-func filterMapsByAPIKeyScope(ctx context.Context, st *store.Store, maps []store.MapRecord) ([]store.MapRecord, error) {
-	apiKeyID, ok := apiKeyIDFromContext(ctx)
-	if !ok {
-		return maps, nil
-	}
-
-	filtered := make([]store.MapRecord, 0, len(maps))
-
-	for _, m := range maps {
-		allowed, err := st.APIKeyCanAccessMap(ctx, apiKeyID, m.UUID)
-		if err != nil {
-			return nil, err
-		}
-
-		if allowed {
-			filtered = append(filtered, m)
-		}
-	}
-
-	return filtered, nil
 }
 
 // isMapOwner reports whether username is mapID's owner. An owner can do
@@ -196,13 +93,13 @@ func isMapOwner(ctx context.Context, st *store.Store, mapID uuid.UUID, username 
 // apiKeyMapAllowed) — scope only ever narrows what the request could
 // otherwise do.
 func requireMapPermission(w http.ResponseWriter, r *http.Request, st *store.Store, mapID uuid.UUID, globalAllowed func(store.Permissions) bool, mapAllowed func(store.MapPermission) bool) bool {
-	perms, ok := getPermissionsOrFail(w, r, st)
+	perms, ok := utils.GetPermissionsOrFail(w, r, st)
 	if !ok {
 		return false
 	}
 
 	if !perms.IsAdmin && !globalAllowed(perms) {
-		allowed, err := ownerOrMapAllowed(r.Context(), st, mapID, usernameFromContext(r.Context()), mapAllowed)
+		allowed, err := ownerOrMapAllowed(r.Context(), st, mapID, utils.UsernameFromContext(r.Context()), mapAllowed)
 		if err != nil {
 			http.Error(w, "failed to check permissions", http.StatusInternalServerError)
 			return false
@@ -256,7 +153,7 @@ func ownerOrMapAllowed(ctx context.Context, st *store.Store, mapID uuid.UUID, us
 // it. Anyone else gets a 403, same as requireMapPermission, without
 // revealing whether mapID exists.
 func requireMapAdmin(w http.ResponseWriter, r *http.Request, st *store.Store, mapID uuid.UUID) bool {
-	perms, ok := getPermissionsOrFail(w, r, st)
+	perms, ok := utils.GetPermissionsOrFail(w, r, st)
 	if !ok {
 		return false
 	}
@@ -358,267 +255,46 @@ func getViewableMap(w http.ResponseWriter, r *http.Request, st *store.Store, id 
 	return m, true
 }
 
-// listMaps serves the GET branch of the /maps collection route: it lists the
-// maps visible to the caller, filtered further by query params, then by the
-// scope of the API key (if any) authenticating the request (see
-// filterMapsByAPIKeyScope).
-func listMaps(w http.ResponseWriter, r *http.Request, st *store.Store) {
-	username := usernameFromContext(r.Context())
-
-	perms, ok := getPermissionsOrFail(w, r, st)
-	if !ok {
-		return
-	}
-
-	bypassVisibility := perms.GrantsMapVisibility()
-
-	visibleToAll, ok := queryBoolParam(w, r, "visibleToAll")
-	if !ok {
-		return
-	}
-
-	anonymousAllowed, ok := queryBoolParam(w, r, "anonymousAllowed")
-	if !ok {
-		return
-	}
-
-	filter := store.MapFilter{
-		Name:             r.URL.Query().Get("name"),
-		CreatedBy:        r.URL.Query().Get("createdBy"),
-		VisibleToAll:     visibleToAll,
-		AnonymousAllowed: anonymousAllowed,
-	}
-
-	maps, err := st.ListMaps(r.Context(), username, bypassVisibility, filter)
-	if err != nil {
-		http.Error(w, "failed to list maps", http.StatusInternalServerError)
-		return
-	}
-
-	maps, err = filterMapsByAPIKeyScope(r.Context(), st, maps)
-	if err != nil {
-		http.Error(w, "failed to list maps", http.StatusInternalServerError)
-		return
-	}
-
-	utils.WriteJSON(w, http.StatusOK, maps)
-}
-
-// MapsCollectionHandler serves the /maps collection route: GET lists the
-// maps visible to the caller, POST creates a new map (requires the
-// can_create global permission).
-func MapsCollectionHandler(st *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			listMaps(w, r, st)
-
-		case http.MethodPost:
-			if !requirePermission(w, r, st, func(p store.Permissions) bool { return p.CanCreate }) {
-				return
-			}
-
-			var req mapRequest
-			if !decodeJSON(w, r, &req) {
-				return
-			}
-
-			if req.Name == "" {
-				http.Error(w, "name is required", http.StatusBadRequest)
-				return
-			}
-
-			m, err := st.CreateMap(r.Context(), req.Name, req.CurrentVersion, req.VisibleToAll, req.AnonymousAllowed, usernameFromContext(r.Context()))
-			if err != nil {
-				http.Error(w, "failed to create map", http.StatusInternalServerError)
-				return
-			}
-
-			recordAudit(r, st, "create", "map", m.UUID.String(), fmt.Sprintf("name=%q visibleToAll=%v anonymousAllowed=%v", m.Name, m.VisibleToAll, m.AnonymousAllowed))
-
-			utils.WriteJSON(w, http.StatusCreated, m)
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		}
-	}
-}
-
-// MapsItemHandler dispatches every route nested under /maps/{id}/... by
-// hand-parsing the path (the stdlib mux only matches the /maps/ prefix):
-//
-//   - /maps/{id}/version/{version}/...  (except .../bounds): serves the
-//     extracted tile files for that version. The only route reachable
-//     without a bearer token, when the map's anonymousAllowed is set.
-//   - /maps/{id}/upload           (POST):   uploadMapVersionHandler
-//   - /maps/{id}/versions         (GET):    mapVersionsHandler
-//   - /maps/{id}/permissions[/{username}]:  mapPermissionsCollectionHandler /
-//     mapPermissionItemHandler
-//   - /maps/{id}/aliases[/{alias}]:  mapAliasesCollectionHandler /
-//     mapAliasItemHandler
-//   - /maps/{id}/owner            (GET/PUT): mapOwnerItemHandler
-//   - /maps/{id}/version/{version}/bounds (GET): mapVersionBoundsHandler
-//   - /maps/{id}/version/{version}/geo-objects[/{uuid}]:  geoObjectsCollectionHandler /
-//     geoObjectItemHandler
-//   - /maps/{id}                  (GET/PUT/DELETE): fetch/update/delete the map itself
-//
-// In every one of the above, {version} may be the literal keyword "current"
-// (resolves to the map's MapRecord.CurrentVersion), a purely numeric real
-// version identifier, or a user-defined alias created via the aliases API
-// — see resolveVersionSegment for the resolution order.
-//
-// Every route other than the version-file route requires a bearer token.
-func MapsItemHandler(st *store.Store, dataRoot string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		path := strings.Trim(strings.TrimPrefix(r.URL.Path, "/maps/"), "/")
-		segments := strings.Split(path, "/")
-
-		id, err := uuid.Parse(segments[0])
-		if err != nil {
-			http.Error(w, "invalid map id", http.StatusBadRequest)
-			return
-		}
-
-		// Version file serving (but not a JSON sub-resource like .../bounds
-		// or .../geo-objects[/...], see isVersionSubResourcePath) is the one
-		// route that may be reached without a bearer token at all, when the
-		// map itself opts in via anonymousAllowed. It's handled before the
-		// blanket auth gate below so an anonymous caller can reach it; every
-		// other route still requires a token.
-		if isVersionFilePath(segments) {
-			serveMapVersionFile(w, r, st, dataRoot, id, segments)
-			return
-		}
-
-		if !requireAuthenticated(w, r) {
-			return
-		}
-
-		if routeMapSubResource(w, r, st, dataRoot, id, segments) {
-			return
-		}
-
-		if len(segments) != 1 {
-			http.NotFound(w, r)
-			return
-		}
-
-		handleMapItem(w, r, st, id)
-	}
-}
-
-// isVersionFilePath reports whether segments addresses a raw extracted tile
-// file under a map version, as opposed to a JSON sub-resource nested under
-// one (see isVersionSubResourcePath).
-func isVersionFilePath(segments []string) bool {
-	return len(segments) >= 3 && segments[1] == versionPathSegment && !isVersionSubResourcePath(segments)
-}
-
-// serveMapVersionFile serves a single extracted tile file from a map
+// ServeMapVersionFileHandler serves a single extracted tile file from a map
 // version's directory. It's the one route reachable without a bearer token,
-// when the map itself opts in via anonymousAllowed.
-func serveMapVersionFile(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, segments []string) {
-	m, err := st.GetMap(r.Context(), id)
-	if err != nil {
-		writeStoreError(w, err, store.ErrMapNotFound, http.StatusNotFound, "map not found", "failed to get map")
-		return
-	}
-
-	if !m.AnonymousAllowed {
-		if !requireAuthenticated(w, r) || !requireMapView(w, r, st, m) {
+// when the map itself opts in via anonymousAllowed. Registered twice in
+// main.go: once for the exact "/maps/{id}/version/{version}" pattern (no
+// trailing slash, no file — falls through to a 404 via http.StripPrefix's
+// prefix-mismatch) and once for the "/maps/{id}/version/{version}/{filepath...}"
+// wildcard that serves the actual tile files. Both point at this same
+// handler.
+func ServeMapVersionFileHandler(st *store.Store, dataRoot string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
 			return
 		}
+
+		m, err := st.GetMap(r.Context(), id)
+		if err != nil {
+			writeStoreError(w, err, store.ErrMapNotFound, http.StatusNotFound, "map not found", "failed to get map")
+			return
+		}
+
+		if !m.AnonymousAllowed {
+			if !utils.RequireAuthenticated(w, r) || !requireMapView(w, r, st, m) {
+				return
+			}
+		}
+
+		rawVersion := r.PathValue("version")
+
+		version, ok := resolveVersionSegment(w, r, st, id, rawVersion)
+		if !ok {
+			return
+		}
+
+		versionDir := tilearchive.MapVersionDir(dataRoot, id, version)
+		prefix := "/maps/" + r.PathValue("id") + "/version/" + rawVersion + "/"
+
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		http.StripPrefix(prefix, http.FileServer(http.Dir(versionDir))).ServeHTTP(w, r)
 	}
-
-	version, ok := resolveVersionSegment(w, r, st, id, segments[2])
-	if !ok {
-		return
-	}
-
-	versionDir := tilearchive.MapVersionDir(dataRoot, id, version)
-	prefix := "/maps/" + strings.Join(segments[:3], "/") + "/"
-	// A map version's directory is never modified in place after upload
-	// (uploadMapVersionHandler extracts into a staging dir and atomically
-	// renames it into place), so its contents can be cached indefinitely by
-	// clients and any CDN in front of this server.
-	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	http.StripPrefix(prefix, http.FileServer(http.Dir(versionDir))).ServeHTTP(w, r)
-}
-
-// routeMapSubResource dispatches every route nested under /maps/{id}/...
-// other than the bare item route and the anonymous version-file route (see
-// isVersionFilePath): upload, versions, permissions[/{username}],
-// aliases[/{alias}], and version/{v}/bounds|geo-objects[/{uuid}]. It returns
-// true if segments matched one of these routes — the request has been fully
-// handled, whether it succeeded or failed — or false if the caller should
-// fall through to treating this as the bare /maps/{id} route.
-func routeMapSubResource(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, segments []string) bool {
-	if len(segments) < 2 {
-		return false
-	}
-
-	switch segments[1] {
-	case "upload":
-		return routeMapUpload(w, r, st, dataRoot, id, segments)
-	case "versions":
-		return routeMapVersions(w, r, st, id, segments)
-	case "permissions":
-		return routeMapPermissions(w, r, st, id, segments)
-	case "aliases":
-		return routeMapAliases(w, r, st, id, segments)
-	case "owner":
-		return routeMapOwner(w, r, st, id, segments)
-	case versionPathSegment:
-		return routeMapVersionSubResource(w, r, st, dataRoot, id, segments)
-	default:
-		return false
-	}
-}
-
-// routeMapOwner dispatches /maps/{id}/owner.
-func routeMapOwner(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID, segments []string) bool {
-	if len(segments) != 2 {
-		return false
-	}
-
-	mapOwnerItemHandler(st, id)(w, r)
-
-	return true
-}
-
-func routeMapUpload(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, segments []string) bool {
-	if len(segments) != 2 {
-		return false
-	}
-
-	uploadMapVersionHandler(st, dataRoot, id)(w, r)
-
-	return true
-}
-
-func routeMapVersions(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID, segments []string) bool {
-	if len(segments) != 2 {
-		return false
-	}
-
-	if _, ok := getViewableMap(w, r, st, id); ok {
-		mapVersionsHandler(st, id)(w, r)
-	}
-
-	return true
-}
-
-func routeMapPermissions(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID, segments []string) bool {
-	switch len(segments) {
-	case 2:
-		mapPermissionsCollectionHandler(st, id)(w, r)
-	case 3:
-		mapPermissionItemHandler(st, id, segments[2])(w, r)
-	default:
-		return false
-	}
-
-	return true
 }
 
 // resolveCurrentVersion fetches m for id and returns its current version,
@@ -714,119 +390,43 @@ func resolveVersionSegment(w http.ResponseWriter, r *http.Request, st *store.Sto
 	return version, true
 }
 
-// routeMapVersionSubResource dispatches .../version/{v}/bounds,
-// .../version/{v}/geo-objects[/{uuid}], .../version/{v}/archive, and
-// .../version/{v}/download to their respective sub-routers below. {v} may be
-// currentVersionKeyword or a user-defined alias, resolved via
-// resolveVersionSegment.
-func routeMapVersionSubResource(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, segments []string) bool {
-	if len(segments) < 4 {
-		return false
-	}
-
-	version, ok := resolveVersionSegment(w, r, st, id, segments[2])
-	if !ok {
-		return true
-	}
-
-	switch segments[3] {
-	case boundsPathSegment:
-		return routeMapVersionBounds(w, r, st, dataRoot, id, version, segments)
-	case archivePathSegment:
-		return routeMapVersionArchive(w, r, st, dataRoot, id, version, segments)
-	case downloadPathSegment:
-		return routeMapVersionDownload(w, r, st, dataRoot, id, version, segments)
-	case geoObjectsPathSegment:
-		return routeMapVersionGeoObjects(w, r, st, id, version, segments)
-	default:
-		return false
-	}
-}
-
-// routeMapVersionBounds dispatches .../version/{v}/bounds.
-func routeMapVersionBounds(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, version string, segments []string) bool {
-	if len(segments) != 4 {
-		return false
-	}
-
-	if _, ok := getViewableMap(w, r, st, id); ok {
-		mapVersionBoundsHandler(dataRoot, id, version)(w, r)
-	}
-
-	return true
-}
-
-// routeMapVersionArchive dispatches .../version/{v}/archive.
-func routeMapVersionArchive(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, version string, segments []string) bool {
-	if len(segments) != 4 {
-		return false
-	}
-
-	if _, ok := getViewableMap(w, r, st, id); ok {
-		mapVersionArchiveHandler(dataRoot, id, version)(w, r)
-	}
-
-	return true
-}
-
-// routeMapVersionDownload dispatches .../version/{v}/download: the UI's
-// per-version "download this version as a zip" button. It streams the same
-// zip as .../archive (see mapVersionArchiveHandler) but, unlike that route
-// (used by the server-to-server sync puller and gated by ordinary
-// view/edit permissions, see routeMapVersionArchive), this one is
-// admin-only — requireAdmin, the global is_admin permission.
-func routeMapVersionDownload(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID, version string, segments []string) bool {
-	if len(segments) != 4 {
-		return false
-	}
-
-	if requireAdmin(w, r, st) {
-		mapVersionArchiveHandler(dataRoot, id, version)(w, r)
-	}
-
-	return true
-}
-
-// routeMapVersionGeoObjects dispatches .../version/{v}/geo-objects[/{uuid}].
-func routeMapVersionGeoObjects(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID, version string, segments []string) bool {
-	switch len(segments) {
-	case 4:
-		geoObjectsCollectionHandler(st, id, version)(w, r)
-
-	case 5:
-		geoObjID, err := uuid.Parse(segments[4])
-		if err != nil {
-			http.Error(w, "invalid geo object id", http.StatusBadRequest)
-			return true
+// GetMapHandler serves GET /maps/{id}: fetch the map itself (requires view
+// access).
+func GetMapHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
 		}
 
-		geoObjectItemHandler(st, id, version, geoObjID)(w, r)
-
-	default:
-		return false
-	}
-
-	return true
-}
-
-// handleMapItem serves the bare /maps/{id} route: fetch, update, or delete
-// the map itself.
-func handleMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) {
-	switch r.Method {
-	case http.MethodGet:
 		m, ok := getViewableMap(w, r, st, id)
 		if ok {
 			utils.WriteJSON(w, http.StatusOK, m)
 		}
+	}
+}
 
-	case http.MethodPut:
+// UpdateMapHandler serves PUT /maps/{id}: update the map itself.
+func UpdateMapHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
 		updateMapItem(w, r, st, id)
+	}
+}
 
-	case http.MethodDelete:
+// DeleteMapHandler serves DELETE /maps/{id}: delete the map itself.
+func DeleteMapHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
 		deleteMapItem(w, r, st, id)
-
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
 }
 
@@ -839,7 +439,7 @@ func updateMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 	}
 
 	var req mapRequest
-	if !decodeJSON(w, r, &req) {
+	if !utils.DecodeJSON(w, r, &req) {
 		return
 	}
 
@@ -854,7 +454,7 @@ func updateMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 		return
 	}
 
-	recordAudit(r, st, "update", "map", m.UUID.String(), fmt.Sprintf("name=%q visibleToAll=%v anonymousAllowed=%v", m.Name, m.VisibleToAll, m.AnonymousAllowed))
+	auditlog.RecordAudit(r, st, "update", "map", m.UUID.String(), fmt.Sprintf("name=%q visibleToAll=%v anonymousAllowed=%v", m.Name, m.VisibleToAll, m.AnonymousAllowed))
 
 	utils.WriteJSON(w, http.StatusOK, m)
 }
@@ -872,19 +472,24 @@ func deleteMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 		return
 	}
 
-	recordAudit(r, st, "delete", "map", id.String(), "")
+	auditlog.RecordAudit(r, st, "delete", "map", id.String(), "")
 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// mapVersionsHandler returns the upload history for a map. If the request is
-// authenticated by a scoped API key that carries a version whitelist for id,
-// the result is filtered down to just those versions (see
-// store.APIKeyScopedVersions) — getViewableMap has already rejected the
-// request outright if id itself isn't within the key's scope.
-func mapVersionsHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
+// MapVersionsHandler serves GET /maps/{id}/versions: the upload history for
+// a map. If the request is authenticated by a scoped API key that carries a
+// version whitelist for id, the result is filtered down to just those
+// versions (see store.APIKeyScopedVersions) — getViewableMap has already
+// rejected the request outright if id itself isn't within the key's scope.
+func MapVersionsHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !utils.RequireMethod(w, r, http.MethodGet) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if _, ok := getViewableMap(w, r, st, id); !ok {
 			return
 		}
 
@@ -920,17 +525,18 @@ type mapPermissionRequest struct {
 	CanDeleteGeoObjects bool `json:"canDeleteGeoObjects"`
 }
 
-// mapPermissionsCollectionHandler lists a map's per-user permission grants.
-// Managing per-map permissions requires either the global is_admin
-// permission (same as the Users API) or being the map's own owner.
-func mapPermissionsCollectionHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
+// MapPermissionsListHandler serves GET /maps/{id}/permissions: a map's
+// per-user permission grants. Managing per-map permissions requires either
+// the global is_admin permission (same as the Users API) or being the map's
+// own owner.
+func MapPermissionsListHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireMapAdmin(w, r, st, id) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
 			return
 		}
 
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !requireMapAdmin(w, r, st, id) {
 			return
 		}
 
@@ -944,45 +550,64 @@ func mapPermissionsCollectionHandler(st *store.Store, id uuid.UUID) http.Handler
 	}
 }
 
-// mapPermissionItemHandler grants or revokes a single user's per-map
-// permission. Managing per-map permissions requires either the global
-// is_admin permission (same as the Users API) or being the map's own owner.
-func mapPermissionItemHandler(st *store.Store, id uuid.UUID, username string) http.HandlerFunc {
+// MapPermissionSetHandler serves PUT /maps/{id}/permissions/{username}:
+// grants a single user's per-map permission. Managing per-map permissions
+// requires either the global is_admin permission (same as the Users API) or
+// being the map's own owner.
+func MapPermissionSetHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
 		if !requireMapAdmin(w, r, st, id) {
 			return
 		}
 
-		switch r.Method {
-		case http.MethodPut:
-			var req mapPermissionRequest
-			if !decodeJSON(w, r, &req) {
-				return
-			}
+		username := r.PathValue("username")
 
-			p, err := st.SetMapPermission(r.Context(), id, username, req.CanView, req.CanEdit, req.CanDelete, req.CanEditGeoObjects, req.CanDeleteGeoObjects, usernameFromContext(r.Context()))
-			if err != nil {
-				writeStoreError(w, err, store.ErrMapPermissionInvalid, http.StatusBadRequest, "map or username does not exist", "failed to set map permission")
-				return
-			}
-
-			recordAudit(r, st, "grant", "map_permission", id.String()+":"+username, fmt.Sprintf("view=%v edit=%v delete=%v editGeo=%v deleteGeo=%v", req.CanView, req.CanEdit, req.CanDelete, req.CanEditGeoObjects, req.CanDeleteGeoObjects))
-
-			utils.WriteJSON(w, http.StatusOK, p)
-
-		case http.MethodDelete:
-			if err := st.DeleteMapPermission(r.Context(), id, username); err != nil {
-				http.Error(w, "failed to delete map permission", http.StatusInternalServerError)
-				return
-			}
-
-			recordAudit(r, st, "revoke", "map_permission", id.String()+":"+username, "")
-
-			w.WriteHeader(http.StatusNoContent)
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		var req mapPermissionRequest
+		if !utils.DecodeJSON(w, r, &req) {
+			return
 		}
+
+		p, err := st.SetMapPermission(r.Context(), id, username, req.CanView, req.CanEdit, req.CanDelete, req.CanEditGeoObjects, req.CanDeleteGeoObjects, usernameFromContext(r.Context()))
+		if err != nil {
+			writeStoreError(w, err, store.ErrMapPermissionInvalid, http.StatusBadRequest, "map or username does not exist", "failed to set map permission")
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "grant", "map_permission", id.String()+":"+username, fmt.Sprintf("view=%v edit=%v delete=%v editGeo=%v deleteGeo=%v", req.CanView, req.CanEdit, req.CanDelete, req.CanEditGeoObjects, req.CanDeleteGeoObjects))
+
+		utils.WriteJSON(w, http.StatusOK, p)
+	}
+}
+
+// MapPermissionDeleteHandler serves DELETE /maps/{id}/permissions/{username}:
+// revokes a single user's per-map permission. See MapPermissionSetHandler for
+// the access rule.
+func MapPermissionDeleteHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if !requireMapAdmin(w, r, st, id) {
+			return
+		}
+
+		username := r.PathValue("username")
+
+		if err := st.DeleteMapPermission(r.Context(), id, username); err != nil {
+			http.Error(w, "failed to delete map permission", http.StatusInternalServerError)
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "revoke", "map_permission", id.String()+":"+username, "")
+
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
@@ -990,54 +615,63 @@ type mapOwnerRequest struct {
 	Owner string `json:"owner"`
 }
 
-// mapOwnerItemHandler fetches (GET, requires view access) or transfers (PUT)
-// a map's owner. Transferring ownership requires the same access as managing
-// the map's permission grants (requireMapAdmin: global admin or the map's
-// current owner) — an owner able to do everything with their own map,
-// including handing it off to someone else.
-func mapOwnerItemHandler(st *store.Store, id uuid.UUID) http.HandlerFunc {
+// MapOwnerGetHandler serves GET /maps/{id}/owner: fetches a map's owner
+// (requires view access).
+func MapOwnerGetHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			m, ok := getViewableMap(w, r, st, id)
-			if !ok {
-				return
-			}
-
-			utils.WriteJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
-
-		case http.MethodPut:
-			if !requireMapAdmin(w, r, st, id) {
-				return
-			}
-
-			var req mapOwnerRequest
-			if !decodeJSON(w, r, &req) {
-				return
-			}
-
-			if req.Owner == "" {
-				http.Error(w, "owner is required", http.StatusBadRequest)
-				return
-			}
-
-			m, err := st.UpdateMapOwner(r.Context(), id, req.Owner)
-			if errors.Is(err, store.ErrMapNotFound) {
-				http.Error(w, "map not found", http.StatusNotFound)
-				return
-			}
-
-			if err != nil {
-				writeStoreError(w, err, store.ErrUserNotFound, http.StatusBadRequest, "owner does not exist", "failed to update map owner")
-				return
-			}
-
-			recordAudit(r, st, "update", "map_owner", id.String(), "owner="+req.Owner)
-
-			utils.WriteJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
-
-		default:
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
 		}
+
+		m, ok := getViewableMap(w, r, st, id)
+		if !ok {
+			return
+		}
+
+		utils.WriteJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
+	}
+}
+
+// MapOwnerSetHandler serves PUT /maps/{id}/owner: transfers a map's owner.
+// Transferring ownership requires the same access as managing the map's
+// permission grants (requireMapAdmin: global admin or the map's current
+// owner) — an owner able to do everything with their own map, including
+// handing it off to someone else.
+func MapOwnerSetHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if !requireMapAdmin(w, r, st, id) {
+			return
+		}
+
+		var req mapOwnerRequest
+		if !utils.DecodeJSON(w, r, &req) {
+			return
+		}
+
+		if req.Owner == "" {
+			http.Error(w, "owner is required", http.StatusBadRequest)
+			return
+		}
+
+		m, err := st.UpdateMapOwner(r.Context(), id, req.Owner)
+		if errors.Is(err, store.ErrMapNotFound) {
+			http.Error(w, "map not found", http.StatusNotFound)
+			return
+		}
+
+		if err != nil {
+			writeStoreError(w, err, store.ErrUserNotFound, http.StatusBadRequest, "owner does not exist", "failed to update map owner")
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "update", "map_owner", id.String(), "owner="+req.Owner)
+
+		utils.WriteJSON(w, http.StatusOK, mapOwnerRequest{Owner: m.Owner})
 	}
 }

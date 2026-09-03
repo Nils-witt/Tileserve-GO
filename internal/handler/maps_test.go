@@ -12,35 +12,6 @@ import (
 	"nilswitt.dev/tileserve-go/internal/handler/utils"
 )
 
-func TestIsVersionSubResourcePath(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		segments []string
-		want     bool
-	}{
-		{"bounds", []string{"id", versionPathSegment, "3", boundsPathSegment}, true},
-		{"archive", []string{"id", versionPathSegment, "3", archivePathSegment}, true},
-		{"download", []string{"id", versionPathSegment, "3", downloadPathSegment}, true},
-		{"geo-objects collection", []string{"id", versionPathSegment, "3", geoObjectsPathSegment}, true},
-		{"geo-objects item", []string{"id", versionPathSegment, "3", geoObjectsPathSegment, "obj-uuid"}, true},
-		{"raw tile file", []string{"id", versionPathSegment, "3", "0", "0", "0.png"}, false},
-		{"top-level raw tile file", []string{"id", versionPathSegment, "3", "5.png"}, false},
-		{"not a version path", []string{"id", "upload"}, false},
-		{"too short", []string{"id", versionPathSegment, "3"}, false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-
-			if got := isVersionSubResourcePath(tt.segments); got != tt.want {
-				t.Errorf("isVersionSubResourcePath(%v) = %v, want %v", tt.segments, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestWriteJSON(t *testing.T) {
 	t.Parallel()
 
@@ -77,8 +48,8 @@ func TestDecodeJSON(t *testing.T) {
 		var v struct {
 			Name string `json:"name"`
 		}
-		if ok := decodeJSON(w, r, &v); !ok {
-			t.Fatal("decodeJSON() = false, want true")
+		if ok := utils.DecodeJSON(w, r, &v); !ok {
+			t.Fatal("utils.DecodeJSON() = false, want true")
 		}
 
 		if v.Name != "a" {
@@ -97,8 +68,8 @@ func TestDecodeJSON(t *testing.T) {
 		w := httptest.NewRecorder()
 
 		var v struct{}
-		if ok := decodeJSON(w, r, &v); ok {
-			t.Fatal("decodeJSON() = true, want false")
+		if ok := utils.DecodeJSON(w, r, &v); ok {
+			t.Fatal("utils.DecodeJSON() = true, want false")
 		}
 
 		if w.Code != http.StatusBadRequest {

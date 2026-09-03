@@ -18,17 +18,9 @@ import (
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
-type contextKey string
-
-const (
-	usernameContextKey contextKey = "username"
-	apiKeyIDContextKey contextKey = "apiKeyID"
-)
-
 // usernameFromContext returns the JWT subject stored by RequireAuth, or "" if absent.
 func usernameFromContext(ctx context.Context) string {
-	username, _ := ctx.Value(usernameContextKey).(string)
-	return username
+	return utils.UsernameFromContext(ctx)
 }
 
 // apiKeyIDFromContext returns the id of the API key that authenticated this
@@ -36,14 +28,13 @@ func usernameFromContext(ctx context.Context) string {
 // authMiddleware) — scoping (internal/store's api_key_scopes) only ever
 // restricts an API key's own access, never a human session's.
 func apiKeyIDFromContext(ctx context.Context) (uuid.UUID, bool) {
-	id, ok := ctx.Value(apiKeyIDContextKey).(uuid.UUID)
-	return id, ok
+	return utils.APIKeyIDFromContext(ctx)
 }
 
-//go:embed login.html
+//go:embed ui/login.html
 var loginPage []byte
 
-//go:embed login.js
+//go:embed ui/login.js
 var loginScript []byte
 
 // LoginScriptHandler serves the login page's script at /login.js.
@@ -94,7 +85,7 @@ func LoginHandler(secret []byte, st *store.Store, ldapAuth *ldapauth.Authenticat
 		}
 
 		var req loginRequest
-		if !decodeJSON(w, r, &req) {
+		if !utils.DecodeJSON(w, r, &req) {
 			return
 		}
 
@@ -139,7 +130,7 @@ func RefreshHandler(secret []byte, st *store.Store) http.HandlerFunc {
 		}
 
 		var req refreshRequest
-		if !decodeJSON(w, r, &req) {
+		if !utils.DecodeJSON(w, r, &req) {
 			return
 		}
 
@@ -186,9 +177,9 @@ func AuthMiddleware(secret []byte, resolver jwt.APIKeySigningKeyResolver, next h
 			return
 		}
 
-		ctx := context.WithValue(r.Context(), usernameContextKey, username)
+		ctx := utils.ContextWithUsername(r.Context(), username)
 		if apiKeyID != uuid.Nil {
-			ctx = context.WithValue(ctx, apiKeyIDContextKey, apiKeyID)
+			ctx = utils.ContextWithAPIKeyID(ctx, apiKeyID)
 		}
 
 		next.ServeHTTP(w, r.WithContext(ctx))

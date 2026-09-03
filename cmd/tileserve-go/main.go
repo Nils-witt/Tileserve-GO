@@ -17,6 +17,9 @@ import (
 	"nilswitt.dev/tileserve-go/internal/handler"
 	"nilswitt.dev/tileserve-go/internal/handler/auth"
 	"nilswitt.dev/tileserve-go/internal/handler/auth/oidc"
+	"nilswitt.dev/tileserve-go/internal/handler/http_endpoints"
+	"nilswitt.dev/tileserve-go/internal/handler/ui"
+	"nilswitt.dev/tileserve-go/internal/handler/utils"
 	"nilswitt.dev/tileserve-go/internal/ldapauth"
 	"nilswitt.dev/tileserve-go/internal/serverkey"
 	"nilswitt.dev/tileserve-go/internal/store"
@@ -200,43 +203,7 @@ func run(config *ApplicationConfig) error {
 		return err
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	mux.HandleFunc("/version", handler.VersionHandler())
-	mux.HandleFunc("/login", handler.LoginHandler(secret, st, ldapAuth))
-	mux.HandleFunc("/login.js", handler.LoginScriptHandler())
-	mux.HandleFunc("/refresh", handler.RefreshHandler(secret, st))
-	mux.HandleFunc("/auth/methods", oidc.AuthMethodsHandler(oidcAuth != nil))
-
-	if oidcAuth != nil {
-		mux.HandleFunc("/login/oidc", oidc.LoginHandler(oidcAuth))
-		mux.HandleFunc("/login/oidc/callback", oidc.CallbackHandler(oidcAuth, secret, st))
-	}
-
-	guardAuth := func(h http.Handler) http.Handler {
-		return handler.AuthMiddleware(secret, st, h, true)
-	}
-
-	checkAuth := func(h http.Handler) http.Handler {
-		return handler.AuthMiddleware(secret, st, h, false)
-	}
-
-	mux.HandleFunc("/ui/", handler.UIHandler())
-	mux.HandleFunc("/openapi.yaml", handler.OpenAPIHandler())
-	mux.Handle("/maps", guardAuth(handler.MapsCollectionHandler(st)))
-	mux.Handle("/maps/", checkAuth(handler.MapsItemHandler(st, config.DataRoot)))
-
-	mux.Handle("/users", guardAuth(handler.UsersCollectionHandler(st)))
-	mux.Handle("/users/", guardAuth(handler.UserItemHandler(st)))
-	mux.Handle("/sync/remotes", guardAuth(handler.SyncRemotesCollectionHandler(st)))
-	mux.Handle("/sync/remotes/", guardAuth(handler.SyncRemoteItemHandler(st, syncManager)))
-	mux.Handle("/keys/generate", guardAuth(handler.GenerateKeyPairHandler(st)))
-	mux.Handle("/server/public-key", guardAuth(handler.ServerPublicKeyHandler(st, config.KeysDir)))
-	mux.Handle("/audit-logs", guardAuth(handler.AuditLogsCollectionHandler(st)))
-	mux.Handle("/permissions", guardAuth(handler.PermissionsCollectionHandler(st)))
+	mux := registerRoutes(st, config, secret, ldapAuth, oidcAuth, syncManager)
 
 	addr := ":" + config.Port
 	srv := &http.Server{
@@ -262,6 +229,124 @@ func run(config *ApplicationConfig) error {
 	}
 
 	return nil
+}
+
+// registerRoutes builds the mux and wires up the full route table. See the
+// mux.Handle calls below for the route table itself.
+func registerRoutes(st *store.Store, config *ApplicationConfig, secret []byte, ldapAuth *ldapauth.Authenticator, oidcAuth *oidc.Authenticator, syncManager *sync.Manager) *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.HandleFunc("/version", handler.VersionHandler())
+	mux.HandleFunc("/login", handler.LoginHandler(secret, st, ldapAuth))
+	mux.HandleFunc("/login.js", handler.LoginScriptHandler())
+	mux.HandleFunc("/refresh", handler.RefreshHandler(secret, st))
+	mux.HandleFunc("/auth/methods", oidc.AuthMethodsHandler(oidcAuth != nil))
+
+	if oidcAuth != nil {
+		mux.HandleFunc("/login/oidc", oidc.LoginHandler(oidcAuth))
+		mux.HandleFunc("/login/oidc/callback", oidc.CallbackHandler(oidcAuth, secret, st))
+	}
+
+	guardAuth := func(h http.Handler) http.Handler {
+		return handler.AuthMiddleware(secret, st, h, true)
+	}
+
+	checkAuth := func(h http.Handler) http.Handler {
+		return handler.AuthMiddleware(secret, st, h, false)
+	}
+
+	// guardAdmin requires a valid bearer token (guardAuth) AND the global
+	// is_admin permission, replacing every handler-internal
+	// utils.RequireAdmin call this refactor removes in favor of gating
+	// admin-only routes once, here, at registration time.
+	guardAdmin := func(h http.Handler) http.Handler {
+		return guardAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !utils.RequireAdmin(w, r, st) {
+				return
+			}
+
+			h.ServeHTTP(w, r)
+		}))
+	}
+
+	mux.Handle("GET /ui/", ui.ServeUIHandler())
+	mux.Handle("GET /ui/app.js", ui.ServeUIScriptHandler())
+
+	mux.Handle("GET /openapi.yaml", handler.OpenAPIHandler())
+	mux.Handle("GET /maps", guardAuth(http_endpoints.MapsList(st)))
+	mux.Handle("POST /maps", guardAuth(http_endpoints.MapCreate(st)))
+
+	mux.Handle("GET /maps/{id}", guardAuth(handler.GetMapHandler(st)))
+	mux.Handle("PUT /maps/{id}", guardAuth(handler.UpdateMapHandler(st)))
+	mux.Handle("DELETE /maps/{id}", guardAuth(handler.DeleteMapHandler(st)))
+
+	mux.Handle("POST /maps/{id}/upload", guardAuth(handler.UploadMapVersionHandler(st, config.DataRoot)))
+	mux.Handle("GET /maps/{id}/versions", guardAuth(handler.MapVersionsHandler(st)))
+
+	mux.Handle("GET /maps/{id}/permissions", guardAuth(handler.MapPermissionsListHandler(st)))
+	mux.Handle("PUT /maps/{id}/permissions/{username}", guardAuth(handler.MapPermissionSetHandler(st)))
+	mux.Handle("DELETE /maps/{id}/permissions/{username}", guardAuth(handler.MapPermissionDeleteHandler(st)))
+
+	mux.Handle("GET /maps/{id}/aliases", guardAuth(handler.MapAliasesListHandler(st)))
+	mux.Handle("GET /maps/{id}/aliases/{alias}", guardAuth(handler.MapAliasGetHandler(st)))
+	mux.Handle("PUT /maps/{id}/aliases/{alias}", guardAuth(handler.MapAliasSetHandler(st)))
+	mux.Handle("DELETE /maps/{id}/aliases/{alias}", guardAuth(handler.MapAliasDeleteHandler(st)))
+
+	mux.Handle("GET /maps/{id}/owner", guardAuth(handler.MapOwnerGetHandler(st)))
+	mux.Handle("PUT /maps/{id}/owner", guardAuth(handler.MapOwnerSetHandler(st)))
+
+	mux.Handle("GET /maps/{id}/version/{version}/bounds", guardAuth(handler.MapVersionBoundsHandler(st, config.DataRoot)))
+	mux.Handle("GET /maps/{id}/version/{version}/archive", guardAuth(handler.MapVersionArchiveHandler(st, config.DataRoot)))
+	mux.Handle("GET /maps/{id}/version/{version}/download", guardAdmin(handler.MapVersionDownloadHandler(st, config.DataRoot)))
+
+	mux.Handle("GET /maps/{id}/version/{version}/geo-objects", guardAuth(handler.GeoObjectsListHandler(st)))
+	mux.Handle("POST /maps/{id}/version/{version}/geo-objects", guardAuth(handler.GeoObjectCreateHandler(st)))
+	mux.Handle("GET /maps/{id}/version/{version}/geo-objects/{objectId}", guardAuth(handler.GeoObjectGetHandler(st)))
+	mux.Handle("PUT /maps/{id}/version/{version}/geo-objects/{objectId}", guardAuth(handler.GeoObjectUpdateHandler(st)))
+	mux.Handle("DELETE /maps/{id}/version/{version}/geo-objects/{objectId}", guardAuth(handler.GeoObjectDeleteHandler(st)))
+
+	// Raw extracted tile file serving — the one route reachable without a
+	// bearer token (map.AnonymousAllowed), hence checkAuth not guardAuth.
+	// Method intentionally unpinned, matching prior behavior (only
+	// http.FileServer decides). Both patterns point at the same handler:
+	// the exact pattern preserves a 404 for a no-trailing-slash/no-file
+	// request instead of ServeMux's redirect-to-trailing-slash that a lone
+	// "..." wildcard registration would otherwise trigger.
+	mux.Handle("/maps/{id}/version/{version}", checkAuth(handler.ServeMapVersionFileHandler(st, config.DataRoot)))
+	mux.Handle("/maps/{id}/version/{version}/{filepath...}", checkAuth(handler.ServeMapVersionFileHandler(st, config.DataRoot)))
+
+	mux.Handle("GET /users", guardAuth(handler.UsersListHandler(st)))
+	mux.Handle("POST /users", guardAdmin(handler.UserCreateHandler(st)))
+	mux.Handle("PUT /users/{username}", guardAdmin(handler.UserUpdateHandler(st)))
+	mux.Handle("DELETE /users/{username}", guardAdmin(handler.UserDeleteHandler(st)))
+
+	mux.Handle("GET /users/{username}/api-keys", guardAdmin(handler.APIKeysListHandler(st)))
+	mux.Handle("POST /users/{username}/api-keys", guardAdmin(handler.APIKeyCreateHandler(st)))
+	mux.Handle("DELETE /users/{username}/api-keys/{id}", guardAdmin(handler.APIKeyDeleteHandler(st)))
+	mux.Handle("GET /users/{username}/api-keys/{id}/scopes", guardAdmin(handler.APIKeyScopesListHandler(st)))
+	mux.Handle("DELETE /users/{username}/api-keys/{id}/scopes", guardAdmin(handler.APIKeyScopesClearHandler(st)))
+	mux.Handle("PUT /users/{username}/api-keys/{id}/scopes/{mapId}", guardAdmin(handler.APIKeyScopeSetHandler(st)))
+	mux.Handle("DELETE /users/{username}/api-keys/{id}/scopes/{mapId}", guardAdmin(handler.APIKeyScopeDeleteHandler(st)))
+
+	mux.Handle("GET /sync/remotes", guardAdmin(handler.SyncRemotesListHandler(st)))
+	mux.Handle("POST /sync/remotes", guardAdmin(handler.SyncRemoteCreateHandler(st)))
+	mux.Handle("GET /sync/remotes/{id}", guardAdmin(handler.SyncRemoteGetHandler(st)))
+	mux.Handle("PUT /sync/remotes/{id}", guardAdmin(handler.SyncRemoteUpdateHandler(st)))
+	mux.Handle("DELETE /sync/remotes/{id}", guardAdmin(handler.SyncRemoteDeleteHandler(st)))
+	mux.Handle("POST /sync/remotes/{id}/trigger", guardAdmin(handler.SyncRemoteTriggerHandler(st, syncManager)))
+	mux.Handle("GET /sync/remotes/{id}/logs", guardAdmin(handler.SyncRemoteLogsHandler(syncManager)))
+	mux.Handle("GET /sync/remotes/{id}/remote-maps", guardAdmin(handler.SyncRemoteRemoteMapsHandler(syncManager)))
+	mux.Handle("GET /sync/remotes/{id}/selected-maps", guardAdmin(handler.SyncRemoteSelectedMapsHandler(st)))
+
+	mux.Handle("POST /keys/generate", guardAdmin(handler.GenerateKeyPairHandler(st)))
+	mux.Handle("GET /server/public-key", guardAdmin(handler.ServerPublicKeyHandler(st, config.KeysDir)))
+	mux.Handle("GET /audit-logs", guardAdmin(http_endpoints.AuditLogsCollectionHandler(st)))
+	mux.Handle("GET /permissions", guardAdmin(handler.PermissionsCollectionHandler(st)))
+
+	return mux
 }
 
 func initStore(ctx context.Context, dbDSN, seedUsername, seedPassword string) (*store.Store, error) {

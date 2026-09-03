@@ -14,14 +14,6 @@ import (
 // without listing them one map at a time.
 func PermissionsCollectionHandler(st *store.Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, st) {
-			return
-		}
-
-		if !utils.RequireMethod(w, r, http.MethodGet) {
-			return
-		}
-
 		perms, err := st.ListAllMapPermissions(r.Context())
 		if err != nil {
 			http.Error(w, "failed to list permissions", http.StatusInternalServerError)

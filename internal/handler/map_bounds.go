@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"nilswitt.dev/tileserve-go/internal/handler/utils"
 
+	"nilswitt.dev/tileserve-go/internal/store"
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
 )
 
@@ -38,11 +39,7 @@ type tileBounds struct {
 // mapVersionBoundsHandler computes the tile extent of a map version for use
 // as a preview map's initial view.
 func mapVersionBoundsHandler(dataRoot string, id uuid.UUID, version string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !utils.RequireMethod(w, r, http.MethodGet) {
-			return
-		}
-
+	return func(w http.ResponseWriter, _ *http.Request) {
 		if !tilearchive.NumericSegmentRE.MatchString(version) {
 			http.Error(w, "invalid version", http.StatusBadRequest)
 			return
@@ -55,6 +52,29 @@ func mapVersionBoundsHandler(dataRoot string, id uuid.UUID, version string) http
 		}
 
 		utils.WriteJSON(w, http.StatusOK, bounds)
+	}
+}
+
+// MapVersionBoundsHandler serves GET /maps/{id}/version/{version}/bounds:
+// the tile extent of a map version, gated the same way as archive/geo-objects
+// (getViewableMap).
+func MapVersionBoundsHandler(st *store.Store, dataRoot string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := utils.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if _, ok := getViewableMap(w, r, st, id); !ok {
+			return
+		}
+
+		version, ok := resolveVersionSegment(w, r, st, id, r.PathValue("version"))
+		if !ok {
+			return
+		}
+
+		mapVersionBoundsHandler(dataRoot, id, version)(w, r)
 	}
 }
 

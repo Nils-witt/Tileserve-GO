@@ -33,16 +33,8 @@ type keyPairResponse struct {
 // half wherever a key gets registered; this server never stores it. Sync
 // remotes don't use this: they all authenticate with this server's own
 // persistent key pair instead (see ServerPublicKeyHandler).
-func GenerateKeyPairHandler(st *store.Store) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, st) {
-			return
-		}
-
-		if !utils.RequireMethod(w, r, http.MethodPost) {
-			return
-		}
-
+func GenerateKeyPairHandler(_ *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		key, err := rsa.GenerateKey(rand.Reader, generatedKeyBits)
 		if err != nil {
 			http.Error(w, "failed to generate key pair", http.StatusInternalServerError)
@@ -79,16 +71,8 @@ type serverPublicKeyResponse struct {
 // register this server as a sync client there — every sync remote this
 // server pulls from is authenticated with this same key (see
 // internal/sync.Manager), not a key pair generated per remote.
-func ServerPublicKeyHandler(st *store.Store, keysDir string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !requireAdmin(w, r, st) {
-			return
-		}
-
-		if !utils.RequireMethod(w, r, http.MethodGet) {
-			return
-		}
-
+func ServerPublicKeyHandler(_ *store.Store, keysDir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
 		pemBytes, err := os.ReadFile(filepath.Join(keysDir, serverkey.PublicKeyFileName)) //nolint:gosec // G304: keysDir is a server-operator-supplied startup flag, not request input
 		if err != nil {
 			http.Error(w, "failed to read server public key", http.StatusInternalServerError)
