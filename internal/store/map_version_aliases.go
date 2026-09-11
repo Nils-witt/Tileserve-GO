@@ -90,7 +90,7 @@ func (s *Store) ListMapVersionAliases(ctx context.Context, mapID uuid.UUID) ([]M
 // It returns ErrMapVersionAliasInvalid if mapID doesn't exist or version
 // isn't in that map's version history. Callers must validate alias itself
 // (reserved keyword / numeric-looking name) before calling this — see
-// validateAliasName in internal/handler.
+// validateAliasName in internal/webserver.
 func (s *Store) SetMapVersionAlias(ctx context.Context, mapID uuid.UUID, alias, version, actor string) (MapVersionAlias, error) {
 	a := MapVersionAlias{Alias: alias, Version: version, CreatedBy: actor, UpdatedBy: actor}
 

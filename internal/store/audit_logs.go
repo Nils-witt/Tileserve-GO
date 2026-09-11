@@ -73,7 +73,7 @@ func (f AuditLogFilter) clauses(qb *queryBuilder) []string {
 }
 
 // RecordAuditLog appends one entry to the audit log. Callers treat this as
-// best-effort observability (see internal/handler.recordAudit): a failure
+// best-effort observability (see internal/webserver/auditlog.RecordAudit): a failure
 // here is logged but never fails the mutating request it's describing.
 func (s *Store) RecordAuditLog(ctx context.Context, actor, action, entityType, entityID, detail string) error {
 	_, err := s.pool.Exec(ctx, `

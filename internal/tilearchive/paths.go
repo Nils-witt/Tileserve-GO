@@ -1,6 +1,6 @@
 // Package tilearchive implements zip/tar archive extraction (with zip-slip
 // protection) and tile-index maintenance for map version tile pyramids. It's
-// shared by the HTTP upload handler (internal/handler) and the
+// shared by the HTTP upload handler (internal/webserver) and the
 // server-to-server sync puller (internal/sync), neither of which should
 // depend on the other.
 package tilearchive

@@ -54,10 +54,10 @@ type SyncRemote struct {
 // SyncLogEntry is one line of a sync remote's recent in-memory activity log
 // (see internal/sync.LogStore). Unlike everything else in this package, it
 // is never persisted — it lives only in the running server's memory — but
-// is declared here, rather than in package sync, so internal/handler can
+// is declared here, rather than in package sync, so internal/webserver can
 // name it in its own interface without importing internal/sync, keeping the
 // handler -> sync dependency one-way (see the syncTrigger interface comment
-// in internal/handler/sync_remotes.go).
+// in internal/webserver/sync_remotes.go).
 type SyncLogEntry struct {
 	Time    time.Time `json:"time"`
 	Level   string    `json:"level"`

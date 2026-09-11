@@ -454,7 +454,7 @@ var migrationSteps = []struct {
 		// Records who did what to which resource, and when — every
 		// mutating admin/API action across users, maps, permissions, geo
 		// objects, api keys, and sync remotes (see
-		// internal/handler.recordAudit and its call sites). entity_id is
+		// internal/webserver/auditlog.RecordAudit and its call sites). entity_id is
 		// TEXT rather than UUID since some entities have no single UUID
 		// (e.g. a per-map permission grant is keyed by map uuid AND
 		// username) and are recorded as a composite string instead.
@@ -648,7 +648,7 @@ func (p Permissions) GrantsMapVisibility() bool {
 // belongs to (see group_members/groups) — a group only ever adds
 // capability, never removes it, same as a per-map grant. Results are cached
 // for cacheTTL, since this is looked up on every authenticated request (see
-// requirePermission/canViewMap in internal/handler) but changes rarely. A
+// requirePermission/canViewMap in internal/webserver) but changes rarely. A
 // nonexistent username still errors exactly as before: the UNION ALL
 // produces zero total rows (group_members.username FKs to users, so a
 // nonexistent user belongs to no groups either), and bool_or over zero rows

@@ -27,7 +27,7 @@ type MapRecord struct {
 	CreatedBy        string    `json:"createdBy"`
 	UpdatedBy        string    `json:"updatedBy"`
 	// Owner is the username of the user who can do everything with this
-	// map (see isMapOwner in internal/handler), regardless of global or
+	// map (see isMapOwner in internal/webserver), regardless of global or
 	// per-map grants. It starts out equal to CreatedBy but, unlike it, can
 	// be transferred to another user later (see UpdateMapOwner).
 	// Persisted as maps.owner_id, a foreign key to the owning user's

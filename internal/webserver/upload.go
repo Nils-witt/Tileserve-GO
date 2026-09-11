@@ -1,0 +1,127 @@
+package webserver
+
+import (
+	"errors"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	"nilswitt.dev/tileserve-go/internal/auth"
+	"nilswitt.dev/tileserve-go/internal/httputil"
+	"nilswitt.dev/tileserve-go/internal/webserver/auditlog"
+
+	"nilswitt.dev/tileserve-go/internal/store"
+	"nilswitt.dev/tileserve-go/internal/tilearchive"
+)
+
+const maxUploadSize = 1 << 30 // 1 GiB
+
+// UploadMapVersionHandler serves POST /maps/{id}/upload.
+func UploadMapVersionHandler(st *store.Store, dataRoot string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := httputil.PathUUID(w, r, "id", "map id")
+		if !ok {
+			return
+		}
+
+		if !requireMapPermission(w, r, st, id,
+			func(p store.Permissions) bool { return p.CanCreate },
+			func(mp store.MapPermission) bool { return mp.CanEdit },
+		) {
+			return
+		}
+
+		tmpPath, ok := receiveUpload(w, r)
+		if !ok {
+			return
+		}
+		defer func() { _ = os.Remove(tmpPath) }()
+
+		dir := tilearchive.MapDir(dataRoot, id)
+
+		stagingDir, ok := extractUploadedArchive(w, tmpPath, dir)
+		if !ok {
+			return
+		}
+		defer func() { _ = os.RemoveAll(stagingDir) }()
+
+		if err := tilearchive.WriteTileIndex(stagingDir); err != nil {
+			http.Error(w, "failed to build tile index", http.StatusInternalServerError)
+			return
+		}
+
+		m, err := st.IncrementMapVersion(r.Context(), id, auth.UsernameFromContext(r.Context()))
+		if err != nil {
+			writeStoreError(w, err, store.ErrMapNotFound, http.StatusNotFound, "map not found", "failed to record new version")
+			return
+		}
+
+		destDir := filepath.Join(dir, m.CurrentVersion)
+		if err := os.Rename(stagingDir, destDir); err != nil {
+			http.Error(w, "failed to store version", http.StatusInternalServerError)
+			return
+		}
+
+		auditlog.RecordAudit(r, st, "upload", "map_version", id.String()+":"+m.CurrentVersion, "")
+
+		httputil.WriteJSON(w, http.StatusCreated, m)
+	}
+}
+
+func receiveUpload(w http.ResponseWriter, r *http.Request) (string, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
+
+	tmpFile, err := os.CreateTemp("", "tileserve-upload-*")
+	if err != nil {
+		http.Error(w, "failed to buffer upload", http.StatusInternalServerError)
+		return "", false
+	}
+	defer func() { _ = tmpFile.Close() }()
+
+	if _, err := io.Copy(tmpFile, r.Body); err != nil {
+		_ = os.Remove(tmpFile.Name())
+
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			http.Error(w, "upload too large", http.StatusRequestEntityTooLarge)
+			return "", false
+		}
+
+		http.Error(w, "failed to read upload", http.StatusBadRequest)
+
+		return "", false
+	}
+
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpFile.Name())
+
+		http.Error(w, "failed to buffer upload", http.StatusInternalServerError)
+
+		return "", false
+	}
+
+	return tmpFile.Name(), true
+}
+
+// extractUploadedArchive extracts tmpPath into a fresh staging directory
+// under dir via tilearchive.ExtractArchive, translating any error into the
+// appropriate HTTP response. On success the caller is responsible for
+// removing the returned staging directory; on failure extractUploadedArchive
+// has already written the appropriate error response and cleaned up.
+func extractUploadedArchive(w http.ResponseWriter, tmpPath, dir string) (string, bool) {
+	stagingDir, err := tilearchive.ExtractArchive(tmpPath, dir)
+	if err == nil {
+		return stagingDir, true
+	}
+
+	switch {
+	case errors.Is(err, tilearchive.ErrUnsupportedFormat):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	case errors.Is(err, tilearchive.ErrInvalidArchive):
+		http.Error(w, err.Error(), http.StatusBadRequest)
+	default:
+		http.Error(w, "failed to extract archive", http.StatusInternalServerError)
+	}
+
+	return "", false
+}

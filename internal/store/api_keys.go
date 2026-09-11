@@ -139,7 +139,7 @@ func (s *Store) RevokeAPIKey(ctx context.Context, username string, id uuid.UUID)
 
 // apiKeySigningKey is the cached form of a resolved key: the username it
 // authenticates as, its registered public key PEM (parsing that PEM into an
-// *rsa.PublicKey happens in internal/handler, which owns all JWT
+// *rsa.PublicKey happens in internal/webserver, which owns all JWT
 // verification concerns and already depends on golang-jwt), and whether it's
 // scope-restricted (see api_key_scopes.go) — cached alongside the rest since
 // ResolveAPIKeySigningKey already fetches the row on every API-key-

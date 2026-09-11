@@ -23,7 +23,7 @@ import (
 
 // maxArchiveSize caps how much data DownloadArchive will read from a
 // remote's version archive, mirroring maxUploadSize's role on the server's
-// inbound upload side (internal/handler/upload.go).
+// inbound upload side (internal/webserver/upload.go).
 const maxArchiveSize = 1 << 30 // 1 GiB
 
 // httpTimeout bounds a single request to a remote instance. Archive
@@ -34,7 +34,7 @@ const httpTimeout = 5 * time.Minute
 
 // apiKeyTokenTTL is how long each outbound JWT this client mints is valid
 // for — well under the remote's maxAPIKeyTokenLifetime policy ceiling
-// (internal/handler/auth.go), and short enough that minting a fresh one on
+// (internal/auth/auth.go), and short enough that minting a fresh one on
 // every request (rather than caching/reusing) is simplest and cheap given
 // sync's low request volume.
 const apiKeyTokenTTL = 5 * time.Minute

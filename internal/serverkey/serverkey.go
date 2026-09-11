@@ -14,7 +14,7 @@ import (
 )
 
 // keyBits is the RSA modulus size generated for this server's own key pair.
-// Larger than generatedKeyBits in internal/handler/keypair.go (which
+// Larger than generatedKeyBits in internal/webserver/keypair.go (which
 // generates keys on an admin's behalf for short-lived API key registration)
 // since this key pair is meant to persist for the server's lifetime.
 const keyBits = 4096
@@ -25,6 +25,21 @@ const (
 	PrivateKeyFileName = "server.key"
 	PublicKeyFileName  = "server.pub"
 )
+
+// EnsureLoadPrivateKey ensures a server key pair exists in keysDir, creating
+// one if needed, and returns the loaded private key.
+func EnsureLoadPrivateKey(keysDir string) (*rsa.PrivateKey, error) {
+	if err := EnsureKeyPair(keysDir); err != nil {
+		return nil, fmt.Errorf("ensure server key pair: %w", err)
+	}
+
+	serverPrivateKey, err := LoadPrivateKey(keysDir)
+	if err != nil {
+		return nil, fmt.Errorf("load server key pair: %w", err)
+	}
+
+	return serverPrivateKey, nil
+}
 
 // EnsureKeyPair makes sure dir contains a server.key/server.pub RSA key
 // pair, creating dir and generating a fresh 4096-bit pair (PKCS8 private
