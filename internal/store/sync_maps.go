@@ -28,8 +28,8 @@ func (s *Store) UpsertSyncedMap(ctx context.Context, id uuid.UUID, name string, 
 	// SELECT instead.
 	err := scanMap(s.pool.QueryRow(ctx, `
 		WITH upserted AS (
-			INSERT INTO maps (uuid, name, current_version, visible_to_all, anonymous_allowed, sync_remote_id, created_by, updated_by, owner_id, owner)
-			VALUES ($1, $2, '', $3, $4, $5, $6, $6, (SELECT id FROM users WHERE username = $6), $6)
+			INSERT INTO maps (uuid, name, current_version, visible_to_all, anonymous_allowed, sync_remote_id, created_by, updated_by, owner_id)
+			VALUES ($1, $2, '', $3, $4, $5, $6, $6, (SELECT id FROM users WHERE username = $6))
 			ON CONFLICT (uuid) DO UPDATE
 			SET name = $2, visible_to_all = $3, anonymous_allowed = $4, sync_remote_id = $5, updated_by = $6, updated_at = now()
 			RETURNING *
