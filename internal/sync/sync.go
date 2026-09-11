@@ -204,7 +204,11 @@ func syncRemoteOnce(ctx context.Context, st *store.Store, dataRoot string, clien
 
 	logs.logf(remote.ID, "sync remote %s (%s): syncing %d remote map(s)", remote.Name, remote.ID, len(maps))
 
-	actor := "sync:" + remote.Name
+	// Every remote's mirrored content is attributed to the same fixed
+	// account (see store.SyncUsername) rather than a per-remote one — the
+	// caller (see Manager.reconcile) is responsible for making sure it
+	// exists before any worker reaches this point.
+	actor := store.SyncUsername
 
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(maxConcurrentMapSyncs)

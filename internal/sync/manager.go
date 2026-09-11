@@ -103,6 +103,17 @@ func (m *Manager) reconcile(ctx context.Context) {
 		return
 	}
 
+	// Sync is "in use" the moment at least one remote is configured —
+	// ensure its fixed owner account (see store.SyncUsername) exists before
+	// any worker below can start a sync pass that needs it. Idempotent, so
+	// running it again on every tick costs nothing once the row exists.
+	if len(remotes) > 0 {
+		if err := m.st.EnsureSyncUser(ctx); err != nil {
+			log.Printf("sync manager: ERROR: ensure sync user: %v", err)
+			return
+		}
+	}
+
 	desired := make(map[uuid.UUID]store.SyncRemote, len(remotes))
 
 	for _, r := range remotes {

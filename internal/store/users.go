@@ -22,6 +22,15 @@ var (
 	ErrUserOwnsMaps = errors.New("user owns one or more maps")
 )
 
+// SyncUsername is the fixed local account every map, map version, and alias
+// mirrored by internal/sync is created/updated/owned by (see
+// Store.EnsureSyncUser) — one shared account across every configured
+// remote, rather than one per remote, so ownership of mirrored content
+// stays stable even if a remote is later renamed or removed (which remote a
+// given map, in particular, came from is already tracked separately via
+// maps.sync_remote_id).
+const SyncUsername = "sync"
+
 // UserRecord is the persisted form of a user account.
 type UserRecord struct {
 	Username            string    `json:"username"`
@@ -195,6 +204,39 @@ func (s *Store) UpdateUser(ctx context.Context, username string, perms Permissio
 	s.permsCache.invalidate(username)
 
 	return u, nil
+}
+
+// EnsureSyncUser creates the fixed SyncUsername ("sync") account if it
+// doesn't already exist yet, for internal/sync to attribute (as owner,
+// created_by, and updated_by) every map/version/alias it mirrors from a
+// remote. Idempotent and safe to call repeatedly — a no-op once the row
+// exists, so callers (see sync.Manager's reconcile loop) can just call it
+// unconditionally whenever sync is in use rather than tracking whether
+// they've done so before.
+//
+// Its password_hash is set to a random value never handed back to anyone,
+// the same approach CreateLDAPUser uses: with no usable local password, and
+// (having no oidc_subject/ldap_dn either) no identity provider it's linked
+// to, the account can never sign in through any login path. It's created
+// with no global permissions (can_create/edit/delete and is_admin all
+// false) — nothing it does goes through a permission check, since
+// internal/sync calls Store methods directly rather than through the
+// authenticated HTTP API.
+func (s *Store) EnsureSyncUser(ctx context.Context) error {
+	hash := ""
+
+	const noPermissions = false
+
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO users (username, password_hash, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin)
+		VALUES ($1, $2, $3, $3, $3, $3, $3, $3)
+		ON CONFLICT (username) DO NOTHING
+	`, SyncUsername, hash, noPermissions)
+	if err != nil {
+		return fmt.Errorf("ensure sync user: %w", err)
+	}
+
+	return nil
 }
 
 // DeleteUser deletes username. It returns ErrUserNotFound if it doesn't
