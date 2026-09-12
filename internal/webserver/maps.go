@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"slices"
 
@@ -258,13 +259,15 @@ func getViewableMap(w http.ResponseWriter, r *http.Request, st *store.Store, id 
 
 // ServeMapVersionFileHandler serves a single extracted tile file from a map
 // version's directory. It's the one route reachable without a bearer token,
-// when the map itself opts in via anonymousAllowed. Registered twice in
-// main.go: once for the exact "/maps/{id}/version/{version}" pattern (no
-// trailing slash, no file — falls through to a 404 via http.StripPrefix's
-// prefix-mismatch) and once for the "/maps/{id}/version/{version}/{filepath...}"
-// wildcard that serves the actual tile files. Both point at this same
-// handler.
-func ServeMapVersionFileHandler(st *store.Store, dataRoot string) http.HandlerFunc {
+// when the map itself opts in via anonymousAllowed, anonymousDisabled is
+// false, and the client's IP (see httputil.ClientIP) falls within
+// anonymousAllowedSubnets (an empty list means unrestricted). Registered
+// twice in main.go: once for the exact "/maps/{id}/version/{version}"
+// pattern (no trailing slash, no file — falls through to a 404 via
+// http.StripPrefix's prefix-mismatch) and once for the
+// "/maps/{id}/version/{version}/{filepath...}" wildcard that serves the
+// actual tile files. Both point at this same handler.
+func ServeMapVersionFileHandler(st *store.Store, dataRoot string, anonymousDisabled bool, anonymousAllowedSubnets []*net.IPNet) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httputil.PathUUID(w, r, "id", "map id")
 		if !ok {
@@ -277,7 +280,10 @@ func ServeMapVersionFileHandler(st *store.Store, dataRoot string) http.HandlerFu
 			return
 		}
 
-		if !m.AnonymousAllowed {
+		anonymousOK := m.AnonymousAllowed && !anonymousDisabled &&
+			httputil.IPInSubnets(httputil.ClientIP(r), anonymousAllowedSubnets)
+
+		if !anonymousOK {
 			if !RequireAuthenticated(w, r) || !requireMapView(w, r, st, m) {
 				return
 			}

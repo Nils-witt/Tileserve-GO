@@ -8,9 +8,11 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -39,6 +41,15 @@ type ApplicationConfig struct {
 
 	Port string
 
+	// AnonymousDisabled, when true, disables anonymous tile access
+	// server-wide, overriding any individual map's AnonymousAllowed flag.
+	AnonymousDisabled bool
+
+	// AnonymousAllowedSubnets, when non-empty, restricts anonymous tile
+	// access to clients whose IP falls within one of these subnets. An
+	// empty list means unrestricted.
+	AnonymousAllowedSubnets []*net.IPNet
+
 	OIDC auth.ApplicationOIDCConfig
 
 	LDAP auth.ApplicationLDAPConfig
@@ -52,6 +63,35 @@ func envOrDefault(key, fallback string) string {
 	}
 
 	return fallback
+}
+
+// envBool returns whether the environment variable key is set to "true",
+// for the common case of a boolean flag whose default comes from an env var.
+func envBool(key string) bool {
+	return os.Getenv(key) == "true"
+}
+
+// parseSubnets parses a comma-separated list of CIDR subnets (e.g.
+// "10.0.0.0/8,192.168.1.0/24") into their parsed form, skipping blank
+// entries. An empty or all-blank raw value returns a nil slice.
+func parseSubnets(raw string) ([]*net.IPNet, error) {
+	var subnets []*net.IPNet
+
+	for entry := range strings.SplitSeq(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+
+		_, subnet, err := net.ParseCIDR(entry)
+		if err != nil {
+			return nil, fmt.Errorf("anonymous-allowed-subnets: invalid CIDR %q: %w", entry, err)
+		}
+
+		subnets = append(subnets, subnet)
+	}
+
+	return subnets, nil
 }
 
 // main parses configuration (flags/env), connects to and migrates the
@@ -70,6 +110,8 @@ func main() {
 	seedUsername := flag.String("seed-username", envOrDefault("SEED_USERNAME", "admin"), "username to create on startup if it doesn't already exist (env SEED_USERNAME)")
 	seedPassword := flag.String("seed-password", envOrDefault("SEED_PASSWORD", "admin"), "password for -seed-username (env SEED_PASSWORD)")
 	port := flag.String("port", envOrDefault("PORT", "80"), "port to listen on (env PORT)")
+	anonymousDisabled := flag.Bool("anonymous-disabled", envBool("ANONYMOUS_DISABLED"), "disable anonymous tile access server-wide, overriding any map's anonymousAllowed setting (env ANONYMOUS_DISABLED)")
+	anonymousAllowedSubnets := flag.String("anonymous-allowed-subnets", envOrDefault("ANONYMOUS_ALLOWED_SUBNETS", ""), "comma-separated CIDR subnets allowed to use anonymous tile access when enabled, e.g. 10.0.0.0/8,192.168.1.0/24; empty means unrestricted (env ANONYMOUS_ALLOWED_SUBNETS)")
 	oidcIssuerURL := flag.String("oidc-issuer-url", envOrDefault("OIDC_ISSUER_URL", ""), "OpenID Connect issuer URL; set together with -oidc-client-id, -oidc-client-secret and -oidc-redirect-url to enable SSO login (env OIDC_ISSUER_URL)")
 	oidcClientID := flag.String("oidc-client-id", envOrDefault("OIDC_CLIENT_ID", ""), "OpenID Connect client id (env OIDC_CLIENT_ID)")
 	oidcClientSecret := flag.String("oidc-client-secret", envOrDefault("OIDC_CLIENT_SECRET", ""), "OpenID Connect client secret (env OIDC_CLIENT_SECRET)")
@@ -79,21 +121,28 @@ func main() {
 	ldapBindPassword := flag.String("ldap-bind-password", envOrDefault("LDAP_BIND_PASSWORD", ""), "password for -ldap-bind-dn (env LDAP_BIND_PASSWORD)")
 	ldapBaseDN := flag.String("ldap-base-dn", envOrDefault("LDAP_BASE_DN", ""), "search base for resolving a username to a directory entry, e.g. ou=people,dc=example,dc=com (env LDAP_BASE_DN)")
 	ldapUserFilter := flag.String("ldap-user-filter", envOrDefault("LDAP_USER_FILTER", "(uid=%s)"), `LDAP filter used to find a user's entry below -ldap-base-dn, with a "%s" placeholder for the username, e.g. (sAMAccountName=%s) for Active Directory (env LDAP_USER_FILTER)`)
-	ldapStartTLS := flag.Bool("ldap-start-tls", envOrDefault("LDAP_START_TLS", "") == "true", "upgrade a plain ldap:// connection with StartTLS before binding; ignored for an ldaps:// URL (env LDAP_START_TLS)")
-	ldapInsecureSkipVerify := flag.Bool("ldap-insecure-skip-verify", envOrDefault("LDAP_INSECURE_SKIP_VERIFY", "") == "true", "skip verification of the LDAP server's TLS certificate, for ldaps:// or -ldap-start-tls; insecure, only use if the certificate can't otherwise be trusted (env LDAP_INSECURE_SKIP_VERIFY)")
+	ldapStartTLS := flag.Bool("ldap-start-tls", envBool("LDAP_START_TLS"), "upgrade a plain ldap:// connection with StartTLS before binding; ignored for an ldaps:// URL (env LDAP_START_TLS)")
+	ldapInsecureSkipVerify := flag.Bool("ldap-insecure-skip-verify", envBool("LDAP_INSECURE_SKIP_VERIFY"), "skip verification of the LDAP server's TLS certificate, for ldaps:// or -ldap-start-tls; insecure, only use if the certificate can't otherwise be trusted (env LDAP_INSECURE_SKIP_VERIFY)")
 	ldapCACertFile := flag.String("ldap-ca-cert-file", envOrDefault("LDAP_CA_CERT_FILE", ""), "path to a PEM-encoded CA certificate (or bundle) used to verify the LDAP server's TLS certificate, for ldaps:// or -ldap-start-tls, instead of the system trust store; ignored if -ldap-insecure-skip-verify is set (env LDAP_CA_CERT_FILE)")
-	ldapDebug := flag.Bool("ldap-debug", envOrDefault("LDAP_DEBUG", "") == "true", "log each step of LDAP authentication (bind/search attempts, resolved DN, success/failure), including the username of every login attempt; off by default since that's per-attempt log volume (env LDAP_DEBUG)")
+	ldapDebug := flag.Bool("ldap-debug", envBool("LDAP_DEBUG"), "log each step of LDAP authentication (bind/search attempts, resolved DN, success/failure), including the username of every login attempt; off by default since that's per-attempt log volume (env LDAP_DEBUG)")
 
 	flag.Parse()
 
+	subnets, err := parseSubnets(*anonymousAllowedSubnets)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	config := ApplicationConfig{
-		DataRoot:     *dataRoot,
-		KeysDir:      *keysDir,
-		DBDSN:        *dbDSN,
-		SeedUsername: *seedUsername,
-		SeedPassword: *seedPassword,
-		Port:         *port,
-		JWTSecret:    *jwtSecret,
+		DataRoot:                *dataRoot,
+		KeysDir:                 *keysDir,
+		DBDSN:                   *dbDSN,
+		SeedUsername:            *seedUsername,
+		SeedPassword:            *seedPassword,
+		Port:                    *port,
+		JWTSecret:               *jwtSecret,
+		AnonymousDisabled:       *anonymousDisabled,
+		AnonymousAllowedSubnets: subnets,
 		OIDC: auth.ApplicationOIDCConfig{
 			IssuerURL:    *oidcIssuerURL,
 			ClientID:     *oidcClientID,
@@ -305,14 +354,16 @@ func registerRoutes(st *store.Store, config *ApplicationConfig, secret []byte, l
 	mux.Handle("DELETE /maps/{id}/version/{version}/geo-objects/{objectId}", guardAuth(webserver.GeoObjectDeleteHandler(st)))
 
 	// Raw extracted tile file serving — the one route reachable without a
-	// bearer token (map.AnonymousAllowed), hence checkAuth not guardAuth.
-	// Method intentionally unpinned, matching prior behavior (only
-	// http.FileServer decides). Both patterns point at the same handler:
-	// the exact pattern preserves a 404 for a no-trailing-slash/no-file
-	// request instead of ServeMux's redirect-to-trailing-slash that a lone
-	// "..." wildcard registration would otherwise trigger.
-	mux.Handle("/maps/{id}/version/{version}", checkAuth(webserver.ServeMapVersionFileHandler(st, config.DataRoot)))
-	mux.Handle("/maps/{id}/version/{version}/{filepath...}", checkAuth(webserver.ServeMapVersionFileHandler(st, config.DataRoot)))
+	// bearer token (map.AnonymousAllowed, unless AnonymousDisabled or the
+	// client's IP falls outside AnonymousAllowedSubnets), hence checkAuth
+	// not guardAuth. Method intentionally unpinned, matching prior behavior
+	// (only http.FileServer decides). Both patterns point at the same
+	// handler: the exact pattern preserves a 404 for a
+	// no-trailing-slash/no-file request instead of ServeMux's
+	// redirect-to-trailing-slash that a lone "..." wildcard registration
+	// would otherwise trigger.
+	mux.Handle("/maps/{id}/version/{version}", checkAuth(webserver.ServeMapVersionFileHandler(st, config.DataRoot, config.AnonymousDisabled, config.AnonymousAllowedSubnets)))
+	mux.Handle("/maps/{id}/version/{version}/{filepath...}", checkAuth(webserver.ServeMapVersionFileHandler(st, config.DataRoot, config.AnonymousDisabled, config.AnonymousAllowedSubnets)))
 
 	mux.Handle("GET /users", guardAuth(webserver.UsersListHandler(st)))
 	mux.Handle("POST /users", guardAdmin(webserver.UserCreateHandler(st)))

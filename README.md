@@ -148,6 +148,14 @@ curl -X PUT localhost:8085/maps/<uuid> -H "Authorization: Bearer <token>" \
 curl localhost:8085/maps/<uuid>/version/<version>/0/0/0.png
 ```
 
+Two server-wide settings further restrict this, on top of each map's own `anonymousAllowed` flag:
+`-anonymous-disabled`/`ANONYMOUS_DISABLED` turns anonymous tile access off entirely regardless of what any map has
+configured, and `-anonymous-allowed-subnets`/`ANONYMOUS_ALLOWED_SUBNETS` (a comma-separated CIDR list, e.g.
+`10.0.0.0/8,192.168.1.0/24`) limits it to clients whose IP falls within one of those subnets — empty (the default)
+means unrestricted. The client IP is taken from `X-Forwarded-For`/`X-Real-IP` when present, falling back to the
+connection's remote address, so only run behind a reverse proxy that sets one of those headers itself and doesn't
+forward a client-supplied value unchanged.
+
 #### Per-map permissions
 
 On top of the global flags, admins can grant a specific user `can_view`/`can_edit`/`can_delete` on a single map,
@@ -286,8 +294,9 @@ whatever access is appropriate via the Users tab in `/ui/` or the `/users` API.
 ## Config
 
 Set via flags or matching env vars (`-data-root`/`DATA_ROOT`, `-jwt-secret`/`JWT_SECRET`, `-db-dsn`/`DATABASE_URL`,
-`-seed-username`/`SEED_USERNAME`, `-seed-password`/`SEED_PASSWORD`, `-port`/`PORT`, default port `8085`, plus the
-`-oidc-*` and `-ldap-*` settings above).
+`-seed-username`/`SEED_USERNAME`, `-seed-password`/`SEED_PASSWORD`, `-port`/`PORT`, default port `8085`,
+`-anonymous-disabled`/`ANONYMOUS_DISABLED`, `-anonymous-allowed-subnets`/`ANONYMOUS_ALLOWED_SUBNETS` (see "Anonymous
+tile access" above), plus the `-oidc-*` and `-ldap-*` settings above).
 `jwt-secret` and `db-dsn` are required.
 
 ## Docker
