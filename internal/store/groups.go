@@ -4,11 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 )
 
 var (
@@ -26,22 +25,25 @@ var (
 // never stored or set here — it's derived from LDAPGroupDN/OIDCGroupClaim on
 // every login (see group_membership.go).
 type GroupRecord struct {
-	ID                  uuid.UUID `json:"id"`
-	Name                string    `json:"name"`
-	CanCreate           bool      `json:"canCreate"`
-	CanEdit             bool      `json:"canEdit"`
-	CanDelete           bool      `json:"canDelete"`
-	CanEditGeoObjects   bool      `json:"canEditGeoObjects"`
-	CanDeleteGeoObjects bool      `json:"canDeleteGeoObjects"`
-	CanViewAll          bool      `json:"canViewAll"`
-	IsAdmin             bool      `json:"isAdmin"`
-	LDAPGroupDN         string    `json:"ldapGroupDn"`
-	OIDCGroupClaim      string    `json:"oidcGroupClaim"`
-	CreatedAt           time.Time `json:"createdAt"`
-	UpdatedAt           time.Time `json:"updatedAt"`
-	CreatedBy           string    `json:"createdBy"`
-	UpdatedBy           string    `json:"updatedBy"`
+	ID                  uuid.UUID `json:"id" gorm:"column:id;type:uuid;primaryKey"`
+	Name                string    `json:"name" gorm:"column:name;not null;uniqueIndex"`
+	CanCreate           bool      `json:"canCreate" gorm:"column:can_create;not null;default:false"`
+	CanEdit             bool      `json:"canEdit" gorm:"column:can_edit;not null;default:false"`
+	CanDelete           bool      `json:"canDelete" gorm:"column:can_delete;not null;default:false"`
+	CanEditGeoObjects   bool      `json:"canEditGeoObjects" gorm:"column:can_edit_geo_objects;not null;default:false"`
+	CanDeleteGeoObjects bool      `json:"canDeleteGeoObjects" gorm:"column:can_delete_geo_objects;not null;default:false"`
+	CanViewAll          bool      `json:"canViewAll" gorm:"column:can_view_all;not null;default:false"`
+	IsAdmin             bool      `json:"isAdmin" gorm:"column:is_admin;not null;default:false"`
+	LDAPGroupDN         string    `json:"ldapGroupDn" gorm:"column:ldap_group_dn;not null;default:''"`
+	OIDCGroupClaim      string    `json:"oidcGroupClaim" gorm:"column:oidc_group_claim;not null;default:''"`
+	CreatedAt           time.Time `json:"createdAt" gorm:"column:created_at;not null;default:now()"`
+	UpdatedAt           time.Time `json:"updatedAt" gorm:"column:updated_at;not null;default:now()"`
+	CreatedBy           string    `json:"createdBy" gorm:"column:created_by;not null"`
+	UpdatedBy           string    `json:"updatedBy" gorm:"column:updated_by;not null"`
 }
+
+// TableName implements the gorm.Tabler interface.
+func (GroupRecord) TableName() string { return "groups" }
 
 // GroupFilter holds optional filters for ListGroups. A zero value matches
 // every group.
@@ -49,55 +51,28 @@ type GroupFilter struct {
 	Search string // substring match against name, case-insensitive
 }
 
-// clauses returns the "column = $N"-style fragments for the filters set on
-// f, binding their values through qb. Pure and DB-free so it's directly
-// unit-testable.
-func (f GroupFilter) clauses(qb *queryBuilder) []string {
-	var clauses []string
+// Scope applies f's set filters to db as additional WHERE conditions.
+func (f GroupFilter) Scope() func(*gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		if f.Search != "" {
+			db = db.Where("name ILIKE ?", "%"+f.Search+"%")
+		}
 
-	if f.Search != "" {
-		clauses = append(clauses, "name ILIKE "+qb.bind("%"+f.Search+"%"))
+		return db
 	}
-
-	return clauses
-}
-
-const groupSelectColumns = `
-	id, name, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin,
-	ldap_group_dn, oidc_group_claim, created_at, updated_at, created_by, updated_by
-`
-
-func scanGroup(row interface{ Scan(...any) error }, g *GroupRecord) error {
-	return row.Scan(
-		&g.ID, &g.Name, &g.CanCreate, &g.CanEdit, &g.CanDelete, &g.CanEditGeoObjects, &g.CanDeleteGeoObjects, &g.CanViewAll, &g.IsAdmin,
-		&g.LDAPGroupDN, &g.OIDCGroupClaim, &g.CreatedAt, &g.UpdatedAt, &g.CreatedBy, &g.UpdatedBy,
-	)
 }
 
 // ListGroups returns every group matching filter, oldest first. filter's
 // zero value matches everyone.
 func (s *Store) ListGroups(ctx context.Context, filter GroupFilter) ([]GroupRecord, error) {
-	qb := &queryBuilder{}
+	groups := []GroupRecord{}
 
-	where := ""
-	if clauses := filter.clauses(qb); len(clauses) > 0 {
-		where = "WHERE " + strings.Join(clauses, " AND ")
+	err := s.db.WithContext(ctx).Scopes(filter.Scope()).Order("created_at ASC").Find(&groups).Error
+	if err != nil {
+		return nil, fmt.Errorf("list groups: %w", err)
 	}
 
-	query := fmt.Sprintf(`
-		SELECT %s
-		FROM groups
-		%s
-		ORDER BY created_at ASC
-	`, groupSelectColumns, where)
-
-	return collectRows(ctx, s.pool, "list groups", query, func(rows pgx.Rows) (GroupRecord, error) {
-		var g GroupRecord
-
-		err := scanGroup(rows, &g)
-
-		return g, err
-	}, qb.args...)
+	return groups, nil
 }
 
 // GetGroup returns the group with the given id. It returns ErrGroupNotFound
@@ -105,10 +80,8 @@ func (s *Store) ListGroups(ctx context.Context, filter GroupFilter) ([]GroupReco
 func (s *Store) GetGroup(ctx context.Context, id uuid.UUID) (GroupRecord, error) {
 	var g GroupRecord
 
-	err := scanGroup(s.pool.QueryRow(ctx, fmt.Sprintf(`
-		SELECT %s FROM groups WHERE id = $1
-	`, groupSelectColumns), id), &g)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := s.db.WithContext(ctx).Where("id = ?", id).Take(&g).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return GroupRecord{}, ErrGroupNotFound
 	}
 
@@ -138,13 +111,7 @@ func (s *Store) CreateGroup(ctx context.Context, name string, perms Permissions,
 		UpdatedBy:           actor,
 	}
 
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO groups (id, name, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin, ldap_group_dn, oidc_group_claim, created_by, updated_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
-		RETURNING created_at, updated_at
-	`, g.ID, g.Name, g.CanCreate, g.CanEdit, g.CanDelete, g.CanEditGeoObjects, g.CanDeleteGeoObjects, g.CanViewAll, g.IsAdmin, g.LDAPGroupDN, g.OIDCGroupClaim, actor).
-		Scan(&g.CreatedAt, &g.UpdatedAt)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Create(&g).Error; err != nil {
 		if isPgErrCode(err, "23505") {
 			return GroupRecord{}, ErrGroupExists
 		}
@@ -162,24 +129,34 @@ func (s *Store) CreateGroup(ctx context.Context, name string, perms Permissions,
 // enumerable in reverse, so a targeted invalidation isn't possible here (see
 // ttlCache.clear).
 func (s *Store) UpdateGroup(ctx context.Context, id uuid.UUID, name string, perms Permissions, ldapGroupDN, oidcGroupClaim, actor string) (GroupRecord, error) {
-	var g GroupRecord
-
-	err := scanGroup(s.pool.QueryRow(ctx, fmt.Sprintf(`
-		UPDATE groups
-		SET name = $2, can_create = $3, can_edit = $4, can_delete = $5, can_edit_geo_objects = $6, can_delete_geo_objects = $7, can_view_all = $8, is_admin = $9,
-			ldap_group_dn = $10, oidc_group_claim = $11, updated_by = $12, updated_at = now()
-		WHERE id = $1
-		RETURNING %s
-	`, groupSelectColumns), id, name, perms.CanCreate, perms.CanEdit, perms.CanDelete, perms.CanEditGeoObjects, perms.CanDeleteGeoObjects, perms.CanViewAll, perms.IsAdmin, ldapGroupDN, oidcGroupClaim, actor), &g)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return GroupRecord{}, ErrGroupNotFound
-	}
-
-	if err != nil {
-		if isPgErrCode(err, "23505") {
+	res := s.db.WithContext(ctx).Model(&GroupRecord{}).Where("id = ?", id).Updates(map[string]any{
+		colName:                  name,
+		"can_create":             perms.CanCreate,
+		"can_edit":               perms.CanEdit,
+		"can_delete":             perms.CanDelete,
+		"can_edit_geo_objects":   perms.CanEditGeoObjects,
+		"can_delete_geo_objects": perms.CanDeleteGeoObjects,
+		"can_view_all":           perms.CanViewAll,
+		"is_admin":               perms.IsAdmin,
+		"ldap_group_dn":          ldapGroupDN,
+		"oidc_group_claim":       oidcGroupClaim,
+		colUpdatedBy:             actor,
+		colUpdatedAt:             gorm.Expr("now()"),
+	})
+	if res.Error != nil {
+		if isPgErrCode(res.Error, "23505") {
 			return GroupRecord{}, ErrGroupExists
 		}
 
+		return GroupRecord{}, fmt.Errorf("update group: %w", res.Error)
+	}
+
+	if res.RowsAffected == 0 {
+		return GroupRecord{}, ErrGroupNotFound
+	}
+
+	var g GroupRecord
+	if err := s.db.WithContext(ctx).Where("id = ?", id).Take(&g).Error; err != nil {
 		return GroupRecord{}, fmt.Errorf("update group: %w", err)
 	}
 
@@ -193,12 +170,12 @@ func (s *Store) UpdateGroup(ctx context.Context, id uuid.UUID, name string, perm
 // ErrGroupNotFound if it doesn't exist. group_members/group_map_permissions
 // rows for it are removed via ON DELETE CASCADE.
 func (s *Store) DeleteGroup(ctx context.Context, id uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM groups WHERE id = $1`, id)
-	if err != nil {
-		return fmt.Errorf("delete group: %w", err)
+	res := s.db.WithContext(ctx).Where("id = ?", id).Delete(&GroupRecord{})
+	if res.Error != nil {
+		return fmt.Errorf("delete group: %w", res.Error)
 	}
 
-	if tag.RowsAffected() == 0 {
+	if res.RowsAffected == 0 {
 		return ErrGroupNotFound
 	}
 

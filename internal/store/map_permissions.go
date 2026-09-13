@@ -8,11 +8,27 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // ErrMapPermissionInvalid is returned when granting a permission references a map or username that does not exist.
 var ErrMapPermissionInvalid = errors.New("map or username does not exist")
+
+// mapPermissionModel is the GORM-mapped form of one row in map_permissions;
+// MapPermissionRecord (the public type) omits MapUUID since every caller
+// already knows it from context.
+type mapPermissionModel struct {
+	MapUUID             uuid.UUID `gorm:"column:map_uuid;type:uuid;primaryKey"`
+	Username            string    `gorm:"column:username;primaryKey"`
+	CanView             bool      `gorm:"column:can_view;not null;default:false"`
+	CanEdit             bool      `gorm:"column:can_edit;not null;default:false"`
+	CanDelete           bool      `gorm:"column:can_delete;not null;default:false"`
+	CanEditGeoObjects   bool      `gorm:"column:can_edit_geo_objects;not null;default:false"`
+	CanDeleteGeoObjects bool      `gorm:"column:can_delete_geo_objects;not null;default:false"`
+	GrantedAt           time.Time `gorm:"column:granted_at;not null;default:now()"`
+	GrantedBy           string    `gorm:"column:granted_by;not null"`
+}
+
+func (mapPermissionModel) TableName() string { return "map_permissions" }
 
 // MapPermission is a user's per-map view/edit/delete grant. It only adds
 // capability on top of a user's global Permissions (see Permissions in
@@ -63,29 +79,28 @@ func (s *Store) GetMapPermission(ctx context.Context, mapID uuid.UUID, username 
 
 	// Unlike GetPermissions, "no grant from any source" is the common case
 	// here, and the UNION ALL below always returns exactly one row (an
-	// aggregate with no GROUP BY never returns zero rows) — so, unlike the
-	// previous plain SELECT, there's no more ErrNoRows case, only an
-	// all-NULL row when neither source has a matching grant. Each column
-	// scans into sql.NullBool rather than plain bool for that reason;
-	// NullBool.Bool is already false when Valid is false, which correctly
-	// collapses to the same zero-value MapPermission{} the old ErrNoRows
-	// branch produced.
+	// aggregate with no GROUP BY never returns zero rows) — so, unlike a
+	// plain SELECT, there's no not-found case, only an all-NULL row when
+	// neither source has a matching grant. Each column scans into
+	// sql.NullBool rather than plain bool for that reason; NullBool.Bool is
+	// already false when Valid is false, which correctly collapses to the
+	// same zero-value MapPermission{} a not-found row would give.
 	var canView, canEdit, canDelete, canEditGeo, canDeleteGeo sql.NullBool
 
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.WithContext(ctx).Raw(`
 		SELECT
 			bool_or(can_view), bool_or(can_edit), bool_or(can_delete),
 			bool_or(can_edit_geo_objects), bool_or(can_delete_geo_objects)
 		FROM (
 			SELECT can_view, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects
-			FROM map_permissions WHERE map_uuid = $1 AND username = $2
+			FROM map_permissions WHERE map_uuid = ? AND username = ?
 			UNION ALL
 			SELECT gmp.can_view, gmp.can_edit, gmp.can_delete, gmp.can_edit_geo_objects, gmp.can_delete_geo_objects
 			FROM group_map_permissions gmp
 			JOIN group_members gm ON gm.group_id = gmp.group_id
-			WHERE gmp.map_uuid = $1 AND gm.username = $2
+			WHERE gmp.map_uuid = ? AND gm.username = ?
 		) combined
-	`, mapID, username).Scan(&canView, &canEdit, &canDelete, &canEditGeo, &canDeleteGeo)
+	`, mapID, username, mapID, username).Row().Scan(&canView, &canEdit, &canDelete, &canEditGeo, &canDeleteGeo)
 	if err != nil {
 		return MapPermission{}, fmt.Errorf("get map permission: %w", err)
 	}
@@ -114,7 +129,7 @@ type MapPermissionEntry struct {
 // ListAllMapPermissions returns every per-map permission grant across every
 // map, oldest-granted first, each paired with the map it applies to.
 func (s *Store) ListAllMapPermissions(ctx context.Context) ([]MapPermissionEntry, error) {
-	return collectRows(ctx, s.pool, "list all map permissions", `
+	rows, err := s.db.WithContext(ctx).Raw(`
 		SELECT
 			m.uuid, m.name, m.current_version, m.visible_to_all, m.anonymous_allowed, m.created_at, m.updated_at, m.created_by, m.updated_by, owner_user.username,
 			mp.username, mp.can_view, mp.can_edit, mp.can_delete, mp.can_edit_geo_objects, mp.can_delete_geo_objects, mp.granted_at, mp.granted_by
@@ -122,54 +137,64 @@ func (s *Store) ListAllMapPermissions(ctx context.Context) ([]MapPermissionEntry
 		JOIN maps m ON m.uuid = mp.map_uuid
 		JOIN users owner_user ON owner_user.id = m.owner_id
 		ORDER BY mp.granted_at ASC
-	`, func(rows pgx.Rows) (MapPermissionEntry, error) {
+	`).Rows()
+	if err != nil {
+		return nil, fmt.Errorf("list all map permissions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	entries := []MapPermissionEntry{}
+
+	for rows.Next() {
 		var e MapPermissionEntry
 
 		err := rows.Scan(
 			&e.Map.UUID, &e.Map.Name, &e.Map.CurrentVersion, &e.Map.VisibleToAll, &e.Map.AnonymousAllowed, &e.Map.CreatedAt, &e.Map.UpdatedAt, &e.Map.CreatedBy, &e.Map.UpdatedBy, &e.Map.Owner,
 			&e.Permission.Username, &e.Permission.CanView, &e.Permission.CanEdit, &e.Permission.CanDelete, &e.Permission.CanEditGeoObjects, &e.Permission.CanDeleteGeoObjects, &e.Permission.GrantedAt, &e.Permission.GrantedBy,
 		)
+		if err != nil {
+			return nil, fmt.Errorf("list all map permissions: %w", err)
+		}
 
-		return e, err
-	})
+		entries = append(entries, e)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list all map permissions: %w", err)
+	}
+
+	return entries, nil
 }
 
 // ListMapPermissions returns every per-map grant for mapID, oldest first.
 func (s *Store) ListMapPermissions(ctx context.Context, mapID uuid.UUID) ([]MapPermissionRecord, error) {
-	return collectRows(ctx, s.pool, "list map permissions", `
-		SELECT username, can_view, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, granted_at, granted_by
-		FROM map_permissions
-		WHERE map_uuid = $1
-		ORDER BY granted_at ASC
-	`, func(rows pgx.Rows) (MapPermissionRecord, error) {
-		var p MapPermissionRecord
+	perms := []MapPermissionRecord{}
 
-		err := rows.Scan(&p.Username, &p.CanView, &p.CanEdit, &p.CanDelete, &p.CanEditGeoObjects, &p.CanDeleteGeoObjects, &p.GrantedAt, &p.GrantedBy)
+	err := s.db.WithContext(ctx).Table("map_permissions").
+		Where("map_uuid = ?", mapID).
+		Order("granted_at ASC").
+		Find(&perms).Error
+	if err != nil {
+		return nil, fmt.Errorf("list map permissions: %w", err)
+	}
 
-		return p, err
-	}, mapID)
+	return perms, nil
 }
 
 // SetMapPermission creates or replaces username's per-map grant for mapID.
 // It returns ErrMapPermissionInvalid if mapID or username don't exist.
 func (s *Store) SetMapPermission(ctx context.Context, mapID uuid.UUID, username string, canView, canEdit, canDelete, canEditGeoObjects, canDeleteGeoObjects bool, grantedBy string) (MapPermissionRecord, error) {
-	p := MapPermissionRecord{
-		Username:            username,
-		CanView:             canView,
-		CanEdit:             canEdit,
-		CanDelete:           canDelete,
-		CanEditGeoObjects:   canEditGeoObjects,
-		CanDeleteGeoObjects: canDeleteGeoObjects,
-		GrantedBy:           grantedBy,
-	}
+	var grantedAt time.Time
 
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.WithContext(ctx).Raw(`
 		INSERT INTO map_permissions (map_uuid, username, can_view, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, granted_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (map_uuid, username)
-		DO UPDATE SET can_view = $3, can_edit = $4, can_delete = $5, can_edit_geo_objects = $6, can_delete_geo_objects = $7, granted_by = $8, granted_at = now()
+		DO UPDATE SET can_view = ?, can_edit = ?, can_delete = ?, can_edit_geo_objects = ?, can_delete_geo_objects = ?, granted_by = ?, granted_at = now()
 		RETURNING granted_at
-	`, mapID, username, canView, canEdit, canDelete, canEditGeoObjects, canDeleteGeoObjects, grantedBy).Scan(&p.GrantedAt)
+	`, mapID, username, canView, canEdit, canDelete, canEditGeoObjects, canDeleteGeoObjects, grantedBy,
+		canView, canEdit, canDelete, canEditGeoObjects, canDeleteGeoObjects, grantedBy).
+		Row().Scan(&grantedAt)
 	if err != nil {
 		if isPgErrCode(err, "23503") {
 			return MapPermissionRecord{}, ErrMapPermissionInvalid
@@ -180,12 +205,23 @@ func (s *Store) SetMapPermission(ctx context.Context, mapID uuid.UUID, username 
 
 	s.mapPermCache.invalidate(mapPermKey{mapID: mapID, username: username})
 
-	return p, nil
+	return MapPermissionRecord{
+		Username:            username,
+		CanView:             canView,
+		CanEdit:             canEdit,
+		CanDelete:           canDelete,
+		CanEditGeoObjects:   canEditGeoObjects,
+		CanDeleteGeoObjects: canDeleteGeoObjects,
+		GrantedAt:           grantedAt,
+		GrantedBy:           grantedBy,
+	}, nil
 }
 
 // DeleteMapPermission revokes username's per-map grant for mapID, if any.
 func (s *Store) DeleteMapPermission(ctx context.Context, mapID uuid.UUID, username string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM map_permissions WHERE map_uuid = $1 AND username = $2`, mapID, username)
+	err := s.db.WithContext(ctx).
+		Where("map_uuid = ? AND username = ?", mapID, username).
+		Delete(&mapPermissionModel{}).Error
 	if err != nil {
 		return fmt.Errorf("delete map permission: %w", err)
 	}

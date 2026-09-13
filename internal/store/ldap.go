@@ -2,10 +2,9 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // FindUserByLDAPIdentity returns the username of the local account linked to
@@ -14,10 +13,8 @@ import (
 func (s *Store) FindUserByLDAPIdentity(ctx context.Context, dn string) (string, error) {
 	var username string
 
-	err := s.pool.QueryRow(ctx, `
-		SELECT username FROM users WHERE ldap_dn = $1
-	`, dn).Scan(&username)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := s.db.WithContext(ctx).Raw(`SELECT username FROM users WHERE ldap_dn = ?`, dn).Row().Scan(&username)
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrUserNotFound
 	}
 
@@ -75,16 +72,9 @@ func (s *Store) CreateLDAPUser(ctx context.Context, preferredUsername, dn string
 }
 
 func (s *Store) insertLDAPUser(ctx context.Context, username, dn, passwordHash string) (UserRecord, error) {
-	u := UserRecord{Username: username}
+	u := UserRecord{Username: username, PasswordHash: passwordHash, LDAPDN: dn}
 
-	const noPermissions = false
-
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO users (username, password_hash, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, ldap_dn)
-		VALUES ($1, $2, $3, $3, $3, $3, $3, $3, $4)
-		RETURNING created_at
-	`, username, passwordHash, noPermissions, dn).Scan(&u.CreatedAt)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Create(&u).Error; err != nil {
 		return UserRecord{}, err
 	}
 

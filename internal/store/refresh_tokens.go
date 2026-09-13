@@ -4,17 +4,31 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha3"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 )
 
 // ErrInvalidRefreshToken is returned when a refresh token is unknown, expired, or revoked.
 var ErrInvalidRefreshToken = errors.New("invalid refresh token")
+
+// refreshTokenModel is the GORM-mapped form of one row in refresh_tokens —
+// there's no public record type for it since a refresh token's value is
+// only ever returned as a bare string, never a persisted-row shape.
+type refreshTokenModel struct {
+	TokenHash string     `gorm:"column:token_hash;primaryKey"`
+	Username  string     `gorm:"column:username;not null"`
+	ExpiresAt time.Time  `gorm:"column:expires_at;not null"`
+	CreatedAt time.Time  `gorm:"column:created_at;not null;default:now()"`
+	RevokedAt *time.Time `gorm:"column:revoked_at"`
+}
+
+func (refreshTokenModel) TableName() string { return "refresh_tokens" }
 
 // refreshTokenBytes is how much crypto/rand entropy backs each issued
 // refresh token before base64 encoding.
@@ -50,11 +64,8 @@ func (s *Store) CreateRefreshToken(ctx context.Context, username string, ttl tim
 
 	expiresAt = time.Now().Add(ttl)
 
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO refresh_tokens (token_hash, username, expires_at)
-		VALUES ($1, $2, $3)
-	`, hashRefreshToken(token), username, expiresAt)
-	if err != nil {
+	rt := refreshTokenModel{TokenHash: hashRefreshToken(token), Username: username, ExpiresAt: expiresAt}
+	if err := s.db.WithContext(ctx).Create(&rt).Error; err != nil {
 		return "", time.Time{}, fmt.Errorf("create refresh token: %w", err)
 	}
 
@@ -70,50 +81,50 @@ func (s *Store) CreateRefreshToken(ctx context.Context, username string, ttl tim
 func (s *Store) RotateRefreshToken(ctx context.Context, oldToken string, ttl time.Duration) (username, newToken string, expiresAt time.Time, err error) {
 	oldHash := hashRefreshToken(oldToken)
 
-	tx, err := s.pool.Begin(ctx)
+	err = s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var oldExpiresAt time.Time
+
+		scanErr := tx.Raw(`
+			SELECT username, expires_at FROM refresh_tokens
+			WHERE token_hash = ? AND revoked_at IS NULL
+			FOR UPDATE
+		`, oldHash).Row().Scan(&username, &oldExpiresAt)
+		if errors.Is(scanErr, sql.ErrNoRows) {
+			return ErrInvalidRefreshToken
+		}
+
+		if scanErr != nil {
+			return fmt.Errorf("look up refresh token: %w", scanErr)
+		}
+
+		if time.Now().After(oldExpiresAt) {
+			return ErrInvalidRefreshToken
+		}
+
+		if err := tx.Model(&refreshTokenModel{}).Where("token_hash = ?", oldHash).Update("revoked_at", gorm.Expr("now()")).Error; err != nil {
+			return fmt.Errorf("revoke refresh token: %w", err)
+		}
+
+		newToken, err = newRefreshTokenValue()
+		if err != nil {
+			return err
+		}
+
+		expiresAt = time.Now().Add(ttl)
+
+		rt := refreshTokenModel{TokenHash: hashRefreshToken(newToken), Username: username, ExpiresAt: expiresAt}
+		if err := tx.Create(&rt).Error; err != nil {
+			return fmt.Errorf("insert rotated refresh token: %w", err)
+		}
+
+		return nil
+	})
 	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("begin refresh transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
+		if errors.Is(err, ErrInvalidRefreshToken) {
+			return "", "", time.Time{}, ErrInvalidRefreshToken
+		}
 
-	var oldExpiresAt time.Time
-
-	err = tx.QueryRow(ctx, `
-		SELECT username, expires_at FROM refresh_tokens
-		WHERE token_hash = $1 AND revoked_at IS NULL
-		FOR UPDATE
-	`, oldHash).Scan(&username, &oldExpiresAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", "", time.Time{}, ErrInvalidRefreshToken
-	}
-
-	if err != nil {
-		return "", "", time.Time{}, fmt.Errorf("look up refresh token: %w", err)
-	}
-
-	if time.Now().After(oldExpiresAt) {
-		return "", "", time.Time{}, ErrInvalidRefreshToken
-	}
-
-	if _, err = tx.Exec(ctx, `UPDATE refresh_tokens SET revoked_at = now() WHERE token_hash = $1`, oldHash); err != nil {
-		return "", "", time.Time{}, fmt.Errorf("revoke refresh token: %w", err)
-	}
-
-	newToken, err = newRefreshTokenValue()
-	if err != nil {
 		return "", "", time.Time{}, err
-	}
-
-	expiresAt = time.Now().Add(ttl)
-	if _, err = tx.Exec(ctx, `
-		INSERT INTO refresh_tokens (token_hash, username, expires_at)
-		VALUES ($1, $2, $3)
-	`, hashRefreshToken(newToken), username, expiresAt); err != nil {
-		return "", "", time.Time{}, fmt.Errorf("insert rotated refresh token: %w", err)
-	}
-
-	if err := tx.Commit(ctx); err != nil {
-		return "", "", time.Time{}, fmt.Errorf("commit refresh transaction: %w", err)
 	}
 
 	return username, newToken, expiresAt, nil

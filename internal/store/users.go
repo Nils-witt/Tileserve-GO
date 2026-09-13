@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 var (
@@ -17,8 +17,8 @@ var (
 	ErrUserExists = errors.New("user already exists")
 	// ErrUserOwnsMaps is returned by DeleteUser when username still owns
 	// one or more maps (maps.owner_id references users(id) with no cascade,
-	// see the "migrate maps owner_id column" migration step) — ownership
-	// must be transferred to someone else first via UpdateMapOwner.
+	// see the fk_maps_owner constraint) — ownership must be transferred to
+	// someone else first via UpdateMapOwner.
 	ErrUserOwnsMaps = errors.New("user owns one or more maps")
 )
 
@@ -33,16 +33,27 @@ const SyncUsername = "sync"
 
 // UserRecord is the persisted form of a user account.
 type UserRecord struct {
-	Username            string    `json:"username"`
-	CanCreate           bool      `json:"canCreate"`
-	CanEdit             bool      `json:"canEdit"`
-	CanDelete           bool      `json:"canDelete"`
-	CanEditGeoObjects   bool      `json:"canEditGeoObjects"`
-	CanDeleteGeoObjects bool      `json:"canDeleteGeoObjects"`
-	CanViewAll          bool      `json:"canViewAll"`
-	IsAdmin             bool      `json:"isAdmin"`
-	CreatedAt           time.Time `json:"createdAt"`
+	// ID has no public accessor: every relationship in this schema keys off
+	// Username, not this numeric id, except maps.owner_id — a real column
+	// GORM needs a primary key to reference, but never surfaced to callers.
+	ID                  int64     `json:"-" gorm:"column:id;primaryKey;autoIncrement"`
+	Username            string    `json:"username" gorm:"column:username;not null;uniqueIndex"`
+	PasswordHash        string    `json:"-" gorm:"column:password_hash;not null"`
+	CanCreate           bool      `json:"canCreate" gorm:"column:can_create;not null"`
+	CanEdit             bool      `json:"canEdit" gorm:"column:can_edit;not null"`
+	CanDelete           bool      `json:"canDelete" gorm:"column:can_delete;not null"`
+	CanEditGeoObjects   bool      `json:"canEditGeoObjects" gorm:"column:can_edit_geo_objects;not null"`
+	CanDeleteGeoObjects bool      `json:"canDeleteGeoObjects" gorm:"column:can_delete_geo_objects;not null"`
+	CanViewAll          bool      `json:"canViewAll" gorm:"column:can_view_all;not null;default:false"`
+	IsAdmin             bool      `json:"isAdmin" gorm:"column:is_admin;not null"`
+	OIDCIssuer          string    `json:"-" gorm:"column:oidc_issuer;not null;default:''"`
+	OIDCSubject         string    `json:"-" gorm:"column:oidc_subject;not null;default:''"`
+	LDAPDN              string    `json:"-" gorm:"column:ldap_dn;not null;default:''"`
+	CreatedAt           time.Time `json:"createdAt" gorm:"column:created_at;not null;default:now()"`
 }
+
+// TableName implements the gorm.Tabler interface.
+func (UserRecord) TableName() string { return "users" }
 
 // UserFilter holds optional filters for ListUsers. A zero value matches
 // every user.
@@ -57,71 +68,56 @@ type UserFilter struct {
 	CanViewAll          *bool
 }
 
-// clauses returns the "column = $N"-style fragments for the filters set on
-// f, binding their values through qb. Pure and DB-free so it's directly
-// unit-testable.
-func (f UserFilter) clauses(qb *queryBuilder) []string {
-	var clauses []string
+// Scope applies f's set filters to db as additional WHERE conditions.
+func (f UserFilter) Scope() func(*gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		if f.Search != "" {
+			db = db.Where("username ILIKE ?", "%"+f.Search+"%")
+		}
 
-	if f.Search != "" {
-		clauses = append(clauses, "username ILIKE "+qb.bind("%"+f.Search+"%"))
+		if f.IsAdmin != nil {
+			db = db.Where("is_admin = ?", *f.IsAdmin)
+		}
+
+		if f.CanCreate != nil {
+			db = db.Where("can_create = ?", *f.CanCreate)
+		}
+
+		if f.CanEdit != nil {
+			db = db.Where("can_edit = ?", *f.CanEdit)
+		}
+
+		if f.CanDelete != nil {
+			db = db.Where("can_delete = ?", *f.CanDelete)
+		}
+
+		if f.CanEditGeoObjects != nil {
+			db = db.Where("can_edit_geo_objects = ?", *f.CanEditGeoObjects)
+		}
+
+		if f.CanDeleteGeoObjects != nil {
+			db = db.Where("can_delete_geo_objects = ?", *f.CanDeleteGeoObjects)
+		}
+
+		if f.CanViewAll != nil {
+			db = db.Where("can_view_all = ?", *f.CanViewAll)
+		}
+
+		return db
 	}
-
-	if f.IsAdmin != nil {
-		clauses = append(clauses, "is_admin = "+qb.bind(*f.IsAdmin))
-	}
-
-	if f.CanCreate != nil {
-		clauses = append(clauses, "can_create = "+qb.bind(*f.CanCreate))
-	}
-
-	if f.CanEdit != nil {
-		clauses = append(clauses, "can_edit = "+qb.bind(*f.CanEdit))
-	}
-
-	if f.CanDelete != nil {
-		clauses = append(clauses, "can_delete = "+qb.bind(*f.CanDelete))
-	}
-
-	if f.CanEditGeoObjects != nil {
-		clauses = append(clauses, "can_edit_geo_objects = "+qb.bind(*f.CanEditGeoObjects))
-	}
-
-	if f.CanDeleteGeoObjects != nil {
-		clauses = append(clauses, "can_delete_geo_objects = "+qb.bind(*f.CanDeleteGeoObjects))
-	}
-
-	if f.CanViewAll != nil {
-		clauses = append(clauses, "can_view_all = "+qb.bind(*f.CanViewAll))
-	}
-
-	return clauses
 }
 
 // ListUsers returns every user matching filter, oldest first. filter's zero
 // value matches everyone.
 func (s *Store) ListUsers(ctx context.Context, filter UserFilter) ([]UserRecord, error) {
-	qb := &queryBuilder{}
+	users := []UserRecord{}
 
-	where := ""
-	if clauses := filter.clauses(qb); len(clauses) > 0 {
-		where = "WHERE " + strings.Join(clauses, " AND ")
+	err := s.db.WithContext(ctx).Scopes(filter.Scope()).Order("created_at ASC").Find(&users).Error
+	if err != nil {
+		return nil, fmt.Errorf("list users: %w", err)
 	}
 
-	query := fmt.Sprintf(`
-		SELECT username, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin, created_at
-		FROM users
-		%s
-		ORDER BY created_at ASC
-	`, where)
-
-	return collectRows(ctx, s.pool, "list users", query, func(rows pgx.Rows) (UserRecord, error) {
-		var u UserRecord
-
-		err := rows.Scan(&u.Username, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.CanEditGeoObjects, &u.CanDeleteGeoObjects, &u.CanViewAll, &u.IsAdmin, &u.CreatedAt)
-
-		return u, err
-	}, qb.args...)
+	return users, nil
 }
 
 // CreateUser creates a new user. It returns ErrUserExists if username is
@@ -134,6 +130,7 @@ func (s *Store) CreateUser(ctx context.Context, username, password string, perms
 
 	u := UserRecord{
 		Username:            username,
+		PasswordHash:        hash,
 		CanCreate:           perms.CanCreate,
 		CanEdit:             perms.CanEdit,
 		CanDelete:           perms.CanDelete,
@@ -143,12 +140,7 @@ func (s *Store) CreateUser(ctx context.Context, username, password string, perms
 		IsAdmin:             perms.IsAdmin,
 	}
 
-	err = s.pool.QueryRow(ctx, `
-		INSERT INTO users (username, password_hash, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		RETURNING created_at
-	`, username, hash, u.CanCreate, u.CanEdit, u.CanDelete, u.CanEditGeoObjects, u.CanDeleteGeoObjects, u.CanViewAll, u.IsAdmin).Scan(&u.CreatedAt)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Create(&u).Error; err != nil {
 		if isPgErrCode(err, "23505") {
 			return UserRecord{}, ErrUserExists
 		}
@@ -163,41 +155,36 @@ func (s *Store) CreateUser(ctx context.Context, username, password string, perms
 // newPassword is non-empty. It returns ErrUserNotFound if username doesn't
 // exist.
 func (s *Store) UpdateUser(ctx context.Context, username string, perms Permissions, newPassword string) (UserRecord, error) {
-	var (
-		u   UserRecord
-		err error
-	)
+	updates := map[string]any{
+		"can_create":             perms.CanCreate,
+		"can_edit":               perms.CanEdit,
+		"can_delete":             perms.CanDelete,
+		"can_edit_geo_objects":   perms.CanEditGeoObjects,
+		"can_delete_geo_objects": perms.CanDeleteGeoObjects,
+		"can_view_all":           perms.CanViewAll,
+		"is_admin":               perms.IsAdmin,
+	}
 
 	if newPassword != "" {
-		var hash string
-
-		hash, err = hashPassword(newPassword)
+		hash, err := hashPassword(newPassword)
 		if err != nil {
 			return UserRecord{}, err
 		}
 
-		err = s.pool.QueryRow(ctx, `
-			UPDATE users
-			SET can_create = $2, can_edit = $3, can_delete = $4, can_edit_geo_objects = $5, can_delete_geo_objects = $6, can_view_all = $7, is_admin = $8, password_hash = $9
-			WHERE username = $1
-			RETURNING username, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin, created_at
-		`, username, perms.CanCreate, perms.CanEdit, perms.CanDelete, perms.CanEditGeoObjects, perms.CanDeleteGeoObjects, perms.CanViewAll, perms.IsAdmin, hash).
-			Scan(&u.Username, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.CanEditGeoObjects, &u.CanDeleteGeoObjects, &u.CanViewAll, &u.IsAdmin, &u.CreatedAt)
-	} else {
-		err = s.pool.QueryRow(ctx, `
-			UPDATE users
-			SET can_create = $2, can_edit = $3, can_delete = $4, can_edit_geo_objects = $5, can_delete_geo_objects = $6, can_view_all = $7, is_admin = $8
-			WHERE username = $1
-			RETURNING username, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin, created_at
-		`, username, perms.CanCreate, perms.CanEdit, perms.CanDelete, perms.CanEditGeoObjects, perms.CanDeleteGeoObjects, perms.CanViewAll, perms.IsAdmin).
-			Scan(&u.Username, &u.CanCreate, &u.CanEdit, &u.CanDelete, &u.CanEditGeoObjects, &u.CanDeleteGeoObjects, &u.CanViewAll, &u.IsAdmin, &u.CreatedAt)
+		updates["password_hash"] = hash
 	}
 
-	if errors.Is(err, pgx.ErrNoRows) {
+	res := s.db.WithContext(ctx).Model(&UserRecord{}).Where("username = ?", username).Updates(updates)
+	if res.Error != nil {
+		return UserRecord{}, fmt.Errorf("update user: %w", res.Error)
+	}
+
+	if res.RowsAffected == 0 {
 		return UserRecord{}, ErrUserNotFound
 	}
 
-	if err != nil {
+	var u UserRecord
+	if err := s.db.WithContext(ctx).Where("username = ?", username).Take(&u).Error; err != nil {
 		return UserRecord{}, fmt.Errorf("update user: %w", err)
 	}
 
@@ -223,15 +210,9 @@ func (s *Store) UpdateUser(ctx context.Context, username string, perms Permissio
 // internal/sync calls Store methods directly rather than through the
 // authenticated HTTP API.
 func (s *Store) EnsureSyncUser(ctx context.Context) error {
-	hash := ""
+	u := UserRecord{Username: SyncUsername, PasswordHash: ""}
 
-	const noPermissions = false
-
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO users (username, password_hash, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin)
-		VALUES ($1, $2, $3, $3, $3, $3, $3, $3)
-		ON CONFLICT (username) DO NOTHING
-	`, SyncUsername, hash, noPermissions)
+	err := s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&u).Error
 	if err != nil {
 		return fmt.Errorf("ensure sync user: %w", err)
 	}
@@ -242,16 +223,16 @@ func (s *Store) EnsureSyncUser(ctx context.Context) error {
 // DeleteUser deletes username. It returns ErrUserNotFound if it doesn't
 // exist, or ErrUserOwnsMaps if username still owns one or more maps.
 func (s *Store) DeleteUser(ctx context.Context, username string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM users WHERE username = $1`, username)
-	if err != nil {
-		if isPgErrCode(err, "23503") {
+	res := s.db.WithContext(ctx).Where("username = ?", username).Delete(&UserRecord{})
+	if res.Error != nil {
+		if isPgErrCode(res.Error, "23503") {
 			return ErrUserOwnsMaps
 		}
 
-		return fmt.Errorf("delete user: %w", err)
+		return fmt.Errorf("delete user: %w", res.Error)
 	}
 
-	if tag.RowsAffected() == 0 {
+	if res.RowsAffected == 0 {
 		return ErrUserNotFound
 	}
 

@@ -2,17 +2,128 @@ package store
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 )
 
 // ErrAPIKeyScopeInvalid is returned when granting a scope references a map that does not exist.
 var ErrAPIKeyScopeInvalid = errors.New("map does not exist")
+
+// stringArray maps a Postgres TEXT[] column to/from []string, hand-rolled
+// rather than pulling in github.com/lib/pq (an otherwise-unused dependency)
+// purely for this one field — api_key_scopes.versions is the only array
+// column in this schema.
+type stringArray []string
+
+// Scan implements sql.Scanner, parsing a Postgres array literal like
+// `{a,"b,c",d}` (NULL scans as a nil slice).
+func (a *stringArray) Scan(src any) error {
+	if src == nil {
+		*a = nil
+		return nil
+	}
+
+	var s string
+
+	switch v := src.(type) {
+	case string:
+		s = v
+	case []byte:
+		s = string(v)
+	default:
+		return fmt.Errorf("stringArray: unsupported scan type %T", src)
+	}
+
+	s = strings.TrimPrefix(strings.TrimSuffix(s, "}"), "{")
+	if s == "" {
+		*a = stringArray{}
+		return nil
+	}
+
+	var (
+		out     stringArray
+		cur     strings.Builder
+		quoted  bool
+		escaped bool
+	)
+
+	for _, r := range s {
+		switch {
+		case escaped:
+			cur.WriteRune(r)
+
+			escaped = false
+		case r == '\\' && quoted:
+			escaped = true
+		case r == '"':
+			quoted = !quoted
+		case r == ',' && !quoted:
+			out = append(out, cur.String())
+			cur.Reset()
+		default:
+			cur.WriteRune(r)
+		}
+	}
+
+	out = append(out, cur.String())
+	*a = out
+
+	return nil
+}
+
+// Value implements driver.Valuer, producing a Postgres array literal (nil
+// slice becomes SQL NULL).
+func (a stringArray) Value() (driver.Value, error) {
+	if a == nil {
+		return nil, nil
+	}
+
+	var b strings.Builder
+
+	b.WriteByte('{')
+
+	for i, s := range a {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+
+		b.WriteByte('"')
+
+		for _, r := range s {
+			if r == '"' || r == '\\' {
+				b.WriteByte('\\')
+			}
+
+			b.WriteRune(r)
+		}
+
+		b.WriteByte('"')
+	}
+
+	b.WriteByte('}')
+
+	return b.String(), nil
+}
+
+// apiKeyScopeModel is the GORM-mapped form of one row in api_key_scopes;
+// APIKeyScopeRecord (the public type) omits APIKeyID since every caller
+// already knows it from context.
+type apiKeyScopeModel struct {
+	APIKeyID  uuid.UUID   `gorm:"column:api_key_id;type:uuid;primaryKey"`
+	MapUUID   uuid.UUID   `gorm:"column:map_uuid;type:uuid;primaryKey"`
+	Versions  stringArray `gorm:"column:versions;type:text[]"`
+	GrantedAt time.Time   `gorm:"column:granted_at;not null;default:now()"`
+}
+
+func (apiKeyScopeModel) TableName() string { return "api_key_scopes" }
 
 // APIKeyScopeRecord is the persisted form of one map's scope grant for an
 // API key. An empty Versions means every version of MapUUID is in scope.
@@ -37,22 +148,30 @@ type apiKeyScopeEntry struct {
 func (s *Store) SetAPIKeyScope(ctx context.Context, username string, apiKeyID, mapUUID uuid.UUID, versions []string) (APIKeyScopeRecord, error) {
 	rec := APIKeyScopeRecord{MapUUID: mapUUID, Versions: versions}
 
-	err := s.pool.QueryRow(ctx, `
-		WITH key_check AS (
-			UPDATE api_keys SET scoped = true
-			WHERE id = $1 AND username = $4 AND revoked_at IS NULL
-			RETURNING id
-		)
-		INSERT INTO api_key_scopes (api_key_id, map_uuid, versions)
-		SELECT $1, $2, $3 FROM key_check
-		ON CONFLICT (api_key_id, map_uuid) DO UPDATE SET versions = $3, granted_at = now()
-		RETURNING granted_at
-	`, apiKeyID, mapUUID, versions, username).Scan(&rec.GrantedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return APIKeyScopeRecord{}, ErrAPIKeyNotFound
-	}
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&APIKeyRecord{}).
+			Where("id = ? AND username = ? AND revoked_at IS NULL", apiKeyID, username).
+			Update("scoped", true)
+		if res.Error != nil {
+			return res.Error
+		}
 
+		if res.RowsAffected == 0 {
+			return ErrAPIKeyNotFound
+		}
+
+		return tx.Raw(`
+			INSERT INTO api_key_scopes (api_key_id, map_uuid, versions)
+			VALUES (?, ?, ?)
+			ON CONFLICT (api_key_id, map_uuid) DO UPDATE SET versions = ?, granted_at = now()
+			RETURNING granted_at
+		`, apiKeyID, mapUUID, stringArray(versions), stringArray(versions)).Row().Scan(&rec.GrantedAt)
+	})
 	if err != nil {
+		if errors.Is(err, ErrAPIKeyNotFound) {
+			return APIKeyScopeRecord{}, ErrAPIKeyNotFound
+		}
+
 		if isPgErrCode(err, "23503") {
 			return APIKeyScopeRecord{}, ErrAPIKeyScopeInvalid
 		}
@@ -72,16 +191,15 @@ func (s *Store) SetAPIKeyScope(ctx context.Context, username string, apiKeyID, m
 // access. It returns ErrAPIKeyNotFound if the key doesn't belong to username
 // or there was no such scope entry.
 func (s *Store) DeleteAPIKeyScope(ctx context.Context, username string, apiKeyID, mapUUID uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM api_key_scopes
-		WHERE api_key_id = $1 AND map_uuid = $2
-		  AND EXISTS (SELECT 1 FROM api_keys WHERE id = $1 AND username = $3 AND revoked_at IS NULL)
-	`, apiKeyID, mapUUID, username)
-	if err != nil {
-		return fmt.Errorf("delete api key scope: %w", err)
+	res := s.db.WithContext(ctx).
+		Where("api_key_id = ? AND map_uuid = ? AND EXISTS (SELECT 1 FROM api_keys WHERE id = ? AND username = ? AND revoked_at IS NULL)",
+			apiKeyID, mapUUID, apiKeyID, username).
+		Delete(&apiKeyScopeModel{})
+	if res.Error != nil {
+		return fmt.Errorf("delete api key scope: %w", res.Error)
 	}
 
-	if tag.RowsAffected() == 0 {
+	if res.RowsAffected == 0 {
 		return ErrAPIKeyNotFound
 	}
 
@@ -95,19 +213,21 @@ func (s *Store) DeleteAPIKeyScope(ctx context.Context, username string, apiKeyID
 // counterpart to DeleteAPIKeyScope's per-map narrowing. It returns
 // ErrAPIKeyNotFound if apiKeyID doesn't belong to username.
 func (s *Store) ClearAPIKeyScope(ctx context.Context, username string, apiKeyID uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE api_keys SET scoped = false
-		WHERE id = $1 AND username = $2 AND revoked_at IS NULL
-	`, apiKeyID, username)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		res := tx.Model(&APIKeyRecord{}).
+			Where("id = ? AND username = ? AND revoked_at IS NULL", apiKeyID, username).
+			Update("scoped", false)
+		if res.Error != nil {
+			return res.Error
+		}
+
+		if res.RowsAffected == 0 {
+			return ErrAPIKeyNotFound
+		}
+
+		return tx.Where("api_key_id = ?", apiKeyID).Delete(&apiKeyScopeModel{}).Error
+	})
 	if err != nil {
-		return fmt.Errorf("clear api key scope: %w", err)
-	}
-
-	if tag.RowsAffected() == 0 {
-		return ErrAPIKeyNotFound
-	}
-
-	if _, err := s.pool.Exec(ctx, `DELETE FROM api_key_scopes WHERE api_key_id = $1`, apiKeyID); err != nil {
 		return fmt.Errorf("clear api key scope: %w", err)
 	}
 
@@ -124,19 +244,28 @@ func (s *Store) ClearAPIKeyScope(ctx context.Context, username string, apiKeyID 
 // returns an empty slice if apiKeyID doesn't belong to username or has no
 // scope entries.
 func (s *Store) ListAPIKeyScopes(ctx context.Context, username string, apiKeyID uuid.UUID) ([]APIKeyScopeRecord, error) {
-	return collectRows(ctx, s.pool, "list api key scopes", `
-		SELECT s.map_uuid, s.versions, s.granted_at
-		FROM api_key_scopes s
-		JOIN api_keys k ON k.id = s.api_key_id
-		WHERE s.api_key_id = $1 AND k.username = $2
-		ORDER BY s.granted_at ASC
-	`, func(rows pgx.Rows) (APIKeyScopeRecord, error) {
-		var r APIKeyScopeRecord
+	// Scanned into apiKeyScopeModel rather than the public APIKeyScopeRecord
+	// directly: Versions needs the stringArray type to correctly parse the
+	// underlying text[] column, which the public type (plain []string, for
+	// a clean JSON shape) doesn't carry.
+	var rows []apiKeyScopeModel
 
-		err := rows.Scan(&r.MapUUID, &r.Versions, &r.GrantedAt)
+	err := s.db.WithContext(ctx).Table("api_key_scopes s").
+		Joins("JOIN api_keys k ON k.id = s.api_key_id").
+		Where("s.api_key_id = ? AND k.username = ?", apiKeyID, username).
+		Order("s.granted_at ASC").
+		Select("s.map_uuid, s.versions, s.granted_at").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("list api key scopes: %w", err)
+	}
 
-		return r, err
-	}, apiKeyID, username)
+	scopes := make([]APIKeyScopeRecord, len(rows))
+	for i, r := range rows {
+		scopes[i] = APIKeyScopeRecord{MapUUID: r.MapUUID, Versions: []string(r.Versions), GrantedAt: r.GrantedAt}
+	}
+
+	return scopes, nil
 }
 
 // resolveAPIKeyMapScope reports whether apiKeyID is scope-restricted at all
@@ -154,12 +283,10 @@ func (s *Store) resolveAPIKeyMapScope(ctx context.Context, apiKeyID, mapID uuid.
 		return true, e, nil
 	}
 
-	var versions []string
+	var versions stringArray
 
-	err = s.pool.QueryRow(ctx, `
-		SELECT versions FROM api_key_scopes WHERE api_key_id = $1 AND map_uuid = $2
-	`, apiKeyID, mapID).Scan(&versions)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = s.db.WithContext(ctx).Raw(`SELECT versions FROM api_key_scopes WHERE api_key_id = ? AND map_uuid = ?`, apiKeyID, mapID).Row().Scan(&versions)
+	if errors.Is(err, sql.ErrNoRows) {
 		entry = apiKeyScopeEntry{inScope: false}
 		s.apiKeyScopeCache.set(key, entry)
 
@@ -170,7 +297,7 @@ func (s *Store) resolveAPIKeyMapScope(ctx context.Context, apiKeyID, mapID uuid.
 		return true, apiKeyScopeEntry{}, fmt.Errorf("resolve api key map scope: %w", err)
 	}
 
-	entry = apiKeyScopeEntry{inScope: true, versions: versions}
+	entry = apiKeyScopeEntry{inScope: true, versions: []string(versions)}
 	s.apiKeyScopeCache.set(key, entry)
 
 	return true, entry, nil

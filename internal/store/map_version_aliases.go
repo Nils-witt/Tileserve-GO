@@ -2,23 +2,38 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 // ErrMapVersionAliasInvalid is returned when creating/updating an alias
 // references a map or a version that doesn't exist in that map's
-// map_versions history (an FK violation on map_version_aliases' composite
-// FK to map_versions).
+// map_versions history (an FK violation on the fk_map_version_aliases_map_version
+// constraint).
 var ErrMapVersionAliasInvalid = errors.New("map or version does not exist")
 
 // ErrMapVersionAliasNotFound is returned when looking up a specific alias
 // that has no row.
 var ErrMapVersionAliasNotFound = errors.New("alias not found")
+
+// mapVersionAliasModel is the GORM-mapped form of one row in
+// map_version_aliases; MapVersionAlias (the public type) omits MapUUID
+// since every caller already knows it from context.
+type mapVersionAliasModel struct {
+	MapUUID   uuid.UUID `gorm:"column:map_uuid;type:uuid;primaryKey"`
+	Alias     string    `gorm:"column:alias;primaryKey"`
+	Version   string    `gorm:"column:version;not null"`
+	CreatedAt time.Time `gorm:"column:created_at;not null;default:now()"`
+	UpdatedAt time.Time `gorm:"column:updated_at;not null;default:now()"`
+	CreatedBy string    `gorm:"column:created_by;not null"`
+	UpdatedBy string    `gorm:"column:updated_by;not null"`
+}
+
+func (mapVersionAliasModel) TableName() string { return "map_version_aliases" }
 
 // MapVersionAlias is the persisted form of a user-defined version alias
 // (e.g. "stable" -> "7"). Alongside the "current" keyword, an alias lets a
@@ -53,10 +68,8 @@ func (s *Store) GetMapVersionAlias(ctx context.Context, mapID uuid.UUID, alias s
 
 	var version string
 
-	err := s.pool.QueryRow(ctx, `
-		SELECT version FROM map_version_aliases WHERE map_uuid = $1 AND alias = $2
-	`, mapID, alias).Scan(&version)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := s.db.WithContext(ctx).Raw(`SELECT version FROM map_version_aliases WHERE map_uuid = ? AND alias = ?`, mapID, alias).Row().Scan(&version)
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrMapVersionAliasNotFound
 	}
 
@@ -72,18 +85,17 @@ func (s *Store) GetMapVersionAlias(ctx context.Context, mapID uuid.UUID, alias s
 // ListMapVersionAliases returns every alias defined for mapID, alphabetical
 // by alias.
 func (s *Store) ListMapVersionAliases(ctx context.Context, mapID uuid.UUID) ([]MapVersionAlias, error) {
-	return collectRows(ctx, s.pool, "list map version aliases", `
-		SELECT alias, version, created_at, updated_at, created_by, updated_by
-		FROM map_version_aliases
-		WHERE map_uuid = $1
-		ORDER BY alias ASC
-	`, func(rows pgx.Rows) (MapVersionAlias, error) {
-		var a MapVersionAlias
+	aliases := []MapVersionAlias{}
 
-		err := rows.Scan(&a.Alias, &a.Version, &a.CreatedAt, &a.UpdatedAt, &a.CreatedBy, &a.UpdatedBy)
+	err := s.db.WithContext(ctx).Table("map_version_aliases").
+		Where("map_uuid = ?", mapID).
+		Order("alias ASC").
+		Find(&aliases).Error
+	if err != nil {
+		return nil, fmt.Errorf("list map version aliases: %w", err)
+	}
 
-		return a, err
-	}, mapID)
+	return aliases, nil
 }
 
 // SetMapVersionAlias creates or replaces alias's target version for mapID.
@@ -94,13 +106,13 @@ func (s *Store) ListMapVersionAliases(ctx context.Context, mapID uuid.UUID) ([]M
 func (s *Store) SetMapVersionAlias(ctx context.Context, mapID uuid.UUID, alias, version, actor string) (MapVersionAlias, error) {
 	a := MapVersionAlias{Alias: alias, Version: version, CreatedBy: actor, UpdatedBy: actor}
 
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.WithContext(ctx).Raw(`
 		INSERT INTO map_version_aliases (map_uuid, alias, version, created_by, updated_by)
-		VALUES ($1, $2, $3, $4, $4)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (map_uuid, alias)
-		DO UPDATE SET version = $3, updated_by = $4, updated_at = now()
+		DO UPDATE SET version = ?, updated_by = ?, updated_at = now()
 		RETURNING created_at, updated_at
-	`, mapID, alias, version, actor).Scan(&a.CreatedAt, &a.UpdatedAt)
+	`, mapID, alias, version, actor, actor, version, actor).Row().Scan(&a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		if isPgErrCode(err, "23503") {
 			return MapVersionAlias{}, ErrMapVersionAliasInvalid
@@ -117,7 +129,9 @@ func (s *Store) SetMapVersionAlias(ctx context.Context, mapID uuid.UUID, alias, 
 // DeleteMapVersionAlias removes alias for mapID, if it exists. It is a
 // no-op (nil error) if no such alias exists.
 func (s *Store) DeleteMapVersionAlias(ctx context.Context, mapID uuid.UUID, alias string) error {
-	_, err := s.pool.Exec(ctx, `DELETE FROM map_version_aliases WHERE map_uuid = $1 AND alias = $2`, mapID, alias)
+	err := s.db.WithContext(ctx).
+		Where("map_uuid = ? AND alias = ?", mapID, alias).
+		Delete(&mapVersionAliasModel{}).Error
 	if err != nil {
 		return fmt.Errorf("delete map version alias: %w", err)
 	}

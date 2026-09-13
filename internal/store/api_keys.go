@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rsa"
 	"crypto/x509"
+	"database/sql"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -11,7 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 )
 
 // minRSAKeyBits is the smallest RSA modulus size accepted for an API key's
@@ -33,18 +34,23 @@ var (
 // no separate secret or hash: the server only ever stores the caller's
 // public key (see CreateAPIKey), never a private key.
 type APIKeyRecord struct {
-	ID         uuid.UUID  `json:"id"`
-	Username   string     `json:"username"`
-	Name       string     `json:"name"`
-	CreatedAt  time.Time  `json:"createdAt"`
-	CreatedBy  string     `json:"createdBy"`
-	LastUsedAt *time.Time `json:"lastUsedAt,omitempty"`
+	ID           uuid.UUID  `json:"id" gorm:"column:id;type:uuid;primaryKey"`
+	PublicKeyPEM string     `json:"-" gorm:"column:public_key_pem;not null;default:''"`
+	Username     string     `json:"username" gorm:"column:username;not null"`
+	Name         string     `json:"name" gorm:"column:name;not null;default:''"`
+	CreatedAt    time.Time  `json:"createdAt" gorm:"column:created_at;not null;default:now()"`
+	CreatedBy    string     `json:"createdBy" gorm:"column:created_by;not null"`
+	LastUsedAt   *time.Time `json:"lastUsedAt,omitempty" gorm:"column:last_used_at"`
+	RevokedAt    *time.Time `json:"-" gorm:"column:revoked_at"`
 	// Scoped reports whether this key is restricted to a subset of maps/
 	// versions (see api_key_scopes.go). A key with no scopes set is
 	// unrestricted regardless of this flag; Scoped only ever narrows access
 	// once true, it never widens it.
-	Scoped bool `json:"scoped"`
+	Scoped bool `json:"scoped" gorm:"column:scoped;not null;default:false"`
 }
+
+// TableName implements the gorm.Tabler interface.
+func (APIKeyRecord) TableName() string { return "api_keys" }
 
 // validateRSAPublicKeyPEM parses pemStr as a PKIX-encoded RSA public key
 // (the format produced by GenerateKeyPairHandler and x509.MarshalPKIXPublicKey
@@ -80,18 +86,14 @@ func (s *Store) CreateAPIKey(ctx context.Context, username, name, createdBy, pub
 	}
 
 	rec := APIKeyRecord{
-		ID:        uuid.New(),
-		Username:  username,
-		Name:      name,
-		CreatedBy: createdBy,
+		ID:           uuid.New(),
+		PublicKeyPEM: publicKeyPEM,
+		Username:     username,
+		Name:         name,
+		CreatedBy:    createdBy,
 	}
 
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO api_keys (id, public_key_pem, username, name, created_by)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING created_at, scoped
-	`, rec.ID, publicKeyPEM, username, name, createdBy).Scan(&rec.CreatedAt, &rec.Scoped)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Create(&rec).Error; err != nil {
 		if isPgErrCode(err, "23503") {
 			return APIKeyRecord{}, ErrUserNotFound
 		}
@@ -105,32 +107,30 @@ func (s *Store) CreateAPIKey(ctx context.Context, username, name, createdBy, pub
 // ListAPIKeys returns every non-revoked API key belonging to username, most
 // recently created first.
 func (s *Store) ListAPIKeys(ctx context.Context, username string) ([]APIKeyRecord, error) {
-	return collectRows(ctx, s.pool, "list api keys", `
-		SELECT id, username, name, created_at, created_by, last_used_at, scoped
-		FROM api_keys
-		WHERE username = $1 AND revoked_at IS NULL
-		ORDER BY created_at DESC
-	`, func(rows pgx.Rows) (APIKeyRecord, error) {
-		var r APIKeyRecord
+	keys := []APIKeyRecord{}
 
-		err := rows.Scan(&r.ID, &r.Username, &r.Name, &r.CreatedAt, &r.CreatedBy, &r.LastUsedAt, &r.Scoped)
+	err := s.db.WithContext(ctx).
+		Where("username = ? AND revoked_at IS NULL", username).
+		Order("created_at DESC").
+		Find(&keys).Error
+	if err != nil {
+		return nil, fmt.Errorf("list api keys: %w", err)
+	}
 
-		return r, err
-	}, username)
+	return keys, nil
 }
 
 // RevokeAPIKey revokes id, if it belongs to username and isn't already
 // revoked. It returns ErrAPIKeyNotFound otherwise.
 func (s *Store) RevokeAPIKey(ctx context.Context, username string, id uuid.UUID) error {
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE api_keys SET revoked_at = now()
-		WHERE id = $1 AND username = $2 AND revoked_at IS NULL
-	`, id, username)
-	if err != nil {
-		return fmt.Errorf("revoke api key: %w", err)
+	res := s.db.WithContext(ctx).Model(&APIKeyRecord{}).
+		Where("id = ? AND username = ? AND revoked_at IS NULL", id, username).
+		Update("revoked_at", gorm.Expr("now()"))
+	if res.Error != nil {
+		return fmt.Errorf("revoke api key: %w", res.Error)
 	}
 
-	if tag.RowsAffected() == 0 {
+	if res.RowsAffected == 0 {
 		return ErrAPIKeyNotFound
 	}
 
@@ -163,10 +163,10 @@ func (s *Store) ResolveAPIKeySigningKey(ctx context.Context, keyID uuid.UUID) (u
 
 	var scoped bool
 
-	err = s.pool.QueryRow(ctx, `
-		SELECT username, public_key_pem, scoped FROM api_keys WHERE id = $1 AND revoked_at IS NULL
-	`, keyID).Scan(&username, &publicKeyPEM, &scoped)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err = s.db.WithContext(ctx).Raw(`
+		SELECT username, public_key_pem, scoped FROM api_keys WHERE id = ? AND revoked_at IS NULL
+	`, keyID).Row().Scan(&username, &publicKeyPEM, &scoped)
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", ErrInvalidAPIKey
 	}
 
@@ -191,10 +191,8 @@ func (s *Store) apiKeyScopedFlag(ctx context.Context, apiKeyID uuid.UUID) (bool,
 
 	var scoped bool
 
-	err := s.pool.QueryRow(ctx, `
-		SELECT scoped FROM api_keys WHERE id = $1 AND revoked_at IS NULL
-	`, apiKeyID).Scan(&scoped)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := s.db.WithContext(ctx).Raw(`SELECT scoped FROM api_keys WHERE id = ? AND revoked_at IS NULL`, apiKeyID).Row().Scan(&scoped)
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, ErrInvalidAPIKey
 	}
 
@@ -209,7 +207,8 @@ func (s *Store) apiKeyScopedFlag(ctx context.Context, apiKeyID uuid.UUID) (bool,
 // (rather than propagating) any failure: it's observability, not a
 // correctness requirement, so it must never fail an authenticated request.
 func (s *Store) TouchAPIKeyLastUsed(ctx context.Context, id uuid.UUID) {
-	if _, err := s.pool.Exec(ctx, `UPDATE api_keys SET last_used_at = now() WHERE id = $1`, id); err != nil {
+	err := s.db.WithContext(ctx).Exec(`UPDATE api_keys SET last_used_at = now() WHERE id = ?`, id).Error
+	if err != nil {
 		log.Printf("touch api key last_used_at for %s: %v", id, err)
 	}
 }

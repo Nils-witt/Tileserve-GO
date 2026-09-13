@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
+	"gorm.io/gorm/logger"
 )
 
 // ErrInvalidCredentials is returned when a login's username/password pair does not match.
@@ -22,6 +24,14 @@ var ErrInvalidCredentials = errors.New("invalid credentials")
 const (
 	cacheTTL      = 15 * time.Second
 	mapVersionTTL = 30 * time.Minute
+)
+
+// Column names shared by several Updates(map[string]any{...}) calls across
+// this package.
+const (
+	colName      = "name"
+	colUpdatedBy = "updated_by"
+	colUpdatedAt = "updated_at"
 )
 
 type mapPermKey struct {
@@ -37,7 +47,7 @@ type apiKeyScopeKey struct {
 
 // Store is the PostgreSQL-backed persistence layer for tileserve-go.
 type Store struct {
-	pool                *pgxpool.Pool
+	db                  *gorm.DB
 	mapCache            *ttlCache[uuid.UUID, MapRecord]
 	currentVersionCache *ttlCache[uuid.UUID, string]
 	permsCache          *ttlCache[string, Permissions]
@@ -47,33 +57,41 @@ type Store struct {
 	apiKeyScopeCache    *ttlCache[apiKeyScopeKey, apiKeyScopeEntry]
 }
 
-// NewStore opens a connection pool to the postgres database at dsn and
+// NewStore opens a GORM connection to the postgres database at dsn and
 // verifies it is reachable with a ping.
 func NewStore(ctx context.Context, dsn string) (*Store, error) {
-	cfg, err := pgxpool.ParseConfig(dsn)
-	if err != nil {
-		return nil, fmt.Errorf("parse postgres dsn: %w", err)
-	}
-	// Explicit bounds rather than the library defaults: enough headroom for
-	// concurrent request handling without letting a traffic spike open an
-	// unbounded number of postgres connections.
-	cfg.MaxConns = 20
-	cfg.MinConns = 2
-	cfg.MaxConnLifetime = time.Hour
-	cfg.MaxConnIdleTime = 30 * time.Minute
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}
 
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("get underlying sql.DB: %w", err)
+	}
+
+	// Explicit bounds rather than the library defaults: enough headroom for
+	// concurrent request handling without letting a traffic spike open an
+	// unbounded number of postgres connections. database/sql has no
+	// equivalent of pgxpool's MinConns (proactively keeping connections
+	// warm) — SetMaxIdleConns only caps idle connections from above.
+	sqlDB.SetMaxOpenConns(20)
+	sqlDB.SetMaxIdleConns(2)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+	sqlDB.SetConnMaxIdleTime(30 * time.Minute)
+
+	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if err := sqlDB.PingContext(pingCtx); err != nil {
+		_ = sqlDB.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
 	return &Store{
-		pool:                pool,
+		db:                  db,
 		mapCache:            newTTLCache[uuid.UUID, MapRecord](cacheTTL),
 		currentVersionCache: newTTLCache[uuid.UUID, string](mapVersionTTL),
 		permsCache:          newTTLCache[string, Permissions](cacheTTL),
@@ -86,521 +104,168 @@ func NewStore(ctx context.Context, dsn string) (*Store, error) {
 
 // Close releases the underlying database connection pool.
 func (s *Store) Close() {
-	s.pool.Close()
+	if sqlDB, err := s.db.DB(); err == nil {
+		_ = sqlDB.Close()
+	}
 }
 
-// Migrate creates the users, maps, map_versions, map_permissions,
-// map_version_aliases, and geo_objects tables if they don't exist yet, and
-// adds any columns introduced since the tables were first created. It is
-// idempotent and safe to run on every startup.
+// Migrate creates every table this package uses (if it doesn't exist yet) in
+// one step, via GORM's AutoMigrate, followed by a fixed batch of raw SQL for
+// the schema pieces AutoMigrate's struct tags can't express: foreign keys
+// (kept out of GORM's relationship-driven FK generation entirely, in favor
+// of explicit, auditable ALTER TABLE statements — including the two
+// composite foreign keys that reference map_versions' composite primary
+// key, which GORM tags cannot express at all), and indexes that need a
+// partial WHERE clause or explicit column ordering. It is idempotent and
+// safe to run on every startup; unlike the incremental migration history
+// this replaces, it always produces the current schema shape directly
+// rather than replaying column-by-column history.
 func (s *Store) Migrate(ctx context.Context) error {
-	for _, m := range migrationSteps {
-		if _, err := s.pool.Exec(ctx, m.sql); err != nil {
-			return fmt.Errorf("%s: %w", m.errContext, err)
+	db := s.db.WithContext(ctx)
+
+	if err := db.AutoMigrate(
+		&UserRecord{},
+		&MapRecord{},
+		&mapVersionModel{},
+		&GeoObjectRecord{},
+		&mapPermissionModel{},
+		&refreshTokenModel{},
+		&mapVersionAliasModel{},
+		&APIKeyRecord{},
+		&SyncRemote{},
+		&syncRemoteMapModel{},
+		&apiKeyScopeModel{},
+		&AuditLogEntry{},
+		&GroupRecord{},
+		&groupMemberModel{},
+		&groupMapPermissionModel{},
+	); err != nil {
+		return fmt.Errorf("automigrate: %w", err)
+	}
+
+	if err := addConstraintsIfMissing(db, foreignKeys); err != nil {
+		return err
+	}
+
+	for _, stmt := range secondaryIndexes {
+		if err := db.Exec(stmt).Error; err != nil {
+			return fmt.Errorf("create index: %w", err)
+		}
+	}
+
+	for _, stmt := range columnDefaults {
+		if err := db.Exec(stmt).Error; err != nil {
+			return fmt.Errorf("set column default: %w", err)
 		}
 	}
 
 	return nil
 }
 
-// migrationSteps are applied in order by Migrate. Each is a standalone,
-// idempotent DDL statement (CREATE TABLE/INDEX IF NOT EXISTS, ALTER TABLE
-// ADD COLUMN IF NOT EXISTS), so re-running the full list on every startup is
-// safe even once earlier steps have already been applied.
-var migrationSteps = []struct {
-	sql        string
-	errContext string
-}{
-	{
-		errContext: "migrate users table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS users (
-				id            BIGSERIAL PRIMARY KEY,
-				username      TEXT NOT NULL UNIQUE,
-				password_hash TEXT NOT NULL,
-				can_create    BOOLEAN NOT NULL DEFAULT true,
-				can_edit      BOOLEAN NOT NULL DEFAULT true,
-				can_delete    BOOLEAN NOT NULL DEFAULT true,
-				is_admin      BOOLEAN NOT NULL DEFAULT true,
-				created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-			)
-		`,
-	},
-	{
-		errContext: "migrate users permission columns",
-		sql: `
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_create BOOLEAN NOT NULL DEFAULT true;
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit   BOOLEAN NOT NULL DEFAULT true;
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_delete BOOLEAN NOT NULL DEFAULT true;
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS is_admin   BOOLEAN NOT NULL DEFAULT true;
-		`,
-	},
-	{
-		// Defaults to true, like the other global permission columns above:
-		// an upgrading deployment's existing editors (can_edit) keep the
-		// ability to edit/delete geo objects until an admin narrows it.
-		errContext: "migrate users geo object permission columns",
-		sql: `
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_edit_geo_objects   BOOLEAN NOT NULL DEFAULT true;
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_delete_geo_objects BOOLEAN NOT NULL DEFAULT true;
-		`,
-	},
-	{
-		errContext: "migrate maps table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS maps (
-				uuid            UUID PRIMARY KEY,
-				name            TEXT NOT NULL,
-				current_version TEXT NOT NULL DEFAULT '',
-				created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-				updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-				created_by      TEXT NOT NULL,
-				updated_by      TEXT NOT NULL
-			)
-		`,
-	},
-	{
-		errContext: "migrate maps visibility column",
-		sql: `
-			ALTER TABLE maps ADD COLUMN IF NOT EXISTS visible_to_all     BOOLEAN NOT NULL DEFAULT false;
-			ALTER TABLE maps ADD COLUMN IF NOT EXISTS anonymous_allowed  BOOLEAN NOT NULL DEFAULT false;
-		`,
-	},
-	{
-		// owner_id starts out as a map's creator but, unlike created_by (a
-		// fixed audit fact of who made it), can be transferred later (see
-		// UpdateMapOwner) — e.g. when a map needs to change hands without
-		// rewriting its creation history. It's a foreign key to the owning
-		// user's stable numeric id, not a copy of their username text like
-		// every other actor field in this schema — so a map's ownership
-		// stays a real relationship the database enforces (an owning user
-		// can't be deleted out from under a map they still own; see
-		// ErrUserOwnsMaps) rather than a string that could silently point
-		// at nobody. Existing rows backfill from created_by so upgrading a
-		// deployment doesn't strip ownership from anyone.
-		errContext: "migrate maps owner_id column",
-		sql: `
-			ALTER TABLE maps ADD COLUMN IF NOT EXISTS owner_id BIGINT REFERENCES users(id);
-			UPDATE maps SET owner_id = (SELECT id FROM users WHERE users.username = maps.created_by) WHERE owner_id IS NULL;
-			UPDATE maps SET owner_id = (SELECT id FROM users LIMIT 1) WHERE owner_id IS NULL;
-			ALTER TABLE maps ALTER COLUMN owner_id SET NOT NULL;
-		`,
-	},
-	{
-		errContext: "migrate map_versions table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS map_versions (
-				map_uuid   UUID NOT NULL REFERENCES maps(uuid) ON DELETE CASCADE,
-				version    TEXT NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-				created_by TEXT NOT NULL,
-				PRIMARY KEY (map_uuid, version)
-			)
-		`,
-	},
-	{
-		errContext: "migrate geo_objects table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS geo_objects (
-				uuid        UUID PRIMARY KEY,
-				map_uuid    UUID NOT NULL,
-				version     TEXT NOT NULL,
-				name        TEXT NOT NULL,
-				external_id TEXT NOT NULL DEFAULT '',
-				latitude    DOUBLE PRECISION NOT NULL,
-				longitude   DOUBLE PRECISION NOT NULL,
-				street      TEXT NOT NULL DEFAULT '',
-				housenumber TEXT NOT NULL DEFAULT '',
-				postcode    TEXT NOT NULL DEFAULT '',
-				created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-				updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-				created_by  TEXT NOT NULL,
-				updated_by  TEXT NOT NULL,
-				FOREIGN KEY (map_uuid, version) REFERENCES map_versions(map_uuid, version) ON DELETE CASCADE
-			)
-		`,
-	},
-	{
-		errContext: "migrate geo_objects city column",
-		sql: `
-			ALTER TABLE geo_objects ADD COLUMN IF NOT EXISTS city TEXT NOT NULL DEFAULT '';
-		`,
-	},
-	{
-		errContext: "migrate geo_objects city_district column",
-		sql: `
-			ALTER TABLE geo_objects ADD COLUMN IF NOT EXISTS city_district TEXT NOT NULL DEFAULT '';
-		`,
-	},
-	{
-		errContext: "migrate geo_objects index",
-		sql: `
-			CREATE INDEX IF NOT EXISTS idx_geo_objects_map_version ON geo_objects (map_uuid, version);
-		`,
-	},
-	{
-		errContext: "migrate map_permissions table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS map_permissions (
-				map_uuid   UUID NOT NULL REFERENCES maps(uuid) ON DELETE CASCADE,
-				username   TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-				can_edit   BOOLEAN NOT NULL DEFAULT false,
-				can_delete BOOLEAN NOT NULL DEFAULT false,
-				granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-				granted_by TEXT NOT NULL,
-				PRIMARY KEY (map_uuid, username)
-			)
-		`,
-	},
-	{
-		errContext: "migrate map_permissions view column",
-		sql: `
-			ALTER TABLE map_permissions ADD COLUMN IF NOT EXISTS can_view BOOLEAN NOT NULL DEFAULT false;
-		`,
-	},
-	{
-		// Opt-in, like the other per-map grant columns: a per-map grant only
-		// ever adds capability, so it defaults to false.
-		errContext: "migrate map_permissions geo object columns",
-		sql: `
-			ALTER TABLE map_permissions ADD COLUMN IF NOT EXISTS can_edit_geo_objects   BOOLEAN NOT NULL DEFAULT false;
-			ALTER TABLE map_permissions ADD COLUMN IF NOT EXISTS can_delete_geo_objects BOOLEAN NOT NULL DEFAULT false;
-		`,
-	},
-	{
-		errContext: "migrate refresh_tokens table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS refresh_tokens (
-				token_hash TEXT PRIMARY KEY,
-				username   TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-				expires_at TIMESTAMPTZ NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-				revoked_at TIMESTAMPTZ
-			)
-		`,
-	},
-	{
-		errContext: "migrate map_version_aliases table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS map_version_aliases (
-				map_uuid   UUID NOT NULL REFERENCES maps(uuid) ON DELETE CASCADE,
-				alias      TEXT NOT NULL,
-				version    TEXT NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-				updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-				created_by TEXT NOT NULL,
-				updated_by TEXT NOT NULL,
-				PRIMARY KEY (map_uuid, alias),
-				FOREIGN KEY (map_uuid, version) REFERENCES map_versions(map_uuid, version) ON DELETE CASCADE
-			)
-		`,
-	},
-	{
-		errContext: "migrate api_keys table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS api_keys (
-				id             UUID PRIMARY KEY,
-				public_key_pem TEXT NOT NULL DEFAULT '',
-				username       TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-				name           TEXT NOT NULL DEFAULT '',
-				created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-				created_by     TEXT NOT NULL,
-				last_used_at   TIMESTAMPTZ,
-				revoked_at     TIMESTAMPTZ
-			);
-			CREATE INDEX IF NOT EXISTS idx_api_keys_username ON api_keys (username);
-		`,
-	},
-	{
-		// Breaking-change replacement of the opaque-secret scheme with per-key
-		// RSA public keys (see api_keys.go): the server now only ever stores a
-		// caller-generated public key, never a secret of its own. Existing
-		// key_hash rows become permanently unusable (public_key_pem defaults
-		// to '', which fails to parse) — there is no migration path for
-		// pre-existing opaque keys, they must be recreated.
-		errContext: "migrate api_keys public key columns",
-		sql: `
-			ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS public_key_pem TEXT NOT NULL DEFAULT '';
-			ALTER TABLE api_keys DROP COLUMN IF EXISTS key_hash;
-		`,
-	},
-	{
-		// private_key_pem is this (local) server's own RSA private key, used
-		// to sign short-lived JWTs presented to the remote — stored in
-		// plaintext (unlike every other secret in this schema, which is
-		// one-way hashed) because it must be read back to sign each outbound
-		// request. remote_api_key_id is not secret: it's the id of the
-		// api_keys row the matching public key was registered as *on the
-		// remote*, so it isn't a local foreign key.
-		errContext: "migrate sync_remotes table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS sync_remotes (
-				id                UUID PRIMARY KEY,
-				name              TEXT NOT NULL,
-				base_url          TEXT NOT NULL,
-				remote_api_key_id UUID,
-				private_key_pem   TEXT NOT NULL DEFAULT '',
-				poll_interval_sec INTEGER NOT NULL DEFAULT 300,
-				enabled           BOOLEAN NOT NULL DEFAULT true,
-				last_sync_at      TIMESTAMPTZ,
-				last_sync_status  TEXT NOT NULL DEFAULT '',
-				last_sync_error   TEXT NOT NULL DEFAULT '',
-				created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-				updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-				created_by        TEXT NOT NULL,
-				updated_by        TEXT NOT NULL
-			)
-		`,
-	},
-	{
-		// As with api_keys: existing api_key plaintext rows become inert (the
-		// column is dropped outright) — no migration path, by design.
-		errContext: "migrate sync_remotes key columns",
-		sql: `
-			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS remote_api_key_id UUID;
-			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS private_key_pem TEXT NOT NULL DEFAULT '';
-			ALTER TABLE sync_remotes DROP COLUMN IF EXISTS api_key;
-		`,
-	},
-	{
-		errContext: "migrate maps sync_remote_id column",
-		sql: `
-			ALTER TABLE maps ADD COLUMN IF NOT EXISTS sync_remote_id UUID REFERENCES sync_remotes(id) ON DELETE SET NULL;
-		`,
-	},
-	{
-		// sync_all_maps defaults to true so every remote configured before
-		// this feature existed keeps its prior full-mirror behavior
-		// unchanged. sync_new_maps only matters when sync_all_maps is
-		// false — it defaults to false (opt-in), matching the strict
-		// reading of an explicit map selection: a newly appearing remote
-		// map isn't synced until the admin either selects it or turns
-		// this on.
-		errContext: "migrate sync_remotes selective sync columns",
-		sql: `
-			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS sync_all_maps BOOLEAN NOT NULL DEFAULT true;
-			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS sync_new_maps BOOLEAN NOT NULL DEFAULT false;
-		`,
-	},
-	{
-		// sync_geo_objects defaults to false (opt-in): unlike
-		// sync_all_maps, there's no pre-existing behavior to preserve —
-		// this is a wholly new capability, so existing remotes shouldn't
-		// suddenly incur new pull volume without an admin turning it on.
-		errContext: "migrate sync_remotes geo objects column",
-		sql: `
-			ALTER TABLE sync_remotes ADD COLUMN IF NOT EXISTS sync_geo_objects BOOLEAN NOT NULL DEFAULT false;
-		`,
-	},
-	{
-		// Holds the admin's explicit map selection for a remote whose
-		// sync_all_maps is false (see internal/sync.mapsToSync). map_uuid
-		// isn't a foreign key into maps(uuid): a selected map may not be
-		// mirrored locally yet at the time it's selected.
-		errContext: "migrate sync_remote_maps table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS sync_remote_maps (
-				remote_id  UUID NOT NULL REFERENCES sync_remotes(id) ON DELETE CASCADE,
-				map_uuid   UUID NOT NULL,
-				created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-				PRIMARY KEY (remote_id, map_uuid)
-			)
-		`,
-	},
-	{
-		// scoped is an explicit on/off flag for api_key_scopes, deliberately
-		// independent of that table's row count: an admin removing the last
-		// individual map from a key's scope should leave it locked out of
-		// everything, not silently revert it to unrestricted. Only
-		// ClearAPIKeyScope resets it to false.
-		errContext: "migrate api_keys scoped column",
-		sql: `
-			ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS scoped BOOLEAN NOT NULL DEFAULT false;
-		`,
-	},
-	{
-		// Per-key, per-map access grant restricting what a scoped API key
-		// (see api_keys.scoped) may see or act on -- most notably, what a
-		// server-sync remote's registered key may pull. versions NULL/empty
-		// means every version of that map is in scope.
-		errContext: "migrate api_key_scopes table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS api_key_scopes (
-				api_key_id UUID NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
-				map_uuid   UUID NOT NULL REFERENCES maps(uuid) ON DELETE CASCADE,
-				versions   TEXT[],
-				granted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-				PRIMARY KEY (api_key_id, map_uuid)
-			);
-			CREATE INDEX IF NOT EXISTS idx_api_key_scopes_api_key ON api_key_scopes (api_key_id);
-		`,
-	},
-	{
-		// Links a local account to the OpenID Connect identity it was
-		// provisioned from (or later linked to), so a repeat login at the
-		// same provider resolves back to the same account (see
-		// FindUserByOIDCIdentity/CreateOIDCUser in oidc.go). Both columns
-		// are '' for a password-only account. The unique index is partial
-		// (WHERE oidc_subject <> '') so multiple password-only accounts
-		// don't collide on the shared '' default.
-		errContext: "migrate users oidc columns",
-		sql: `
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_issuer  TEXT NOT NULL DEFAULT '';
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_subject TEXT NOT NULL DEFAULT '';
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity ON users (oidc_issuer, oidc_subject) WHERE oidc_subject <> '';
-		`,
-	},
-	{
-		// Records who did what to which resource, and when — every
-		// mutating admin/API action across users, maps, permissions, geo
-		// objects, api keys, and sync remotes (see
-		// internal/webserver/auditlog.RecordAudit and its call sites). entity_id is
-		// TEXT rather than UUID since some entities have no single UUID
-		// (e.g. a per-map permission grant is keyed by map uuid AND
-		// username) and are recorded as a composite string instead.
-		errContext: "migrate audit_logs table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS audit_logs (
-				id          BIGSERIAL PRIMARY KEY,
-				occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-				actor       TEXT NOT NULL,
-				action      TEXT NOT NULL,
-				entity_type TEXT NOT NULL,
-				entity_id   TEXT NOT NULL DEFAULT '',
-				detail      TEXT NOT NULL DEFAULT ''
-			);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_occurred_at ON audit_logs (occurred_at DESC, id DESC);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs (entity_type, entity_id);
-			CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor);
-		`,
-	},
-	{
-		// Links a local account to the LDAP directory entry it was
-		// provisioned from (or later linked to), so a repeat login at the
-		// same directory resolves back to the same account (see
-		// FindUserByLDAPIdentity/CreateLDAPUser in ldap.go). '' for a
-		// password-only or OIDC account. The unique index is partial
-		// (WHERE ldap_dn <> ''), same reasoning as idx_users_oidc_identity
-		// above.
-		errContext: "migrate users ldap column",
-		sql: `
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS ldap_dn TEXT NOT NULL DEFAULT '';
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ldap_identity ON users (ldap_dn) WHERE ldap_dn <> '';
-		`,
-	},
-	{
-		// Removes the free-text display-name field: never used as an identity
-		// key (LDAP/OIDC accounts link via ldap_dn/oidc_issuer+subject
-		// instead), so dropping it loses no functionality.
-		errContext: "migrate users drop cn column",
-		sql: `
-			ALTER TABLE users DROP COLUMN IF EXISTS cn;
-		`,
-	},
-	{
-		// Every sync remote now authenticates with this server's own
-		// persistent key pair (see internal/serverkey) instead of a key pair
-		// generated per remote, so the per-remote private key has nowhere
-		// left to be read from. As with api_keys.key_hash and
-		// sync_remotes.api_key before it, the column is dropped outright —
-		// no migration path, by design.
-		errContext: "migrate sync_remotes drop private key column",
-		sql: `
-			ALTER TABLE sync_remotes DROP COLUMN IF EXISTS private_key_pem;
-		`,
-	},
-	{
-		// Unlike the other global permission columns, this defaults to
-		// false: it's a wholly new, broad capability (view every map
-		// regardless of that map's own visibility settings or any per-map
-		// grant), so an upgrading deployment's existing users don't
-		// suddenly gain it without an admin opting them in.
-		errContext: "migrate users view-all-maps column",
-		sql: `
-			ALTER TABLE users ADD COLUMN IF NOT EXISTS can_view_all BOOLEAN NOT NULL DEFAULT false;
-		`,
-	},
-	{
-		// A Group carries the same shape of global permission bundle as a
-		// user (see Permissions below): every member inherits these flags
-		// OR'd with their own personal ones (see GetPermissions' UNION ALL
-		// query), and additionally gets any per-map grants made to the group
-		// (see group_map_permissions below). id is a separate, stable UUID
-		// rather than name itself (unlike users, which is keyed on
-		// username) so a group's membership and per-map grants never need
-		// rewriting if an admin renames it later — matching every other
-		// non-users table in this schema (maps, api_keys, sync_remotes all
-		// key off a UUID). ldap_group_dn/oidc_group_claim are what
-		// membership sync matches against (see group_membership.go), kept
-		// separate from the admin-facing name; the partial unique indexes
-		// mirror idx_users_ldap_identity/idx_users_oidc_identity so two
-		// groups can't claim the same directory group. Every permission
-		// column defaults to false (opt-in), unlike users' legacy true
-		// default, since a group is a wholly new capability grant.
-		errContext: "migrate groups table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS groups (
-				id                     UUID PRIMARY KEY,
-				name                   TEXT NOT NULL UNIQUE,
-				can_create             BOOLEAN NOT NULL DEFAULT false,
-				can_edit               BOOLEAN NOT NULL DEFAULT false,
-				can_delete             BOOLEAN NOT NULL DEFAULT false,
-				can_edit_geo_objects   BOOLEAN NOT NULL DEFAULT false,
-				can_delete_geo_objects BOOLEAN NOT NULL DEFAULT false,
-				can_view_all           BOOLEAN NOT NULL DEFAULT false,
-				is_admin               BOOLEAN NOT NULL DEFAULT false,
-				ldap_group_dn          TEXT NOT NULL DEFAULT '',
-				oidc_group_claim       TEXT NOT NULL DEFAULT '',
-				created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-				updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-				created_by             TEXT NOT NULL,
-				updated_by             TEXT NOT NULL
-			);
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_ldap_dn ON groups (ldap_group_dn) WHERE ldap_group_dn <> '';
-			CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_oidc_claim ON groups (oidc_group_claim) WHERE oidc_group_claim <> '';
-		`,
-	},
-	{
-		// group_members is a pure derived cache, never manually written: a
-		// user's membership is fully recomputed from their LDAP
-		// memberOf/OIDC groups claim on every login (see
-		// SyncGroupMembershipByLDAPDNs/SyncGroupMembershipByOIDCClaims in
-		// group_membership.go), so unlike map_permissions there's no
-		// granted_by — nobody grants membership, the identity provider just
-		// reports it.
-		errContext: "migrate group_members table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS group_members (
-				group_id  UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-				username  TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
-				synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-				PRIMARY KEY (group_id, username)
-			);
-			CREATE INDEX IF NOT EXISTS idx_group_members_username ON group_members (username);
-		`,
-	},
-	{
-		// A group's per-map grant: identical shape to map_permissions above,
-		// but keyed by group_id instead of username. Every current member
-		// of the group inherits it (see GetMapPermission's UNION ALL
-		// query) — same "only ever adds capability" semantics as
-		// map_permissions.
-		errContext: "migrate group_map_permissions table",
-		sql: `
-			CREATE TABLE IF NOT EXISTS group_map_permissions (
-				map_uuid               UUID NOT NULL REFERENCES maps(uuid) ON DELETE CASCADE,
-				group_id               UUID NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
-				can_view               BOOLEAN NOT NULL DEFAULT false,
-				can_edit               BOOLEAN NOT NULL DEFAULT false,
-				can_delete             BOOLEAN NOT NULL DEFAULT false,
-				can_edit_geo_objects   BOOLEAN NOT NULL DEFAULT false,
-				can_delete_geo_objects BOOLEAN NOT NULL DEFAULT false,
-				granted_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
-				granted_by             TEXT NOT NULL,
-				PRIMARY KEY (map_uuid, group_id)
-			);
-		`,
-	},
+// namedConstraint is one foreign key to add if it doesn't already exist.
+type namedConstraint struct {
+	name string
+	sql  string
+}
+
+// foreignKeys are every REFERENCES relationship in the schema, added as
+// explicit, named constraints after AutoMigrate has created every table —
+// deliberately not expressed via GORM association tags, so the exact
+// on-delete behavior of each relationship (cascade, set null, or the
+// default restrict) stays as plainly auditable as the hand-written SQL it
+// replaces. Two of these (geo_objects and map_version_aliases) are
+// composite foreign keys against map_versions' composite primary key, which
+// GORM struct tags cannot express at all.
+var foreignKeys = []namedConstraint{
+	{"fk_maps_owner", `ALTER TABLE maps ADD CONSTRAINT fk_maps_owner FOREIGN KEY (owner_id) REFERENCES users(id)`},
+	{"fk_maps_sync_remote", `ALTER TABLE maps ADD CONSTRAINT fk_maps_sync_remote FOREIGN KEY (sync_remote_id) REFERENCES sync_remotes(id) ON DELETE SET NULL`},
+	{"fk_map_versions_map", `ALTER TABLE map_versions ADD CONSTRAINT fk_map_versions_map FOREIGN KEY (map_uuid) REFERENCES maps(uuid) ON DELETE CASCADE`},
+	{"fk_geo_objects_map_version", `ALTER TABLE geo_objects ADD CONSTRAINT fk_geo_objects_map_version FOREIGN KEY (map_uuid, version) REFERENCES map_versions(map_uuid, version) ON DELETE CASCADE`},
+	{"fk_map_permissions_map", `ALTER TABLE map_permissions ADD CONSTRAINT fk_map_permissions_map FOREIGN KEY (map_uuid) REFERENCES maps(uuid) ON DELETE CASCADE`},
+	{"fk_map_permissions_user", `ALTER TABLE map_permissions ADD CONSTRAINT fk_map_permissions_user FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE`},
+	{"fk_refresh_tokens_user", `ALTER TABLE refresh_tokens ADD CONSTRAINT fk_refresh_tokens_user FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE`},
+	{"fk_map_version_aliases_map", `ALTER TABLE map_version_aliases ADD CONSTRAINT fk_map_version_aliases_map FOREIGN KEY (map_uuid) REFERENCES maps(uuid) ON DELETE CASCADE`},
+	{"fk_map_version_aliases_map_version", `ALTER TABLE map_version_aliases ADD CONSTRAINT fk_map_version_aliases_map_version FOREIGN KEY (map_uuid, version) REFERENCES map_versions(map_uuid, version) ON DELETE CASCADE`},
+	{"fk_api_keys_user", `ALTER TABLE api_keys ADD CONSTRAINT fk_api_keys_user FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE`},
+	{"fk_sync_remote_maps_remote", `ALTER TABLE sync_remote_maps ADD CONSTRAINT fk_sync_remote_maps_remote FOREIGN KEY (remote_id) REFERENCES sync_remotes(id) ON DELETE CASCADE`},
+	{"fk_api_key_scopes_key", `ALTER TABLE api_key_scopes ADD CONSTRAINT fk_api_key_scopes_key FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE CASCADE`},
+	{"fk_api_key_scopes_map", `ALTER TABLE api_key_scopes ADD CONSTRAINT fk_api_key_scopes_map FOREIGN KEY (map_uuid) REFERENCES maps(uuid) ON DELETE CASCADE`},
+	{"fk_group_members_group", `ALTER TABLE group_members ADD CONSTRAINT fk_group_members_group FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE`},
+	{"fk_group_members_user", `ALTER TABLE group_members ADD CONSTRAINT fk_group_members_user FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE`},
+	{"fk_group_map_permissions_map", `ALTER TABLE group_map_permissions ADD CONSTRAINT fk_group_map_permissions_map FOREIGN KEY (map_uuid) REFERENCES maps(uuid) ON DELETE CASCADE`},
+	{"fk_group_map_permissions_group", `ALTER TABLE group_map_permissions ADD CONSTRAINT fk_group_map_permissions_group FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE`},
+}
+
+// addConstraintsIfMissing adds every constraint in constraints whose name
+// isn't already present in pg_constraint. Postgres has no
+// "ADD CONSTRAINT IF NOT EXISTS", unlike CREATE INDEX, so each one is
+// existence-checked by name first to keep Migrate idempotent.
+func addConstraintsIfMissing(db *gorm.DB, constraints []namedConstraint) error {
+	for _, c := range constraints {
+		var exists bool
+		if err := db.Raw(`SELECT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = ?)`, c.name).Scan(&exists).Error; err != nil {
+			return fmt.Errorf("check constraint %s: %w", c.name, err)
+		}
+
+		if exists {
+			continue
+		}
+
+		if err := db.Exec(c.sql).Error; err != nil {
+			return fmt.Errorf("add constraint %s: %w", c.name, err)
+		}
+	}
+
+	return nil
+}
+
+// secondaryIndexes are every index beyond a plain single-column unique
+// constraint (already expressed via GORM's uniqueIndex tag) or a table's
+// primary key: partial unique indexes (with a WHERE clause GORM's index tag
+// syntax can't express), and plain multi-column indexes, kept here as raw
+// SQL for the same auditability reason as foreignKeys above.
+var secondaryIndexes = []string{
+	`CREATE INDEX IF NOT EXISTS idx_geo_objects_map_version ON geo_objects (map_uuid, version)`,
+	`CREATE INDEX IF NOT EXISTS idx_api_keys_username ON api_keys (username)`,
+	`CREATE INDEX IF NOT EXISTS idx_api_key_scopes_api_key ON api_key_scopes (api_key_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_group_members_username ON group_members (username)`,
+	`CREATE INDEX IF NOT EXISTS idx_audit_logs_occurred_at ON audit_logs (occurred_at DESC, id DESC)`,
+	`CREATE INDEX IF NOT EXISTS idx_audit_logs_entity ON audit_logs (entity_type, entity_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_audit_logs_actor ON audit_logs (actor)`,
+	// Partial unique indexes: '' is the "no linked identity" sentinel for a
+	// password-only account/group (see the OIDCIssuer/OIDCSubject/LDAPDN and
+	// LDAPGroupDN/OIDCGroupClaim fields), so the uniqueness constraint must
+	// exclude it or every password-only row would collide on the shared ''
+	// default.
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oidc_identity ON users (oidc_issuer, oidc_subject) WHERE oidc_subject <> ''`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_ldap_identity ON users (ldap_dn) WHERE ldap_dn <> ''`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_ldap_dn ON groups (ldap_group_dn) WHERE ldap_group_dn <> ''`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_groups_oidc_claim ON groups (oidc_group_claim) WHERE oidc_group_claim <> ''`,
+}
+
+// columnDefaults sets every DEFAULT clause this schema needs beyond what a
+// column's Go zero value already gives it. These are deliberately not
+// expressed via a GORM `default:` struct tag: GORM's create-time behavior
+// silently replaces a Go zero value with a *literal* tagged default (as
+// opposed to a function-shaped one like now()) whenever a field is left
+// unset — which is exactly wrong for e.g. users.can_create, where an
+// explicit false (an admin restricting a new user's permissions) is a real,
+// meaningful value that must never be silently upgraded to the column's
+// default of true. Setting these via a plain ALTER COLUMN instead keeps
+// every application-level Create call (which always supplies every
+// permission field explicitly, matching the hand-written SQL this replaces)
+// unaffected, while still giving the column the same DEFAULT Postgres would
+// apply for any insert that omits it outright (e.g. a manual psql insert).
+var columnDefaults = []string{
+	`ALTER TABLE users ALTER COLUMN can_create SET DEFAULT true`,
+	`ALTER TABLE users ALTER COLUMN can_edit SET DEFAULT true`,
+	`ALTER TABLE users ALTER COLUMN can_delete SET DEFAULT true`,
+	`ALTER TABLE users ALTER COLUMN can_edit_geo_objects SET DEFAULT true`,
+	`ALTER TABLE users ALTER COLUMN can_delete_geo_objects SET DEFAULT true`,
+	`ALTER TABLE users ALTER COLUMN is_admin SET DEFAULT true`,
+	`ALTER TABLE sync_remotes ALTER COLUMN enabled SET DEFAULT true`,
+	`ALTER TABLE sync_remotes ALTER COLUMN sync_all_maps SET DEFAULT true`,
+	`ALTER TABLE sync_remotes ALTER COLUMN poll_interval_sec SET DEFAULT 300`,
 }
 
 // Authenticate looks up username and verifies password against its bcrypt hash.
@@ -608,7 +273,7 @@ var migrationSteps = []struct {
 func (s *Store) Authenticate(ctx context.Context, username, password string) error {
 	var hash string
 
-	err := s.pool.QueryRow(ctx, `SELECT password_hash FROM users WHERE username = $1`, username).Scan(&hash)
+	err := s.db.WithContext(ctx).Raw(`SELECT password_hash FROM users WHERE username = ?`, username).Row().Scan(&hash)
 	if err != nil {
 		return ErrInvalidCredentials
 	}
@@ -661,21 +326,21 @@ func (s *Store) GetPermissions(ctx context.Context, username string) (Permission
 
 	var p Permissions
 
-	err := s.pool.QueryRow(ctx, `
+	err := s.db.WithContext(ctx).Raw(`
 		SELECT
 			bool_or(can_create), bool_or(can_edit), bool_or(can_delete),
 			bool_or(can_edit_geo_objects), bool_or(can_delete_geo_objects),
 			bool_or(can_view_all), bool_or(is_admin)
 		FROM (
 			SELECT can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, can_view_all, is_admin
-			FROM users WHERE username = $1
+			FROM users WHERE username = ?
 			UNION ALL
 			SELECT g.can_create, g.can_edit, g.can_delete, g.can_edit_geo_objects, g.can_delete_geo_objects, g.can_view_all, g.is_admin
 			FROM groups g
 			JOIN group_members gm ON gm.group_id = g.id
-			WHERE gm.username = $1
+			WHERE gm.username = ?
 		) combined
-	`, username).Scan(&p.CanCreate, &p.CanEdit, &p.CanDelete, &p.CanEditGeoObjects, &p.CanDeleteGeoObjects, &p.CanViewAll, &p.IsAdmin)
+	`, username, username).Row().Scan(&p.CanCreate, &p.CanEdit, &p.CanDelete, &p.CanEditGeoObjects, &p.CanDeleteGeoObjects, &p.CanViewAll, &p.IsAdmin)
 	if err != nil {
 		return Permissions{}, fmt.Errorf("get permissions for %q: %w", username, err)
 	}
@@ -685,18 +350,27 @@ func (s *Store) GetPermissions(ctx context.Context, username string) (Permission
 	return p, nil
 }
 
-// SeedUser creates username with password if it doesn't already exist. Used to
-// bootstrap the first account; it is a no-op if the username is already taken.
+// SeedUser creates username with password if it doesn't already exist, with
+// every global permission granted. Used to bootstrap the first account; it
+// is a no-op if the username is already taken.
 func (s *Store) SeedUser(ctx context.Context, username, password string) error {
 	hash, err := hashPassword(password)
 	if err != nil {
 		return err
 	}
 
-	_, err = s.pool.Exec(ctx, `
-		INSERT INTO users (username, password_hash) VALUES ($1, $2)
-		ON CONFLICT (username) DO NOTHING
-	`, username, hash)
+	u := UserRecord{
+		Username:            username,
+		PasswordHash:        hash,
+		CanCreate:           true,
+		CanEdit:             true,
+		CanDelete:           true,
+		CanEditGeoObjects:   true,
+		CanDeleteGeoObjects: true,
+		IsAdmin:             true,
+	}
+
+	err = s.db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&u).Error
 	if err != nil {
 		return fmt.Errorf("seed user %q: %w", username, err)
 	}
@@ -718,48 +392,4 @@ func hashPassword(password string) (string, error) {
 func isPgErrCode(err error, code string) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == code
-}
-
-// queryBuilder accumulates positional query arguments for a dynamically
-// built SQL query, handing back the correct $N placeholder for each one.
-// The SQL clause text surrounding that placeholder must always be a static
-// Go string literal chosen by the caller — only argument values ever flow
-// through bind — so a query built this way carries the same injection
-// safety as one written with fixed placeholders throughout.
-type queryBuilder struct {
-	args []any
-}
-
-// bind appends value to the argument list and returns its $N placeholder.
-func (q *queryBuilder) bind(value any) string {
-	q.args = append(q.args, value)
-	return fmt.Sprintf("$%d", len(q.args))
-}
-
-// collectRows runs query against pool and scans every returned row with
-// scan, wrapping any error (including a scan failure) with label for
-// context. It's shared by every Store List* method.
-func collectRows[T any](ctx context.Context, pool *pgxpool.Pool, label, query string, scan func(pgx.Rows) (T, error), args ...any) ([]T, error) {
-	rows, err := pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", label, err)
-	}
-	defer rows.Close()
-
-	items := []T{}
-
-	for rows.Next() {
-		v, err := scan(rows)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", label, err)
-		}
-
-		items = append(items, v)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("%s: %w", label, err)
-	}
-
-	return items, nil
 }

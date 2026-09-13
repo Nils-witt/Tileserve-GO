@@ -3,23 +3,25 @@ package store
 import (
 	"context"
 	"fmt"
-	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 )
 
 // AuditLogEntry is one recorded administrative action: who (Actor) did what
 // (Action) to which resource (EntityType/EntityID), and when.
 type AuditLogEntry struct {
-	ID         int64     `json:"id"`
-	OccurredAt time.Time `json:"occurredAt"`
-	Actor      string    `json:"actor"`
-	Action     string    `json:"action"`
-	EntityType string    `json:"entityType"`
-	EntityID   string    `json:"entityId"`
-	Detail     string    `json:"detail"`
+	ID         int64     `json:"id" gorm:"column:id;primaryKey;autoIncrement"`
+	OccurredAt time.Time `json:"occurredAt" gorm:"column:occurred_at;not null;default:now()"`
+	Actor      string    `json:"actor" gorm:"column:actor;not null"`
+	Action     string    `json:"action" gorm:"column:action;not null"`
+	EntityType string    `json:"entityType" gorm:"column:entity_type;not null"`
+	EntityID   string    `json:"entityId" gorm:"column:entity_id;not null;default:''"`
+	Detail     string    `json:"detail" gorm:"column:detail;not null;default:''"`
 }
+
+// TableName implements the gorm.Tabler interface.
+func (AuditLogEntry) TableName() string { return "audit_logs" }
 
 const (
 	defaultAuditLogLimit = 100
@@ -39,48 +41,44 @@ type AuditLogFilter struct {
 	Offset     int
 }
 
-// clauses returns the "column = $N"-style fragments for the filters set on
-// f, binding their values through qb. Pure and DB-free so it's directly
-// unit-testable.
-func (f AuditLogFilter) clauses(qb *queryBuilder) []string {
-	var clauses []string
+// Scope applies f's set filters to db as additional WHERE conditions.
+func (f AuditLogFilter) Scope() func(*gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		if f.Actor != "" {
+			db = db.Where("actor = ?", f.Actor)
+		}
 
-	if f.Actor != "" {
-		clauses = append(clauses, "actor = "+qb.bind(f.Actor))
+		if f.Action != "" {
+			db = db.Where("action = ?", f.Action)
+		}
+
+		if f.EntityType != "" {
+			db = db.Where("entity_type = ?", f.EntityType)
+		}
+
+		if f.EntityID != "" {
+			db = db.Where("entity_id = ?", f.EntityID)
+		}
+
+		if f.Since != nil {
+			db = db.Where("occurred_at >= ?", *f.Since)
+		}
+
+		if f.Until != nil {
+			db = db.Where("occurred_at <= ?", *f.Until)
+		}
+
+		return db
 	}
-
-	if f.Action != "" {
-		clauses = append(clauses, "action = "+qb.bind(f.Action))
-	}
-
-	if f.EntityType != "" {
-		clauses = append(clauses, "entity_type = "+qb.bind(f.EntityType))
-	}
-
-	if f.EntityID != "" {
-		clauses = append(clauses, "entity_id = "+qb.bind(f.EntityID))
-	}
-
-	if f.Since != nil {
-		clauses = append(clauses, "occurred_at >= "+qb.bind(*f.Since))
-	}
-
-	if f.Until != nil {
-		clauses = append(clauses, "occurred_at <= "+qb.bind(*f.Until))
-	}
-
-	return clauses
 }
 
 // RecordAuditLog appends one entry to the audit log. Callers treat this as
 // best-effort observability (see internal/webserver/auditlog.RecordAudit): a failure
 // here is logged but never fails the mutating request it's describing.
 func (s *Store) RecordAuditLog(ctx context.Context, actor, action, entityType, entityID, detail string) error {
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO audit_logs (actor, action, entity_type, entity_id, detail)
-		VALUES ($1, $2, $3, $4, $5)
-	`, actor, action, entityType, entityID, detail)
-	if err != nil {
+	e := AuditLogEntry{Actor: actor, Action: action, EntityType: entityType, EntityID: entityID, Detail: detail}
+
+	if err := s.db.WithContext(ctx).Create(&e).Error; err != nil {
 		return fmt.Errorf("record audit log: %w", err)
 	}
 
@@ -92,35 +90,23 @@ func (s *Store) RecordAuditLog(ctx context.Context, actor, action, entityType, e
 // defaultAuditLogLimit and is capped at maxAuditLogLimit; filter.Offset below
 // zero is treated as zero.
 func (s *Store) ListAuditLogs(ctx context.Context, filter AuditLogFilter) ([]AuditLogEntry, error) {
-	qb := &queryBuilder{}
-
-	where := ""
-	if clauses := filter.clauses(qb); len(clauses) > 0 {
-		where = "WHERE " + strings.Join(clauses, " AND ")
-	}
-
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = defaultAuditLogLimit
 	}
 
 	limit = min(limit, maxAuditLogLimit)
-	limitArg := qb.bind(limit)
-	offsetArg := qb.bind(max(filter.Offset, 0))
 
-	query := fmt.Sprintf(`
-		SELECT id, occurred_at, actor, action, entity_type, entity_id, detail
-		FROM audit_logs
-		%s
-		ORDER BY occurred_at DESC, id DESC
-		LIMIT %s OFFSET %s
-	`, where, limitArg, offsetArg)
+	entries := []AuditLogEntry{}
 
-	return collectRows(ctx, s.pool, "list audit logs", query, func(rows pgx.Rows) (AuditLogEntry, error) {
-		var e AuditLogEntry
+	err := s.db.WithContext(ctx).Scopes(filter.Scope()).
+		Order("occurred_at DESC, id DESC").
+		Limit(limit).
+		Offset(max(filter.Offset, 0)).
+		Find(&entries).Error
+	if err != nil {
+		return nil, fmt.Errorf("list audit logs: %w", err)
+	}
 
-		err := rows.Scan(&e.ID, &e.OccurredAt, &e.Actor, &e.Action, &e.EntityType, &e.EntityID, &e.Detail)
-
-		return e, err
-	}, qb.args...)
+	return entries, nil
 }

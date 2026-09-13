@@ -3,11 +3,10 @@ package store
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
-
-	"github.com/jackc/pgx/v5"
 )
 
 // FindUserByOIDCIdentity returns the username of the local account linked to
@@ -16,10 +15,8 @@ import (
 func (s *Store) FindUserByOIDCIdentity(ctx context.Context, issuer, subject string) (string, error) {
 	var username string
 
-	err := s.pool.QueryRow(ctx, `
-		SELECT username FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
-	`, issuer, subject).Scan(&username)
-	if errors.Is(err, pgx.ErrNoRows) {
+	err := s.db.WithContext(ctx).Raw(`SELECT username FROM users WHERE oidc_issuer = ? AND oidc_subject = ?`, issuer, subject).Row().Scan(&username)
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrUserNotFound
 	}
 
@@ -77,16 +74,9 @@ func (s *Store) CreateOIDCUser(ctx context.Context, preferredUsername, issuer, s
 }
 
 func (s *Store) insertOIDCUser(ctx context.Context, username, issuer, subject, passwordHash string) (UserRecord, error) {
-	u := UserRecord{Username: username}
+	u := UserRecord{Username: username, PasswordHash: passwordHash, OIDCIssuer: issuer, OIDCSubject: subject}
 
-	const noPermissions = false
-
-	err := s.pool.QueryRow(ctx, `
-		INSERT INTO users (username, password_hash, can_create, can_edit, can_delete, can_edit_geo_objects, can_delete_geo_objects, is_admin, oidc_issuer, oidc_subject)
-		VALUES ($1, $2, $3, $3, $3, $3, $3, $3, $4, $5)
-		RETURNING created_at
-	`, username, passwordHash, noPermissions, issuer, subject).Scan(&u.CreatedAt)
-	if err != nil {
+	if err := s.db.WithContext(ctx).Create(&u).Error; err != nil {
 		return UserRecord{}, err
 	}
 

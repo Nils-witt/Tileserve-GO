@@ -3,25 +3,40 @@ package store
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
+	"gorm.io/gorm"
 )
+
+// syncRemoteMapModel is the GORM-mapped form of one row in
+// sync_remote_maps — there's no public record type for it since callers
+// only ever see the plain []uuid.UUID selection (see
+// ListSyncRemoteSelectedMaps).
+type syncRemoteMapModel struct {
+	RemoteID  uuid.UUID `gorm:"column:remote_id;type:uuid;primaryKey"`
+	MapUUID   uuid.UUID `gorm:"column:map_uuid;type:uuid;primaryKey"`
+	CreatedAt time.Time `gorm:"column:created_at;not null;default:now()"`
+}
+
+func (syncRemoteMapModel) TableName() string { return "sync_remote_maps" }
 
 // ListSyncRemoteSelectedMaps returns the admin's explicit map selection for
 // remoteID — the subset of the remote's maps to mirror when its
 // SyncAllMaps is false (see internal/sync.mapsToSync). An id with no rows
 // simply has an empty selection, same as a freshly created remote.
 func (s *Store) ListSyncRemoteSelectedMaps(ctx context.Context, remoteID uuid.UUID) ([]uuid.UUID, error) {
-	return collectRows(ctx, s.pool, "list sync remote selected maps", `
-		SELECT map_uuid FROM sync_remote_maps WHERE remote_id = $1 ORDER BY map_uuid
-	`, func(rows pgx.Rows) (uuid.UUID, error) {
-		var id uuid.UUID
+	ids := []uuid.UUID{}
 
-		err := rows.Scan(&id)
+	err := s.db.WithContext(ctx).Model(&syncRemoteMapModel{}).
+		Where("remote_id = ?", remoteID).
+		Order("map_uuid").
+		Pluck("map_uuid", &ids).Error
+	if err != nil {
+		return nil, fmt.Errorf("list sync remote selected maps: %w", err)
+	}
 
-		return id, err
-	}, remoteID)
+	return ids, nil
 }
 
 // SetSyncRemoteSelectedMaps replaces remoteID's explicit map selection with
@@ -32,24 +47,21 @@ func (s *Store) ListSyncRemoteSelectedMaps(ctx context.Context, remoteID uuid.UU
 // only happen for an already-deleted remote, for which replacing an empty
 // selection with another empty one is a harmless no-op.
 func (s *Store) SetSyncRemoteSelectedMaps(ctx context.Context, remoteID uuid.UUID, mapUUIDs []uuid.UUID) error {
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin selected maps update: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	if _, err := tx.Exec(ctx, `DELETE FROM sync_remote_maps WHERE remote_id = $1`, remoteID); err != nil {
-		return fmt.Errorf("clear selected maps: %w", err)
-	}
-
-	for _, id := range mapUUIDs {
-		if _, err := tx.Exec(ctx, `INSERT INTO sync_remote_maps (remote_id, map_uuid) VALUES ($1, $2)`, remoteID, id); err != nil {
-			return fmt.Errorf("insert selected map %s: %w", id, err)
+	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("remote_id = ?", remoteID).Delete(&syncRemoteMapModel{}).Error; err != nil {
+			return fmt.Errorf("clear selected maps: %w", err)
 		}
-	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit selected maps update: %w", err)
+		for _, id := range mapUUIDs {
+			if err := tx.Create(&syncRemoteMapModel{RemoteID: remoteID, MapUUID: id}).Error; err != nil {
+				return fmt.Errorf("insert selected map %s: %w", id, err)
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("update selected maps: %w", err)
 	}
 
 	return nil
