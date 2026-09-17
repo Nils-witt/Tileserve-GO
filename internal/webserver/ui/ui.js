@@ -290,7 +290,20 @@
       fileInput.type = 'file';
       fileInput.accept = '.zip,.tar,.tar.gz,.tgz';
       fileInput.className = 'hidden';
-      fileInput.onchange = () => uploadVersion(m.uuid, fileInput.files[0]);
+
+      const uploadProgress = document.createElement('div');
+      uploadProgress.className = 'upload-progress hidden';
+      const uploadProgressBar = document.createElement('progress');
+      uploadProgressBar.max = 100;
+      uploadProgressBar.value = 0;
+      const uploadProgressLabel = document.createElement('span');
+      uploadProgressLabel.className = 'upload-progress-label';
+      uploadProgress.append(uploadProgressBar, uploadProgressLabel);
+
+      fileInput.onchange = () => {
+        uploadVersion(m.uuid, fileInput.files[0], uploadBtn, uploadProgress, uploadProgressBar, uploadProgressLabel);
+        fileInput.value = '';
+      };
       uploadBtn.onclick = () => fileInput.click();
 
       const versionsBtn = document.createElement('button');
@@ -311,6 +324,7 @@
       deleteBtn.onclick = () => deleteMap(m.uuid);
 
       actions.append(editBtn, uploadBtn, fileInput, versionsBtn, previewBtn);
+      actions.append(uploadProgress);
 
       const permBtn = document.createElement('button');
       permBtn.className = 'secondary';
@@ -1226,19 +1240,62 @@
       });
     });
 
-    async function uploadVersion(id, file) {
-      if (!file) return;
+    function fmtBytes(n) {
+      if (!Number.isFinite(n)) return '';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let i = 0;
+      while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+      return n.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
+    }
+
+    // uploadVersion sends the file via XMLHttpRequest (rather than the
+    // fetch-based api() helper) so upload progress events are available to
+    // drive the progress bar next to the "Upload version" button.
+    function uploadVersion(id, file, uploadBtn, progressEl, progressBar, progressLabel) {
+      if (!file) return Promise.resolve();
       appError(null);
-      try {
-        await api('/maps/' + id + '/upload', {
-          method: 'POST',
-          headers: { 'Content-Type': file.type || 'application/octet-stream' },
-          body: file,
-        });
-        await loadMaps();
-      } catch (err) {
-        if (err.message !== 'unauthorized') appError(err.message);
-      }
+      uploadBtn.disabled = true;
+      progressBar.value = 0;
+      progressBar.removeAttribute('value');
+      progressLabel.textContent = 'Uploading…';
+      progressEl.classList.remove('hidden');
+
+      return new Promise((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '/maps/' + id + '/upload');
+        xhr.setRequestHeader('Authorization', 'Bearer ' + getToken());
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+
+        xhr.upload.onprogress = (e) => {
+          if (!e.lengthComputable) return;
+          progressBar.value = e.loaded;
+          progressBar.max = e.total;
+          progressLabel.textContent = fmtBytes(e.loaded) + ' / ' + fmtBytes(e.total);
+        };
+
+        xhr.onload = async () => {
+          uploadBtn.disabled = false;
+          progressEl.classList.add('hidden');
+          if (xhr.status === 401) {
+            clearSession();
+            showLogin('Session expired, please sign in again.');
+          } else if (xhr.status < 200 || xhr.status >= 300) {
+            appError(xhr.responseText || ('request failed with status ' + xhr.status));
+          } else {
+            await loadMaps();
+          }
+          resolve();
+        };
+
+        xhr.onerror = () => {
+          uploadBtn.disabled = false;
+          progressEl.classList.add('hidden');
+          appError('upload failed');
+          resolve();
+        };
+
+        xhr.send(file);
+      });
     }
 
     function usersError(message) {

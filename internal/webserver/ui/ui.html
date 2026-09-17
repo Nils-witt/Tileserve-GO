@@ -60,6 +60,10 @@
   #top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
   .versions { font-size: 0.8rem; margin-top: 0.4rem; }
   .versions ul { margin: 0.3rem 0 0; padding-left: 1.1rem; }
+  .upload-progress { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.4rem; width: 100%; flex-basis: 100%; }
+  .upload-progress.hidden { display: none; }
+  .upload-progress progress { flex: 1; min-width: 6rem; height: 0.6rem; }
+  .upload-progress .upload-progress-label { font-size: 0.75rem; opacity: 0.8; white-space: nowrap; }
   .hidden { display: none; }
   .muted { opacity: 0.7; font-size: 0.8rem; }
   code { font-size: 0.8rem; }
