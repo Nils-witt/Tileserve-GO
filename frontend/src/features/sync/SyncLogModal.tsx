@@ -1,11 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiJson } from "../../api/client";
-import type { SyncLogEntry, SyncRemote } from "../../api/types";
-import Modal from "../../components/Modal";
-import ErrorBanner from "../../components/ErrorBanner";
-import { fmtDate } from "../../lib/format";
+import { useCallback, useEffect, useState } from 'react';
+import { apiJson } from '../../api/client';
+import type { SyncLogEntry, SyncRemote } from '../../api/types';
+import Modal from '../../components/Modal';
+import ErrorBanner from '../../components/ErrorBanner';
+import { fmtDate } from '../../lib/format';
 
-export default function SyncLogModal({ remote, onClose }: { remote: SyncRemote | null; onClose: () => void }) {
+export default function SyncLogModal({
+  remote,
+  onClose,
+}: {
+  remote: SyncRemote | null;
+  onClose: () => void;
+}) {
   const [entries, setEntries] = useState<SyncLogEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -31,15 +37,15 @@ export default function SyncLogModal({ remote, onClose }: { remote: SyncRemote |
     .reverse()
     .map((e, i) => {
       const line = `[${fmtDate(e.time)}] ${e.message}`;
-      return e.level === "error" ? (
-        <span key={i} style={{ color: "#dc2626" }}>
+      return e.level === 'error' ? (
+        <span key={i} style={{ color: '#dc2626' }}>
           {line}
-          {"\n"}
+          {'\n'}
         </span>
       ) : (
         <span key={i}>
           {line}
-          {"\n"}
+          {'\n'}
         </span>
       );
     });
@@ -47,7 +53,7 @@ export default function SyncLogModal({ remote, onClose }: { remote: SyncRemote |
   return (
     <Modal
       open={!!remote}
-      title={remote ? `Sync log — ${remote.name}` : "Sync log"}
+      title={remote ? `Sync log — ${remote.name}` : 'Sync log'}
       onClose={onClose}
       headerExtra={
         <button type="button" className="secondary" onClick={load}>
@@ -56,7 +62,11 @@ export default function SyncLogModal({ remote, onClose }: { remote: SyncRemote |
       }
     >
       <ErrorBanner message={error} />
-      <pre style={{ whiteSpace: "pre-wrap", fontFamily: "monospace", fontSize: "0.8em", margin: 0 }}>{lines}</pre>
+      <pre
+        style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.8em', margin: 0 }}
+      >
+        {lines}
+      </pre>
       {entries.length === 0 && <p className="muted">No log entries yet.</p>}
     </Modal>
   );

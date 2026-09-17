@@ -1,12 +1,12 @@
-import { Navigate, Route, Routes } from "react-router-dom";
-import { AuthProvider, useAuth } from "./auth/AuthContext";
-import ProtectedRoute from "./auth/ProtectedRoute";
-import LoginPage from "./pages/LoginPage";
-import AdminApp from "./pages/AdminApp";
+import { Navigate, Route, Routes } from 'react-router-dom';
+import { AuthProvider, useAuth } from './auth/AuthContext';
+import ProtectedRoute from './auth/ProtectedRoute';
+import LoginPage from './pages/LoginPage';
+import AdminApp from './pages/AdminApp';
 
 function IndexRedirect() {
   const { isAuthenticated } = useAuth();
-  return <Navigate to={isAuthenticated ? "/ui" : "/login"} replace />;
+  return <Navigate to={isAuthenticated ? '/ui' : '/login'} replace />;
 }
 
 export default function App() {

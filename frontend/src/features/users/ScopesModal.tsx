@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch, apiJson } from "../../api/client";
-import type { ApiKey, ApiKeyScope } from "../../api/types";
-import { useAdminData } from "../AdminDataContext";
-import Modal from "../../components/Modal";
-import ErrorBanner from "../../components/ErrorBanner";
+import { useCallback, useEffect, useState } from 'react';
+import { apiFetch, apiJson } from '../../api/client';
+import type { ApiKey, ApiKeyScope } from '../../api/types';
+import { useAdminData } from '../AdminDataContext';
+import Modal from '../../components/Modal';
+import ErrorBanner from '../../components/ErrorBanner';
 
 export default function ScopesModal({
   username,
@@ -19,14 +19,18 @@ export default function ScopesModal({
   const { maps, mapName } = useAdminData();
   const [scopes, setScopes] = useState<ApiKeyScope[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [addMap, setAddMap] = useState("");
-  const [addVersions, setAddVersions] = useState("");
+  const [addMap, setAddMap] = useState('');
+  const [addVersions, setAddVersions] = useState('');
 
   const load = useCallback(async () => {
     if (!username || !apiKey) return;
     setError(null);
     try {
-      setScopes(await apiJson<ApiKeyScope[]>(`/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes`));
+      setScopes(
+        await apiJson<ApiKeyScope[]>(
+          `/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes`,
+        ),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -34,8 +38,8 @@ export default function ScopesModal({
 
   useEffect(() => {
     if (!apiKey) return;
-    setAddMap("");
-    setAddVersions("");
+    setAddMap('');
+    setAddVersions('');
     load();
   }, [apiKey, load]);
 
@@ -45,16 +49,19 @@ export default function ScopesModal({
     try {
       const versions = addVersions.trim()
         ? addVersions
-            .split(",")
+            .split(',')
             .map((v) => v.trim())
             .filter(Boolean)
         : null;
-      await apiFetch(`/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes/${addMap}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ versions }),
-      });
-      setAddVersions("");
+      await apiFetch(
+        `/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes/${addMap}`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ versions }),
+        },
+      );
+      setAddVersions('');
       await load();
       onScopesChanged();
     } catch (err) {
@@ -72,7 +79,10 @@ export default function ScopesModal({
     if (!username || !apiKey) return;
     setError(null);
     try {
-      await apiFetch(`/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes/${mapId}`, { method: "DELETE" });
+      await apiFetch(
+        `/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes/${mapId}`,
+        { method: 'DELETE' },
+      );
       await load();
       onScopesChanged();
     } catch (err) {
@@ -81,11 +91,18 @@ export default function ScopesModal({
   };
 
   const clearScope = async () => {
-    if (!confirm("Clear all scope restrictions? This key will regain unrestricted access (same as its user).")) return;
+    if (
+      !confirm(
+        'Clear all scope restrictions? This key will regain unrestricted access (same as its user).',
+      )
+    )
+      return;
     if (!username || !apiKey) return;
     setError(null);
     try {
-      await apiFetch(`/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes`, { method: "DELETE" });
+      await apiFetch(`/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes`, {
+        method: 'DELETE',
+      });
       await load();
       onScopesChanged();
     } catch (err) {
@@ -94,7 +111,11 @@ export default function ScopesModal({
   };
 
   return (
-    <Modal open={!!apiKey} title={apiKey ? `Scopes — ${apiKey.name || apiKey.id}` : "Scopes"} onClose={onClose}>
+    <Modal
+      open={!!apiKey}
+      title={apiKey ? `Scopes — ${apiKey.name || apiKey.id}` : 'Scopes'}
+      onClose={onClose}
+    >
       <ErrorBanner message={error} />
       <table>
         <thead>
@@ -108,7 +129,7 @@ export default function ScopesModal({
           {scopes.map((s) => (
             <tr key={s.mapUuid}>
               <td>{mapName(s.mapUuid)}</td>
-              <td>{s.versions && s.versions.length ? s.versions.join(", ") : "all"}</td>
+              <td>{s.versions && s.versions.length ? s.versions.join(', ') : 'all'}</td>
               <td>
                 <div className="actions">
                   <button type="button" className="danger" onClick={() => removeScope(s.mapUuid)}>
@@ -120,8 +141,10 @@ export default function ScopesModal({
           ))}
         </tbody>
       </table>
-      {scopes.length === 0 && <p className="muted">No scope restrictions — this key can access every map its user can.</p>}
-      <div className="row" style={{ marginTop: "1rem" }}>
+      {scopes.length === 0 && (
+        <p className="muted">No scope restrictions — this key can access every map its user can.</p>
+      )}
+      <div className="row" style={{ marginTop: '1rem' }}>
         <div className="field">
           <label htmlFor="scope-add-map">Map</label>
           <select id="scope-add-map" value={addMap} onChange={(e) => setAddMap(e.target.value)}>
@@ -135,7 +158,12 @@ export default function ScopesModal({
         </div>
         <div className="field">
           <label htmlFor="scope-add-versions">Versions (comma-separated, blank = all)</label>
-          <input id="scope-add-versions" placeholder="e.g. 3,4" value={addVersions} onChange={(e) => setAddVersions(e.target.value)} />
+          <input
+            id="scope-add-versions"
+            placeholder="e.g. 3,4"
+            value={addVersions}
+            onChange={(e) => setAddVersions(e.target.value)}
+          />
         </div>
         <button type="button" disabled={!addMap} onClick={addScope}>
           Add
@@ -145,9 +173,11 @@ export default function ScopesModal({
         </button>
       </div>
       <p className="muted">
-        Once this key has any scope entry, it can only access the maps listed here — and, where a version list is given, only those
-        versions of that map — regardless of what its user could otherwise do. Removing entries one at a time only ever narrows access
-        further; a key with an entry removed down to zero remains locked out. Use "Clear all" to explicitly restore unrestricted access.
+        Once this key has any scope entry, it can only access the maps listed here — and, where a
+        version list is given, only those versions of that map — regardless of what its user could
+        otherwise do. Removing entries one at a time only ever narrows access further; a key with an
+        entry removed down to zero remains locked out. Use "Clear all" to explicitly restore
+        unrestricted access.
       </p>
     </Modal>
   );

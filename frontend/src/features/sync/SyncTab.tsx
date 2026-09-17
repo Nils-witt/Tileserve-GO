@@ -1,17 +1,17 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { apiFetch, apiJson, apiPostJSON } from "../../api/client";
-import type { SyncRemote } from "../../api/types";
-import ErrorBanner from "../../components/ErrorBanner";
-import { fmtDate } from "../../lib/format";
-import SyncLogModal from "./SyncLogModal";
-import SyncMapsPickerModal from "./SyncMapsPickerModal";
+import { useEffect, useState, type FormEvent } from 'react';
+import { apiFetch, apiJson, apiPostJSON } from '../../api/client';
+import type { SyncRemote } from '../../api/types';
+import ErrorBanner from '../../components/ErrorBanner';
+import { fmtDate } from '../../lib/format';
+import SyncLogModal from './SyncLogModal';
+import SyncMapsPickerModal from './SyncMapsPickerModal';
 
 function ServerPublicKeyCard() {
-  const [key, setKey] = useState("");
+  const [key, setKey] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiJson<{ publicKeyPem: string }>("/server/public-key")
+    apiJson<{ publicKeyPem: string }>('/server/public-key')
       .then((data) => setKey(data.publicKeyPem))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
@@ -19,12 +19,19 @@ function ServerPublicKeyCard() {
   return (
     <div className="card">
       <h2>This server's public key</h2>
-      <p className="muted" style={{ marginTop: 0, marginBottom: "0.9rem" }}>
-        Generated once on first startup and persisted across restarts. Every sync remote below authenticates with this same key —
-        register it as an API key for a user on each remote tileserve-go instance you want to pull from (via that instance's "API keys"
-        button on its Users tab), then paste the key ID that call returns into "Remote API key ID" when registering the remote.
+      <p className="muted" style={{ marginTop: 0, marginBottom: '0.9rem' }}>
+        Generated once on first startup and persisted across restarts. Every sync remote below
+        authenticates with this same key — register it as an API key for a user on each remote
+        tileserve-go instance you want to pull from (via that instance's "API keys" button on its
+        Users tab), then paste the key ID that call returns into "Remote API key ID" when
+        registering the remote.
       </p>
-      <textarea readOnly rows={6} style={{ width: "100%", fontFamily: "monospace", fontSize: "0.8em" }} value={key} />
+      <textarea
+        readOnly
+        rows={6}
+        style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8em' }}
+        value={key}
+      />
       <ErrorBanner message={error} />
     </div>
   );
@@ -32,7 +39,12 @@ function ServerPublicKeyCard() {
 
 function fmtSyncStatus(r: SyncRemote) {
   if (!r.lastSyncAt) return <span className="muted">never synced</span>;
-  const status = r.lastSyncStatus === "error" ? <span style={{ color: "#dc2626" }}>error</span> : r.lastSyncStatus || "-";
+  const status =
+    r.lastSyncStatus === 'error' ? (
+      <span style={{ color: '#dc2626' }}>error</span>
+    ) : (
+      r.lastSyncStatus || '-'
+    );
   return (
     <>
       {status}
@@ -42,7 +54,7 @@ function fmtSyncStatus(r: SyncRemote) {
         <>
           <br />
           <span className="muted" title={r.lastSyncError}>
-            {r.lastSyncError.length > 60 ? r.lastSyncError.slice(0, 60) + "…" : r.lastSyncError}
+            {r.lastSyncError.length > 60 ? r.lastSyncError.slice(0, 60) + '…' : r.lastSyncError}
           </span>
         </>
       )}
@@ -67,8 +79,8 @@ function SyncRemoteRow({
     setError(null);
     try {
       await apiFetch(`/sync/remotes/${r.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: r.name,
           baseUrl: r.baseUrl,
@@ -88,19 +100,19 @@ function SyncRemoteRow({
   };
 
   const edit = async () => {
-    const name = prompt("Name", r.name);
+    const name = prompt('Name', r.name);
     if (name === null) return;
-    const baseUrl = prompt("Base URL", r.baseUrl);
+    const baseUrl = prompt('Base URL', r.baseUrl);
     if (baseUrl === null) return;
-    const remoteApiKeyId = prompt("Remote API key ID", r.remoteApiKeyId);
+    const remoteApiKeyId = prompt('Remote API key ID', r.remoteApiKeyId);
     if (remoteApiKeyId === null) return;
-    const pollIntervalSecStr = prompt("Poll interval (seconds)", String(r.pollIntervalSec));
+    const pollIntervalSecStr = prompt('Poll interval (seconds)', String(r.pollIntervalSec));
     if (pollIntervalSecStr === null) return;
     setError(null);
     try {
       await apiFetch(`/sync/remotes/${r.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name,
           baseUrl,
@@ -121,17 +133,17 @@ function SyncRemoteRow({
   const trigger = async () => {
     setError(null);
     try {
-      await apiFetch(`/sync/remotes/${r.id}/trigger`, { method: "POST" });
+      await apiFetch(`/sync/remotes/${r.id}/trigger`, { method: 'POST' });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
   };
 
   const remove = async () => {
-    if (!confirm("Remove this sync remote? Already-mirrored maps keep their local data.")) return;
+    if (!confirm('Remove this sync remote? Already-mirrored maps keep their local data.')) return;
     setError(null);
     try {
-      await apiFetch(`/sync/remotes/${r.id}`, { method: "DELETE" });
+      await apiFetch(`/sync/remotes/${r.id}`, { method: 'DELETE' });
       onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -146,12 +158,20 @@ function SyncRemoteRow({
       </td>
       <td>{r.baseUrl}</td>
       <td>{r.pollIntervalSec}s</td>
-      <td>{r.syncAllMaps ? "All maps" : "Selected maps"}</td>
+      <td>{r.syncAllMaps ? 'All maps' : 'Selected maps'}</td>
       <td className="checkbox-cell">
-        <input type="checkbox" checked={r.enabled} onChange={(e) => updatePatch({ enabled: e.target.checked })} />
+        <input
+          type="checkbox"
+          checked={r.enabled}
+          onChange={(e) => updatePatch({ enabled: e.target.checked })}
+        />
       </td>
       <td className="checkbox-cell">
-        <input type="checkbox" checked={r.syncGeoObjects} onChange={(e) => updatePatch({ syncGeoObjects: e.target.checked })} />
+        <input
+          type="checkbox"
+          checked={r.syncGeoObjects}
+          onChange={(e) => updatePatch({ syncGeoObjects: e.target.checked })}
+        />
       </td>
       <td>{fmtSyncStatus(r)}</td>
       <td>
@@ -183,16 +203,16 @@ export default function SyncTab() {
   const [logRemote, setLogRemote] = useState<SyncRemote | null>(null);
   const [mapsPickerRemote, setMapsPickerRemote] = useState<SyncRemote | null>(null);
 
-  const [name, setName] = useState("");
-  const [baseUrl, setBaseUrl] = useState("");
-  const [remoteApiKeyId, setRemoteApiKeyId] = useState("");
-  const [pollIntervalSec, setPollIntervalSec] = useState("300");
+  const [name, setName] = useState('');
+  const [baseUrl, setBaseUrl] = useState('');
+  const [remoteApiKeyId, setRemoteApiKeyId] = useState('');
+  const [pollIntervalSec, setPollIntervalSec] = useState('300');
   const [enabled, setEnabled] = useState(true);
 
   const reload = async () => {
     setError(null);
     try {
-      setRemotes(await apiJson<SyncRemote[]>("/sync/remotes"));
+      setRemotes(await apiJson<SyncRemote[]>('/sync/remotes'));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -206,7 +226,7 @@ export default function SyncTab() {
     e.preventDefault();
     setError(null);
     try {
-      await apiPostJSON("/sync/remotes", {
+      await apiPostJSON('/sync/remotes', {
         name,
         baseUrl,
         remoteApiKeyId,
@@ -219,10 +239,10 @@ export default function SyncTab() {
         // Geo-object syncing starts opted out too.
         syncGeoObjects: false,
       });
-      setName("");
-      setBaseUrl("");
-      setRemoteApiKeyId("");
-      setPollIntervalSec("300");
+      setName('');
+      setBaseUrl('');
+      setRemoteApiKeyId('');
+      setPollIntervalSec('300');
       setEnabled(true);
       await reload();
     } catch (err) {
@@ -236,11 +256,12 @@ export default function SyncTab() {
 
       <div className="card">
         <h2>Register sync remote</h2>
-        <p className="muted" style={{ marginTop: 0, marginBottom: "0.9rem" }}>
-          Pulls a full mirror of every map visible to a registered API key on another tileserve-go instance — versions and aliases
-          included, under the same map UUIDs. This server signs its own short-lived JWTs using its persistent key pair shown above;
-          register that public key as an API key for a user on the remote instance, then paste the key ID that call returns into
-          "Remote API key ID" below.
+        <p className="muted" style={{ marginTop: 0, marginBottom: '0.9rem' }}>
+          Pulls a full mirror of every map visible to a registered API key on another tileserve-go
+          instance — versions and aliases included, under the same map UUIDs. This server signs its
+          own short-lived JWTs using its persistent key pair shown above; register that public key
+          as an API key for a user on the remote instance, then paste the key ID that call returns
+          into "Remote API key ID" below.
         </p>
         <form className="row" onSubmit={createRemote}>
           <div className="field">
@@ -281,7 +302,12 @@ export default function SyncTab() {
           </div>
           <div className="field">
             <label>
-              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Enabled
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => setEnabled(e.target.checked)}
+              />{' '}
+              Enabled
             </label>
           </div>
           <button type="submit">Register</button>
@@ -317,13 +343,17 @@ export default function SyncTab() {
         </table>
         {remotes.length === 0 && <p className="muted">No sync remotes configured yet.</p>}
         <p className="muted">
-          Removing a remote stops future syncing; maps already mirrored from it keep their local data. Deletions on the remote are never
-          propagated here.
+          Removing a remote stops future syncing; maps already mirrored from it keep their local
+          data. Deletions on the remote are never propagated here.
         </p>
       </div>
 
       <SyncLogModal remote={logRemote} onClose={() => setLogRemote(null)} />
-      <SyncMapsPickerModal remote={mapsPickerRemote} onClose={() => setMapsPickerRemote(null)} onSaved={reload} />
+      <SyncMapsPickerModal
+        remote={mapsPickerRemote}
+        onClose={() => setMapsPickerRemote(null)}
+        onSaved={reload}
+      />
     </div>
   );
 }

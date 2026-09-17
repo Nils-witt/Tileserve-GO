@@ -1,0 +1,22 @@
+.login-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  align-items: center;
+  justify-content: center;
+  padding-left: 16px;
+  padding-right: 16px;
+
+  .MuiAlert-root {
+    margin-top: 16px;
+  }
+
+  .MuiDivider-root {
+    margin-top: 16px;
+    margin-bottom: 16px;
+  }
+
+  > * > .MuiPaper-root {
+    padding: 32px;
+  }
+}

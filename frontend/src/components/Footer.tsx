@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
-import { fetchBuildInfo } from "../lib/version";
+import { useEffect, useState } from 'react';
+import { fetchBuildInfo } from '../lib/version';
 
 export default function Footer() {
-  const [buildInfo, setBuildInfo] = useState("");
+  const [buildInfo, setBuildInfo] = useState('');
 
   useEffect(() => {
     fetchBuildInfo()
@@ -12,7 +12,7 @@ export default function Footer() {
 
   return (
     <footer>
-      &copy; 2026 Witt, Nils &middot; Tileserve-GO &middot;{" "}
+      &copy; 2026 Witt, Nils &middot; Tileserve-GO &middot;{' '}
       <a href="https://github.com/Nils-witt/Tileserve-GO" target="_blank" rel="noopener noreferrer">
         GitHub
       </a>

@@ -4,8 +4,8 @@
 // whoever registered onUnauthorized (the AuthContext) so it can redirect to
 // the login page.
 
-const TOKEN_KEY = "tileserve_token";
-const USER_KEY = "tileserve_username";
+const TOKEN_KEY = 'tileserve_token';
+const USER_KEY = 'tileserve_username';
 
 export function getToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY);
@@ -38,14 +38,14 @@ export class ApiError extends Error {}
  * on any other non-OK response. */
 export async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const headers = new Headers(options.headers);
-  headers.set("Authorization", "Bearer " + (getToken() ?? ""));
+  headers.set('Authorization', 'Bearer ' + (getToken() ?? ''));
 
   const res = await fetch(path, { ...options, headers });
 
   if (res.status === 401) {
     clearSession();
     onUnauthorized?.();
-    throw new ApiError("unauthorized");
+    throw new ApiError('unauthorized');
   }
 
   if (!res.ok) {
@@ -61,10 +61,10 @@ export async function apiJson<T>(path: string, options: RequestInit = {}): Promi
   return (await res.json()) as T;
 }
 
-export function apiPostJSON<T>(path: string, body: unknown, method = "POST"): Promise<T> {
+export function apiPostJSON<T>(path: string, body: unknown, method = 'POST'): Promise<T> {
   return apiJson<T>(path, {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
 }

@@ -2,7 +2,7 @@
 // uploadVersion(): fetch() can't report upload progress, so this uses
 // XMLHttpRequest directly for POST /maps/{id}/upload.
 
-import { clearSession, getToken } from "./client";
+import { clearSession, getToken } from './client';
 
 export interface UploadProgress {
   loaded: number;
@@ -23,9 +23,9 @@ export function uploadMapVersion(
 ): Promise<UploadResult> {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/maps/" + mapId + "/upload");
-    xhr.setRequestHeader("Authorization", "Bearer " + (getToken() ?? ""));
-    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.open('POST', '/maps/' + mapId + '/upload');
+    xhr.setRequestHeader('Authorization', 'Bearer ' + (getToken() ?? ''));
+    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
 
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable) return;
@@ -39,14 +39,19 @@ export function uploadMapVersion(
         return;
       }
       if (xhr.status < 200 || xhr.status >= 300) {
-        resolve({ ok: false, status: xhr.status, unauthorized: false, errorText: xhr.responseText });
+        resolve({
+          ok: false,
+          status: xhr.status,
+          unauthorized: false,
+          errorText: xhr.responseText,
+        });
         return;
       }
       resolve({ ok: true, status: xhr.status, unauthorized: false });
     };
 
     xhr.onerror = () => {
-      resolve({ ok: false, status: 0, unauthorized: false, errorText: "upload failed" });
+      resolve({ ok: false, status: 0, unauthorized: false, errorText: 'upload failed' });
     };
 
     xhr.send(file);
@@ -54,13 +59,13 @@ export function uploadMapVersion(
 }
 
 export function formatBytes(n: number): string {
-  if (!Number.isFinite(n)) return "";
-  const units = ["B", "KB", "MB", "GB"];
+  if (!Number.isFinite(n)) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
   let i = 0;
   let value = n;
   while (value >= 1024 && i < units.length - 1) {
     value /= 1024;
     i++;
   }
-  return value.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+  return value.toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
 }

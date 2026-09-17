@@ -1,19 +1,19 @@
-import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from "react";
-import { apiFetch, apiJson } from "../../api/client";
-import type { GeoObject, MapSummary, MapVersion } from "../../api/types";
-import Modal from "../../components/Modal";
-import ErrorBanner from "../../components/ErrorBanner";
+import { useCallback, useEffect, useState, type ChangeEvent, type FormEvent } from 'react';
+import { apiFetch, apiJson } from '../../api/client';
+import type { GeoObject, MapSummary, MapVersion } from '../../api/types';
+import Modal from '../../components/Modal';
+import ErrorBanner from '../../components/ErrorBanner';
 
 const emptyForm = {
-  name: "",
-  externalId: "",
-  latitude: "",
-  longitude: "",
-  street: "",
-  housenumber: "",
-  postcode: "",
-  city: "",
-  cityDistrict: "",
+  name: '',
+  externalId: '',
+  latitude: '',
+  longitude: '',
+  street: '',
+  housenumber: '',
+  postcode: '',
+  city: '',
+  cityDistrict: '',
 };
 
 function GeoObjectRow({
@@ -31,14 +31,14 @@ function GeoObjectRow({
 }) {
   const [form, setForm] = useState({
     name: obj.name,
-    externalId: obj.externalId ?? "",
+    externalId: obj.externalId ?? '',
     latitude: String(obj.latitude),
     longitude: String(obj.longitude),
-    street: obj.street ?? "",
-    housenumber: obj.housenumber ?? "",
-    postcode: obj.postcode ?? "",
-    city: obj.city ?? "",
-    cityDistrict: obj.cityDistrict ?? "",
+    street: obj.street ?? '',
+    housenumber: obj.housenumber ?? '',
+    postcode: obj.postcode ?? '',
+    city: obj.city ?? '',
+    cityDistrict: obj.cityDistrict ?? '',
   });
 
   const set = (key: keyof typeof form) => (e: ChangeEvent<HTMLInputElement>) =>
@@ -47,34 +47,51 @@ function GeoObjectRow({
   return (
     <tr>
       <td className="checkbox-cell">
-        <input type="checkbox" className="geo-select" checked={selected} onChange={onToggleSelect} />
+        <input
+          type="checkbox"
+          className="geo-select"
+          checked={selected}
+          onChange={onToggleSelect}
+        />
       </td>
       <td>
-        <input className="inline" value={form.name} onChange={set("name")} />
+        <input className="inline" value={form.name} onChange={set('name')} />
       </td>
       <td>
-        <input className="inline" value={form.externalId} onChange={set("externalId")} />
+        <input className="inline" value={form.externalId} onChange={set('externalId')} />
       </td>
       <td>
-        <input className="inline" type="number" step="any" value={form.latitude} onChange={set("latitude")} />
+        <input
+          className="inline"
+          type="number"
+          step="any"
+          value={form.latitude}
+          onChange={set('latitude')}
+        />
       </td>
       <td>
-        <input className="inline" type="number" step="any" value={form.longitude} onChange={set("longitude")} />
+        <input
+          className="inline"
+          type="number"
+          step="any"
+          value={form.longitude}
+          onChange={set('longitude')}
+        />
       </td>
       <td>
-        <input className="inline" value={form.street} onChange={set("street")} />
+        <input className="inline" value={form.street} onChange={set('street')} />
       </td>
       <td>
-        <input className="inline" value={form.housenumber} onChange={set("housenumber")} />
+        <input className="inline" value={form.housenumber} onChange={set('housenumber')} />
       </td>
       <td>
-        <input className="inline" value={form.postcode} onChange={set("postcode")} />
+        <input className="inline" value={form.postcode} onChange={set('postcode')} />
       </td>
       <td>
-        <input className="inline" value={form.city} onChange={set("city")} />
+        <input className="inline" value={form.city} onChange={set('city')} />
       </td>
       <td>
-        <input className="inline" value={form.cityDistrict} onChange={set("cityDistrict")} />
+        <input className="inline" value={form.cityDistrict} onChange={set('cityDistrict')} />
       </td>
       <td>
         <div className="actions">
@@ -106,16 +123,23 @@ function GeoObjectRow({
   );
 }
 
-export default function GeoObjectsModal({ map, onClose }: { map: MapSummary | null; onClose: () => void }) {
+export default function GeoObjectsModal({
+  map,
+  onClose,
+}: {
+  map: MapSummary | null;
+  onClose: () => void;
+}) {
   const [versions, setVersions] = useState<string[]>([]);
-  const [version, setVersion] = useState("");
+  const [version, setVersion] = useState('');
   const [objects, setObjects] = useState<GeoObject[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
 
   const path = useCallback(
-    (suffix: string) => `/maps/${map!.uuid}/version/${encodeURIComponent(version)}/geo-objects${suffix}`,
+    (suffix: string) =>
+      `/maps/${map!.uuid}/version/${encodeURIComponent(version)}/geo-objects${suffix}`,
     [map, version],
   );
 
@@ -123,7 +147,7 @@ export default function GeoObjectsModal({ map, onClose }: { map: MapSummary | nu
     if (!map || !version) return;
     setError(null);
     try {
-      setObjects(await apiJson<GeoObject[]>(path("")));
+      setObjects(await apiJson<GeoObject[]>(path('')));
       setSelected(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -171,9 +195,9 @@ export default function GeoObjectsModal({ map, onClose }: { map: MapSummary | nu
   const saveObject = async (id: string, payload: Partial<GeoObject>) => {
     setError(null);
     try {
-      await apiFetch(path("/" + id), {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+      await apiFetch(path('/' + id), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       await loadObjects();
@@ -183,10 +207,10 @@ export default function GeoObjectsModal({ map, onClose }: { map: MapSummary | nu
   };
 
   const deleteObject = async (id: string) => {
-    if (!confirm("Delete this geo object?")) return;
+    if (!confirm('Delete this geo object?')) return;
     setError(null);
     try {
-      await apiFetch(path("/" + id), { method: "DELETE" });
+      await apiFetch(path('/' + id), { method: 'DELETE' });
       await loadObjects();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -200,7 +224,7 @@ export default function GeoObjectsModal({ map, onClose }: { map: MapSummary | nu
     setError(null);
     try {
       for (const id of ids) {
-        await apiFetch(path("/" + id), { method: "DELETE" });
+        await apiFetch(path('/' + id), { method: 'DELETE' });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -213,9 +237,9 @@ export default function GeoObjectsModal({ map, onClose }: { map: MapSummary | nu
     e.preventDefault();
     setError(null);
     try {
-      await apiFetch(path(""), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      await apiFetch(path(''), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: form.name,
           externalId: form.externalId,
@@ -239,7 +263,7 @@ export default function GeoObjectsModal({ map, onClose }: { map: MapSummary | nu
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
   return (
-    <Modal open={!!map} title={map ? `Geo objects — ${map.name}` : "Geo objects"} onClose={onClose}>
+    <Modal open={!!map} title={map ? `Geo objects — ${map.name}` : 'Geo objects'} onClose={onClose}>
       <ErrorBanner message={error} />
       <div className="row">
         <div className="field">
@@ -253,8 +277,13 @@ export default function GeoObjectsModal({ map, onClose }: { map: MapSummary | nu
           </select>
         </div>
       </div>
-      <div className="row" style={{ alignItems: "center" }}>
-        <button type="button" className="danger" disabled={selected.size === 0} onClick={deleteSelected}>
+      <div className="row" style={{ alignItems: 'center' }}>
+        <button
+          type="button"
+          className="danger"
+          disabled={selected.size === 0}
+          onClick={deleteSelected}
+        >
           Delete selected ({selected.size})
         </button>
       </div>
@@ -295,43 +324,65 @@ export default function GeoObjectsModal({ map, onClose }: { map: MapSummary | nu
       </table>
       {objects.length === 0 && <p className="muted">No geo objects for this version yet.</p>}
 
-      <h2 style={{ marginTop: "1.25rem" }}>Add geo object</h2>
+      <h2 style={{ marginTop: '1.25rem' }}>Add geo object</h2>
       <form className="row" onSubmit={createObject}>
         <div className="field">
           <label htmlFor="geo-create-name">Name</label>
-          <input id="geo-create-name" required value={form.name} onChange={set("name")} />
+          <input id="geo-create-name" required value={form.name} onChange={set('name')} />
         </div>
         <div className="field">
           <label htmlFor="geo-create-external">External ID</label>
-          <input id="geo-create-external" value={form.externalId} onChange={set("externalId")} />
+          <input id="geo-create-external" value={form.externalId} onChange={set('externalId')} />
         </div>
         <div className="field">
           <label htmlFor="geo-create-lat">Latitude</label>
-          <input id="geo-create-lat" type="number" step="any" required value={form.latitude} onChange={set("latitude")} />
+          <input
+            id="geo-create-lat"
+            type="number"
+            step="any"
+            required
+            value={form.latitude}
+            onChange={set('latitude')}
+          />
         </div>
         <div className="field">
           <label htmlFor="geo-create-lon">Longitude</label>
-          <input id="geo-create-lon" type="number" step="any" required value={form.longitude} onChange={set("longitude")} />
+          <input
+            id="geo-create-lon"
+            type="number"
+            step="any"
+            required
+            value={form.longitude}
+            onChange={set('longitude')}
+          />
         </div>
         <div className="field">
           <label htmlFor="geo-create-street">Street</label>
-          <input id="geo-create-street" value={form.street} onChange={set("street")} />
+          <input id="geo-create-street" value={form.street} onChange={set('street')} />
         </div>
         <div className="field">
           <label htmlFor="geo-create-housenumber">House no.</label>
-          <input id="geo-create-housenumber" value={form.housenumber} onChange={set("housenumber")} />
+          <input
+            id="geo-create-housenumber"
+            value={form.housenumber}
+            onChange={set('housenumber')}
+          />
         </div>
         <div className="field">
           <label htmlFor="geo-create-postcode">Postcode</label>
-          <input id="geo-create-postcode" value={form.postcode} onChange={set("postcode")} />
+          <input id="geo-create-postcode" value={form.postcode} onChange={set('postcode')} />
         </div>
         <div className="field">
           <label htmlFor="geo-create-city">City</label>
-          <input id="geo-create-city" value={form.city} onChange={set("city")} />
+          <input id="geo-create-city" value={form.city} onChange={set('city')} />
         </div>
         <div className="field">
           <label htmlFor="geo-create-city-district">City district</label>
-          <input id="geo-create-city-district" value={form.cityDistrict} onChange={set("cityDistrict")} />
+          <input
+            id="geo-create-city-district"
+            value={form.cityDistrict}
+            onChange={set('cityDistrict')}
+          />
         </div>
         <button type="submit">Add</button>
       </form>

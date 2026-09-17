@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch, apiJson } from "../../api/client";
-import type { MapGroupPermission, MapPermission, MapSummary } from "../../api/types";
-import { useAdminData } from "../AdminDataContext";
-import Modal from "../../components/Modal";
-import ErrorBanner from "../../components/ErrorBanner";
+import { useCallback, useEffect, useState } from 'react';
+import { apiFetch, apiJson } from '../../api/client';
+import type { MapGroupPermission, MapPermission, MapSummary } from '../../api/types';
+import { useAdminData } from '../AdminDataContext';
+import Modal from '../../components/Modal';
+import ErrorBanner from '../../components/ErrorBanner';
 
 interface GrantFormState {
   canView: boolean;
@@ -31,13 +31,25 @@ function GrantCheckboxes({
   return (
     <>
       <td className="checkbox-cell">
-        <input type="checkbox" checked={value.canView} onChange={(e) => onChange({ canView: e.target.checked })} />
+        <input
+          type="checkbox"
+          checked={value.canView}
+          onChange={(e) => onChange({ canView: e.target.checked })}
+        />
       </td>
       <td className="checkbox-cell">
-        <input type="checkbox" checked={value.canEdit} onChange={(e) => onChange({ canEdit: e.target.checked })} />
+        <input
+          type="checkbox"
+          checked={value.canEdit}
+          onChange={(e) => onChange({ canEdit: e.target.checked })}
+        />
       </td>
       <td className="checkbox-cell">
-        <input type="checkbox" checked={value.canDelete} onChange={(e) => onChange({ canDelete: e.target.checked })} />
+        <input
+          type="checkbox"
+          checked={value.canDelete}
+          onChange={(e) => onChange({ canDelete: e.target.checked })}
+        />
       </td>
       <td className="checkbox-cell">
         <input
@@ -57,7 +69,15 @@ function GrantCheckboxes({
   );
 }
 
-function UserPermRow({ grant, onSave, onRevoke }: { grant: MapPermission; onSave: (v: GrantFormState) => void; onRevoke: () => void }) {
+function UserPermRow({
+  grant,
+  onSave,
+  onRevoke,
+}: {
+  grant: MapPermission;
+  onSave: (v: GrantFormState) => void;
+  onRevoke: () => void;
+}) {
   const [value, setValue] = useState<GrantFormState>(grant);
   return (
     <tr>
@@ -107,15 +127,21 @@ function GroupPermRow({
   );
 }
 
-export default function PermissionsModal({ map, onClose }: { map: MapSummary | null; onClose: () => void }) {
+export default function PermissionsModal({
+  map,
+  onClose,
+}: {
+  map: MapSummary | null;
+  onClose: () => void;
+}) {
   const { users, groups, groupName } = useAdminData();
   const [grants, setGrants] = useState<MapPermission[]>([]);
   const [groupGrants, setGroupGrants] = useState<MapGroupPermission[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [groupError, setGroupError] = useState<string | null>(null);
-  const [addUser, setAddUser] = useState("");
+  const [addUser, setAddUser] = useState('');
   const [addGrant, setAddGrant] = useState<GrantFormState>(defaultGrant);
-  const [addGroup, setAddGroup] = useState("");
+  const [addGroup, setAddGroup] = useState('');
   const [addGroupGrant, setAddGroupGrant] = useState<GrantFormState>(defaultGrant);
 
   const loadPermissions = useCallback(async () => {
@@ -140,8 +166,8 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
 
   useEffect(() => {
     if (!map) return;
-    setAddUser("");
-    setAddGroup("");
+    setAddUser('');
+    setAddGroup('');
     setAddGrant(defaultGrant);
     setAddGroupGrant(defaultGrant);
     loadPermissions();
@@ -153,8 +179,8 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
     setError(null);
     try {
       await apiFetch(`/maps/${map.uuid}/permissions/${encodeURIComponent(username)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(grant),
       });
       await loadPermissions();
@@ -167,7 +193,9 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
     if (!map) return;
     setError(null);
     try {
-      await apiFetch(`/maps/${map.uuid}/permissions/${encodeURIComponent(username)}`, { method: "DELETE" });
+      await apiFetch(`/maps/${map.uuid}/permissions/${encodeURIComponent(username)}`, {
+        method: 'DELETE',
+      });
       await loadPermissions();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -179,8 +207,8 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
     setGroupError(null);
     try {
       await apiFetch(`/maps/${map.uuid}/group-permissions/${encodeURIComponent(groupId)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(grant),
       });
       await loadGroupPermissions();
@@ -193,7 +221,9 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
     if (!map) return;
     setGroupError(null);
     try {
-      await apiFetch(`/maps/${map.uuid}/group-permissions/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+      await apiFetch(`/maps/${map.uuid}/group-permissions/${encodeURIComponent(groupId)}`, {
+        method: 'DELETE',
+      });
       await loadGroupPermissions();
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : String(err));
@@ -201,7 +231,7 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
   };
 
   return (
-    <Modal open={!!map} title={map ? `Permissions — ${map.name}` : "Permissions"} onClose={onClose}>
+    <Modal open={!!map} title={map ? `Permissions — ${map.name}` : 'Permissions'} onClose={onClose}>
       <ErrorBanner message={error} />
       <table>
         <thead>
@@ -217,12 +247,17 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
         </thead>
         <tbody>
           {grants.map((g) => (
-            <UserPermRow key={g.username} grant={g} onSave={(v) => grantUser(g.username, v)} onRevoke={() => revokeUser(g.username)} />
+            <UserPermRow
+              key={g.username}
+              grant={g}
+              onSave={(v) => grantUser(g.username, v)}
+              onRevoke={() => revokeUser(g.username)}
+            />
           ))}
         </tbody>
       </table>
       {grants.length === 0 && <p className="muted">No per-map grants yet.</p>}
-      <div className="row" style={{ marginTop: "1rem" }}>
+      <div className="row" style={{ marginTop: '1rem' }}>
         <div className="field">
           <label htmlFor="perm-add-user">Add user</label>
           <select id="perm-add-user" value={addUser} onChange={(e) => setAddUser(e.target.value)}>
@@ -236,13 +271,21 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
         </div>
         <div className="field">
           <label>
-            <input type="checkbox" checked={addGrant.canView} onChange={(e) => setAddGrant((v) => ({ ...v, canView: e.target.checked }))} />{" "}
+            <input
+              type="checkbox"
+              checked={addGrant.canView}
+              onChange={(e) => setAddGrant((v) => ({ ...v, canView: e.target.checked }))}
+            />{' '}
             Can view
           </label>
         </div>
         <div className="field">
           <label>
-            <input type="checkbox" checked={addGrant.canEdit} onChange={(e) => setAddGrant((v) => ({ ...v, canEdit: e.target.checked }))} />{" "}
+            <input
+              type="checkbox"
+              checked={addGrant.canEdit}
+              onChange={(e) => setAddGrant((v) => ({ ...v, canEdit: e.target.checked }))}
+            />{' '}
             Can edit
           </label>
         </div>
@@ -252,7 +295,7 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
               type="checkbox"
               checked={addGrant.canDelete}
               onChange={(e) => setAddGrant((v) => ({ ...v, canDelete: e.target.checked }))}
-            />{" "}
+            />{' '}
             Can delete
           </label>
         </div>
@@ -262,7 +305,7 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
               type="checkbox"
               checked={addGrant.canEditGeoObjects}
               onChange={(e) => setAddGrant((v) => ({ ...v, canEditGeoObjects: e.target.checked }))}
-            />{" "}
+            />{' '}
             Can edit geo objects
           </label>
         </div>
@@ -271,8 +314,10 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
             <input
               type="checkbox"
               checked={addGrant.canDeleteGeoObjects}
-              onChange={(e) => setAddGrant((v) => ({ ...v, canDeleteGeoObjects: e.target.checked }))}
-            />{" "}
+              onChange={(e) =>
+                setAddGrant((v) => ({ ...v, canDeleteGeoObjects: e.target.checked }))
+              }
+            />{' '}
             Can delete geo objects
           </label>
         </div>
@@ -281,7 +326,7 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
         </button>
       </div>
 
-      <h2 style={{ marginTop: "1.25rem" }}>Group permissions</h2>
+      <h2 style={{ marginTop: '1.25rem' }}>Group permissions</h2>
       <ErrorBanner message={groupError} />
       <table>
         <thead>
@@ -308,10 +353,14 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
         </tbody>
       </table>
       {groupGrants.length === 0 && <p className="muted">No per-group grants yet.</p>}
-      <div className="row" style={{ marginTop: "1rem" }}>
+      <div className="row" style={{ marginTop: '1rem' }}>
         <div className="field">
           <label htmlFor="group-perm-add-group">Add group</label>
-          <select id="group-perm-add-group" value={addGroup} onChange={(e) => setAddGroup(e.target.value)}>
+          <select
+            id="group-perm-add-group"
+            value={addGroup}
+            onChange={(e) => setAddGroup(e.target.value)}
+          >
             <option value="" />
             {groups.map((g) => (
               <option key={g.id} value={g.id}>
@@ -326,7 +375,7 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
               type="checkbox"
               checked={addGroupGrant.canView}
               onChange={(e) => setAddGroupGrant((v) => ({ ...v, canView: e.target.checked }))}
-            />{" "}
+            />{' '}
             Can view
           </label>
         </div>
@@ -336,7 +385,7 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
               type="checkbox"
               checked={addGroupGrant.canEdit}
               onChange={(e) => setAddGroupGrant((v) => ({ ...v, canEdit: e.target.checked }))}
-            />{" "}
+            />{' '}
             Can edit
           </label>
         </div>
@@ -346,7 +395,7 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
               type="checkbox"
               checked={addGroupGrant.canDelete}
               onChange={(e) => setAddGroupGrant((v) => ({ ...v, canDelete: e.target.checked }))}
-            />{" "}
+            />{' '}
             Can delete
           </label>
         </div>
@@ -355,8 +404,10 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
             <input
               type="checkbox"
               checked={addGroupGrant.canEditGeoObjects}
-              onChange={(e) => setAddGroupGrant((v) => ({ ...v, canEditGeoObjects: e.target.checked }))}
-            />{" "}
+              onChange={(e) =>
+                setAddGroupGrant((v) => ({ ...v, canEditGeoObjects: e.target.checked }))
+              }
+            />{' '}
             Can edit geo objects
           </label>
         </div>
@@ -365,12 +416,18 @@ export default function PermissionsModal({ map, onClose }: { map: MapSummary | n
             <input
               type="checkbox"
               checked={addGroupGrant.canDeleteGeoObjects}
-              onChange={(e) => setAddGroupGrant((v) => ({ ...v, canDeleteGeoObjects: e.target.checked }))}
-            />{" "}
+              onChange={(e) =>
+                setAddGroupGrant((v) => ({ ...v, canDeleteGeoObjects: e.target.checked }))
+              }
+            />{' '}
             Can delete geo objects
           </label>
         </div>
-        <button type="button" disabled={!addGroup} onClick={() => grantGroup(addGroup, addGroupGrant)}>
+        <button
+          type="button"
+          disabled={!addGroup}
+          onClick={() => grantGroup(addGroup, addGroupGrant)}
+        >
           Grant
         </button>
       </div>

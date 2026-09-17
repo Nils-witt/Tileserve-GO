@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
-import { apiFetch, apiJson } from "../../api/client";
-import type { RemoteMap, SyncRemote } from "../../api/types";
-import Modal from "../../components/Modal";
-import ErrorBanner from "../../components/ErrorBanner";
+import { useEffect, useState } from 'react';
+import { apiFetch, apiJson } from '../../api/client';
+import type { RemoteMap, SyncRemote } from '../../api/types';
+import Modal from '../../components/Modal';
+import ErrorBanner from '../../components/ErrorBanner';
 
 export default function SyncMapsPickerModal({
   remote,
@@ -52,8 +52,8 @@ export default function SyncMapsPickerModal({
     setError(null);
     try {
       await apiFetch(`/sync/remotes/${remote.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: remote.name,
           baseUrl: remote.baseUrl,
@@ -76,7 +76,7 @@ export default function SyncMapsPickerModal({
   return (
     <Modal
       open={!!remote}
-      title={remote ? `Select maps — ${remote.name}` : "Select maps"}
+      title={remote ? `Select maps — ${remote.name}` : 'Select maps'}
       onClose={onClose}
       headerExtra={
         <button type="button" onClick={save}>
@@ -88,19 +88,30 @@ export default function SyncMapsPickerModal({
       <div className="row">
         <div className="field">
           <label>
-            <input type="checkbox" checked={syncAll} onChange={(e) => setSyncAll(e.target.checked)} /> Sync all maps
+            <input
+              type="checkbox"
+              checked={syncAll}
+              onChange={(e) => setSyncAll(e.target.checked)}
+            />{' '}
+            Sync all maps
           </label>
         </div>
         <div className="field">
           <label>
-            <input type="checkbox" checked={syncNew} disabled={syncAll} onChange={(e) => setSyncNew(e.target.checked)} /> Automatically
-            sync new maps
+            <input
+              type="checkbox"
+              checked={syncNew}
+              disabled={syncAll}
+              onChange={(e) => setSyncNew(e.target.checked)}
+            />{' '}
+            Automatically sync new maps
           </label>
         </div>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
-        With "Sync all maps" off, only the maps checked below are mirrored. "Automatically sync new maps" additionally mirrors any map
-        first noticed on the remote from then on, even if it isn't checked.
+        With "Sync all maps" off, only the maps checked below are mirrored. "Automatically sync new
+        maps" additionally mirrors any map first noticed on the remote from then on, even if it
+        isn't checked.
       </p>
       <table>
         <thead>
@@ -114,7 +125,11 @@ export default function SyncMapsPickerModal({
           {remoteMaps.map((m) => (
             <tr key={m.uuid}>
               <td className="checkbox-cell">
-                <input type="checkbox" checked={selected.has(m.uuid)} onChange={(e) => toggle(m.uuid, e.target.checked)} />
+                <input
+                  type="checkbox"
+                  checked={selected.has(m.uuid)}
+                  onChange={(e) => toggle(m.uuid, e.target.checked)}
+                />
               </td>
               <td>{m.name}</td>
               <td className="muted">{m.uuid}</td>
@@ -122,7 +137,9 @@ export default function SyncMapsPickerModal({
           ))}
         </tbody>
       </table>
-      {remoteMaps.length === 0 && <p className="muted">No maps visible to this remote's API key.</p>}
+      {remoteMaps.length === 0 && (
+        <p className="muted">No maps visible to this remote's API key.</p>
+      )}
     </Modal>
   );
 }

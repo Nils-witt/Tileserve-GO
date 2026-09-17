@@ -1,6 +1,14 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { apiJson } from "../api/client";
-import type { CurrentPermissions, Group, MapSummary, User } from "../api/types";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
+import { apiJson } from '../api/client';
+import type { CurrentPermissions, Group, MapSummary, User } from '../api/types';
 
 // AdminDataContext holds the three lists (maps/users/groups) that most tabs
 // and modals need — either to render their own table or just to resolve a
@@ -27,13 +35,13 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
   const [groups, setGroups] = useState<Group[]>([]);
 
   const reloadMaps = useCallback(async () => {
-    setMaps(await apiJson<MapSummary[]>("/maps"));
+    setMaps(await apiJson<MapSummary[]>('/maps'));
   }, []);
   const reloadUsers = useCallback(async () => {
-    setUsers(await apiJson<User[]>("/users"));
+    setUsers(await apiJson<User[]>('/users'));
   }, []);
   const reloadGroups = useCallback(async () => {
-    setGroups(await apiJson<Group[]>("/groups"));
+    setGroups(await apiJson<Group[]>('/groups'));
   }, []);
 
   useEffect(() => {
@@ -42,7 +50,7 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     // server actually checks, unlike a user's own /users row, which only
     // carries their personal isAdmin flag and misses admin rights granted
     // through a group they belong to.
-    apiJson<CurrentPermissions>("/permissions/me")
+    apiJson<CurrentPermissions>('/permissions/me')
       .then((perms) => setIsAdmin(!!perms.isAdmin))
       .catch(() => setIsAdmin(false));
 
@@ -54,11 +62,27 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     reloadGroups().catch(() => {});
   }, [reloadMaps, reloadUsers, reloadGroups]);
 
-  const mapName = useCallback((uuid: string) => maps.find((m) => m.uuid === uuid)?.name ?? uuid, [maps]);
-  const groupName = useCallback((id: string) => groups.find((g) => g.id === id)?.name ?? id, [groups]);
+  const mapName = useCallback(
+    (uuid: string) => maps.find((m) => m.uuid === uuid)?.name ?? uuid,
+    [maps],
+  );
+  const groupName = useCallback(
+    (id: string) => groups.find((g) => g.id === id)?.name ?? id,
+    [groups],
+  );
 
   const value = useMemo<AdminData>(
-    () => ({ isAdmin, maps, users, groups, reloadMaps, reloadUsers, reloadGroups, mapName, groupName }),
+    () => ({
+      isAdmin,
+      maps,
+      users,
+      groups,
+      reloadMaps,
+      reloadUsers,
+      reloadGroups,
+      mapName,
+      groupName,
+    }),
     [isAdmin, maps, users, groups, reloadMaps, reloadUsers, reloadGroups, mapName, groupName],
   );
 
@@ -67,6 +91,6 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
 
 export function useAdminData(): AdminData {
   const ctx = useContext(AdminDataContext);
-  if (!ctx) throw new Error("useAdminData must be used within AdminDataProvider");
+  if (!ctx) throw new Error('useAdminData must be used within AdminDataProvider');
   return ctx;
 }

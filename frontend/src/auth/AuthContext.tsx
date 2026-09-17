@@ -1,6 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { clearSession, getStoredUsername, getToken, setSession, setUnauthorizedHandler } from "../api/client";
-import type { LoginResponse } from "../api/types";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
+import {
+  clearSession,
+  getStoredUsername,
+  getToken,
+  setSession,
+  setUnauthorizedHandler,
+} from '../api/client';
+import type { LoginResponse } from '../api/types';
 
 interface AuthState {
   username: string | null;
@@ -23,10 +37,10 @@ const AuthContext = createContext<AuthState | null>(null);
 function consumeOIDCFragment(): { token: string; username: string } | null {
   if (!location.hash) return null;
   const params = new URLSearchParams(location.hash.slice(1));
-  const token = params.get("token");
-  const username = params.get("username");
+  const token = params.get('token');
+  const username = params.get('username');
   if (!token || !username) return null;
-  history.replaceState(null, "", location.pathname + location.search);
+  history.replaceState(null, '', location.pathname + location.search);
   return { token, username };
 }
 
@@ -45,33 +59,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setUsername(null);
-      setSessionMessage("Session expired, please sign in again.");
+      setSessionMessage('Session expired, please sign in again.');
     });
   }, []);
 
-  const login = useCallback(async (loginUsername: string, password: string, ttlSeconds?: number) => {
-    let res: Response;
-    try {
-      res = await fetch("/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          username: loginUsername,
-          password,
-          ...(ttlSeconds ? { ttl_seconds: ttlSeconds } : {}),
-        }),
-      });
-    } catch {
-      throw new Error("Login failed");
-    }
-    if (!res.ok) {
-      throw new Error(res.status === 401 ? "Invalid credentials" : "Login failed");
-    }
-    const data = (await res.json()) as LoginResponse;
-    setSession(data.token, loginUsername);
-    setUsername(loginUsername);
-    return data.token;
-  }, []);
+  const login = useCallback(
+    async (loginUsername: string, password: string, ttlSeconds?: number) => {
+      let res: Response;
+      try {
+        res = await fetch('/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: loginUsername,
+            password,
+            ...(ttlSeconds ? { ttl_seconds: ttlSeconds } : {}),
+          }),
+        });
+      } catch {
+        throw new Error('Login failed');
+      }
+      if (!res.ok) {
+        throw new Error(res.status === 401 ? 'Invalid credentials' : 'Login failed');
+      }
+      const data = (await res.json()) as LoginResponse;
+      setSession(data.token, loginUsername);
+      setUsername(loginUsername);
+      return data.token;
+    },
+    [],
+  );
 
   const logout = useCallback(() => {
     clearSession();
@@ -97,6 +114,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
 export function useAuth(): AuthState {
   const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
+  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
   return ctx;
 }

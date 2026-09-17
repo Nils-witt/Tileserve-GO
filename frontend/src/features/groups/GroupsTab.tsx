@@ -1,9 +1,9 @@
-import { useState, type FormEvent } from "react";
-import { apiFetch, apiPostJSON } from "../../api/client";
-import type { Group } from "../../api/types";
-import { useAdminData } from "../AdminDataContext";
-import ErrorBanner from "../../components/ErrorBanner";
-import { fmtDate } from "../../lib/format";
+import { useState, type FormEvent } from 'react';
+import { apiFetch, apiPostJSON } from '../../api/client';
+import type { Group } from '../../api/types';
+import { useAdminData } from '../AdminDataContext';
+import ErrorBanner from '../../components/ErrorBanner';
+import { fmtDate } from '../../lib/format';
 
 interface GroupPermState {
   canCreate: boolean;
@@ -27,8 +27,8 @@ const defaultPerms: GroupPermState = {
 
 function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
   const [name, setName] = useState(g.name);
-  const [ldapGroupDn, setLdapGroupDn] = useState(g.ldapGroupDn ?? "");
-  const [oidcGroupClaim, setOidcGroupClaim] = useState(g.oidcGroupClaim ?? "");
+  const [ldapGroupDn, setLdapGroupDn] = useState(g.ldapGroupDn ?? '');
+  const [oidcGroupClaim, setOidcGroupClaim] = useState(g.oidcGroupClaim ?? '');
   const [perms, setPerms] = useState<GroupPermState>(g);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,8 +36,8 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
     setError(null);
     try {
       await apiFetch(`/groups/${encodeURIComponent(g.id)}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, ldapGroupDn, oidcGroupClaim, ...perms }),
       });
       await onReload();
@@ -50,7 +50,7 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
     if (!confirm(`Delete group "${g.name}"?`)) return;
     setError(null);
     try {
-      await apiFetch(`/groups/${encodeURIComponent(g.id)}`, { method: "DELETE" });
+      await apiFetch(`/groups/${encodeURIComponent(g.id)}`, { method: 'DELETE' });
       await onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -58,7 +58,11 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
   };
 
   const cb = (key: keyof GroupPermState) => (
-    <input type="checkbox" checked={perms[key]} onChange={(e) => setPerms((p) => ({ ...p, [key]: e.target.checked }))} />
+    <input
+      type="checkbox"
+      checked={perms[key]}
+      onChange={(e) => setPerms((p) => ({ ...p, [key]: e.target.checked }))}
+    />
   );
 
   return (
@@ -67,18 +71,26 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
         <input value={name} onChange={(e) => setName(e.target.value)} />
         <ErrorBanner message={error} />
       </td>
-      <td className="checkbox-cell">{cb("canCreate")}</td>
-      <td className="checkbox-cell">{cb("canEdit")}</td>
-      <td className="checkbox-cell">{cb("canDelete")}</td>
-      <td className="checkbox-cell">{cb("canEditGeoObjects")}</td>
-      <td className="checkbox-cell">{cb("canDeleteGeoObjects")}</td>
-      <td className="checkbox-cell">{cb("canViewAll")}</td>
-      <td className="checkbox-cell">{cb("isAdmin")}</td>
+      <td className="checkbox-cell">{cb('canCreate')}</td>
+      <td className="checkbox-cell">{cb('canEdit')}</td>
+      <td className="checkbox-cell">{cb('canDelete')}</td>
+      <td className="checkbox-cell">{cb('canEditGeoObjects')}</td>
+      <td className="checkbox-cell">{cb('canDeleteGeoObjects')}</td>
+      <td className="checkbox-cell">{cb('canViewAll')}</td>
+      <td className="checkbox-cell">{cb('isAdmin')}</td>
       <td>
-        <input value={ldapGroupDn} placeholder="not linked" onChange={(e) => setLdapGroupDn(e.target.value)} />
+        <input
+          value={ldapGroupDn}
+          placeholder="not linked"
+          onChange={(e) => setLdapGroupDn(e.target.value)}
+        />
       </td>
       <td>
-        <input value={oidcGroupClaim} placeholder="not linked" onChange={(e) => setOidcGroupClaim(e.target.value)} />
+        <input
+          value={oidcGroupClaim}
+          placeholder="not linked"
+          onChange={(e) => setOidcGroupClaim(e.target.value)}
+        />
       </td>
       <td>{fmtDate(g.createdAt)}</td>
       <td>
@@ -98,19 +110,19 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
 export default function GroupsTab() {
   const { groups, reloadGroups } = useAdminData();
   const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [ldapGroupDn, setLdapGroupDn] = useState("");
-  const [oidcGroupClaim, setOidcGroupClaim] = useState("");
+  const [name, setName] = useState('');
+  const [ldapGroupDn, setLdapGroupDn] = useState('');
+  const [oidcGroupClaim, setOidcGroupClaim] = useState('');
   const [perms, setPerms] = useState<GroupPermState>(defaultPerms);
 
   const createGroup = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     try {
-      await apiPostJSON("/groups", { name, ldapGroupDn, oidcGroupClaim, ...perms });
-      setName("");
-      setLdapGroupDn("");
-      setOidcGroupClaim("");
+      await apiPostJSON('/groups', { name, ldapGroupDn, oidcGroupClaim, ...perms });
+      setName('');
+      setLdapGroupDn('');
+      setOidcGroupClaim('');
       setPerms(defaultPerms);
       await reloadGroups();
     } catch (err) {
@@ -121,7 +133,12 @@ export default function GroupsTab() {
   const cb = (key: keyof GroupPermState, label: string) => (
     <div className="field">
       <label>
-        <input type="checkbox" checked={perms[key]} onChange={(e) => setPerms((p) => ({ ...p, [key]: e.target.checked }))} /> {label}
+        <input
+          type="checkbox"
+          checked={perms[key]}
+          onChange={(e) => setPerms((p) => ({ ...p, [key]: e.target.checked }))}
+        />{' '}
+        {label}
       </label>
     </div>
   );
@@ -130,10 +147,12 @@ export default function GroupsTab() {
     <div>
       <div className="card">
         <h2>Create group</h2>
-        <p className="muted" style={{ marginTop: 0, marginBottom: "0.9rem" }}>
-          Membership is never assigned here — it's fully derived from each member's LDAP <code>memberOf</code> or OIDC{" "}
-          <code>groups</code> claim on every login. Set "LDAP group DN" and/or "OIDC groups claim value" below to link this group to a
-          directory/identity-provider group; leave either blank if this group isn't sourced from that provider.
+        <p className="muted" style={{ marginTop: 0, marginBottom: '0.9rem' }}>
+          Membership is never assigned here — it's fully derived from each member's LDAP{' '}
+          <code>memberOf</code> or OIDC <code>groups</code> claim on every login. Set "LDAP group
+          DN" and/or "OIDC groups claim value" below to link this group to a
+          directory/identity-provider group; leave either blank if this group isn't sourced from
+          that provider.
         </p>
         <form className="row" onSubmit={createGroup}>
           <div className="field">
@@ -151,15 +170,20 @@ export default function GroupsTab() {
           </div>
           <div className="field">
             <label htmlFor="cg-oidc-claim">OIDC groups claim value (optional)</label>
-            <input id="cg-oidc-claim" placeholder="e.g. editors" value={oidcGroupClaim} onChange={(e) => setOidcGroupClaim(e.target.value)} />
+            <input
+              id="cg-oidc-claim"
+              placeholder="e.g. editors"
+              value={oidcGroupClaim}
+              onChange={(e) => setOidcGroupClaim(e.target.value)}
+            />
           </div>
-          {cb("canCreate", "Can create")}
-          {cb("canEdit", "Can edit")}
-          {cb("canDelete", "Can delete")}
-          {cb("canEditGeoObjects", "Can edit geo objects")}
-          {cb("canDeleteGeoObjects", "Can delete geo objects")}
-          {cb("canViewAll", "Can view all maps")}
-          {cb("isAdmin", "Admin")}
+          {cb('canCreate', 'Can create')}
+          {cb('canEdit', 'Can edit')}
+          {cb('canDelete', 'Can delete')}
+          {cb('canEditGeoObjects', 'Can edit geo objects')}
+          {cb('canDeleteGeoObjects', 'Can delete geo objects')}
+          {cb('canViewAll', 'Can view all maps')}
+          {cb('isAdmin', 'Admin')}
           <button type="submit">Create</button>
         </form>
       </div>
@@ -191,8 +215,9 @@ export default function GroupsTab() {
         </table>
         {groups.length === 0 && <p className="muted">No groups yet.</p>}
         <p className="muted">
-          Every member of a group inherits its permission flags (OR'd with their own) and any per-map grants made to the group under a
-          map's "Permissions" — see "Group permissions" there.
+          Every member of a group inherits its permission flags (OR'd with their own) and any
+          per-map grants made to the group under a map's "Permissions" — see "Group permissions"
+          there.
         </p>
       </div>
     </div>

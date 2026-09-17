@@ -1,11 +1,17 @@
-import { useEffect, useRef } from "react";
-import * as maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
-import { apiJson, getToken } from "../../api/client";
-import type { MapBounds, MapSummary } from "../../api/types";
-import Modal from "../../components/Modal";
+import { useEffect, useRef } from 'react';
+import * as maplibregl from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
+import { apiJson, getToken } from '../../api/client';
+import type { MapBounds, MapSummary } from '../../api/types';
+import Modal from '../../components/Modal';
 
-export default function PreviewModal({ map, onClose }: { map: MapSummary | null; onClose: () => void }) {
+export default function PreviewModal({
+  map,
+  onClose,
+}: {
+  map: MapSummary | null;
+  onClose: () => void;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
 
@@ -16,12 +22,12 @@ export default function PreviewModal({ map, onClose }: { map: MapSummary | null;
 
     const tileUrl =
       window.location.origin +
-      "/maps/" +
+      '/maps/' +
       map.uuid +
-      "/version/" +
+      '/version/' +
       map.currentVersion +
-      "/{z}/{x}/{y}.png?token=" +
-      encodeURIComponent(getToken() ?? "");
+      '/{z}/{x}/{y}.png?token=' +
+      encodeURIComponent(getToken() ?? '');
 
     // Centered on the world at zoom 1 as a fallback if bounds can't be
     // determined; otherwise centered on the tileset at a zoom level that
@@ -30,7 +36,9 @@ export default function PreviewModal({ map, onClose }: { map: MapSummary | null;
       let center: [number, number] = [0, 0];
       let zoom = 1;
       try {
-        const bounds = await apiJson<MapBounds>("/maps/" + map.uuid + "/version/" + map.currentVersion + "/bounds");
+        const bounds = await apiJson<MapBounds>(
+          '/maps/' + map.uuid + '/version/' + map.currentVersion + '/bounds',
+        );
         center = [bounds.centerLng, bounds.centerLat];
         zoom = bounds.minZoom;
       } catch {
@@ -44,12 +52,12 @@ export default function PreviewModal({ map, onClose }: { map: MapSummary | null;
           version: 8,
           sources: {
             tiles: {
-              type: "raster",
+              type: 'raster',
               tiles: [tileUrl],
               tileSize: 256,
             },
           },
-          layers: [{ id: "tiles", type: "raster", source: "tiles" }],
+          layers: [{ id: 'tiles', type: 'raster', source: 'tiles' }],
         },
         center,
         zoom,
@@ -66,7 +74,13 @@ export default function PreviewModal({ map, onClose }: { map: MapSummary | null;
   }, [map]);
 
   return (
-    <Modal open={!!map} title={map ? `${map.name} — v${map.currentVersion}` : "Preview"} onClose={onClose} variant="full" noPadding>
+    <Modal
+      open={!!map}
+      title={map ? `${map.name} — v${map.currentVersion}` : 'Preview'}
+      onClose={onClose}
+      variant="full"
+      noPadding
+    >
       <div ref={containerRef} className="preview-map" />
     </Modal>
   );

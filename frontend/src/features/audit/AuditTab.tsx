@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { apiJson } from "../../api/client";
-import type { AuditLogEntry } from "../../api/types";
-import ErrorBanner from "../../components/ErrorBanner";
-import { fmtDate } from "../../lib/format";
+import { useEffect, useState, type FormEvent } from 'react';
+import { apiJson } from '../../api/client';
+import type { AuditLogEntry } from '../../api/types';
+import ErrorBanner from '../../components/ErrorBanner';
+import { fmtDate } from '../../lib/format';
 
 const PAGE_SIZE = 100;
 
@@ -13,7 +13,7 @@ interface Filter {
   entityId: string;
 }
 
-const emptyFilter: Filter = { actor: "", action: "", entityType: "", entityId: "" };
+const emptyFilter: Filter = { actor: '', action: '', entityType: '', entityId: '' };
 
 export default function AuditTab() {
   const [filter, setFilter] = useState<Filter>(emptyFilter);
@@ -24,12 +24,12 @@ export default function AuditTab() {
 
   const buildParams = (f: Filter, nextOffset: number) => {
     const params = new URLSearchParams();
-    if (f.actor.trim()) params.set("actor", f.actor.trim());
-    if (f.action.trim()) params.set("action", f.action.trim());
-    if (f.entityType.trim()) params.set("entityType", f.entityType.trim());
-    if (f.entityId.trim()) params.set("entityId", f.entityId.trim());
-    params.set("limit", String(PAGE_SIZE));
-    params.set("offset", String(nextOffset));
+    if (f.actor.trim()) params.set('actor', f.actor.trim());
+    if (f.action.trim()) params.set('action', f.action.trim());
+    if (f.entityType.trim()) params.set('entityType', f.entityType.trim());
+    if (f.entityId.trim()) params.set('entityId', f.entityId.trim());
+    params.set('limit', String(PAGE_SIZE));
+    params.set('offset', String(nextOffset));
     return params;
   };
 
@@ -37,7 +37,9 @@ export default function AuditTab() {
     setError(null);
     const nextOffset = reset ? 0 : offset;
     try {
-      const page = await apiJson<AuditLogEntry[]>("/audit-logs?" + buildParams(f, nextOffset).toString());
+      const page = await apiJson<AuditLogEntry[]>(
+        '/audit-logs?' + buildParams(f, nextOffset).toString(),
+      );
       setEntries((prev) => (reset ? page : [...prev, ...page]));
       setOffset(nextOffset + page.length);
       setHasMore(page.length === PAGE_SIZE);
@@ -128,14 +130,14 @@ export default function AuditTab() {
                 <td>{e.actor}</td>
                 <td>{e.action}</td>
                 <td>{e.entityType}</td>
-                <td style={{ fontFamily: "monospace", fontSize: "0.8em" }}>{e.entityId}</td>
+                <td style={{ fontFamily: 'monospace', fontSize: '0.8em' }}>{e.entityId}</td>
                 <td>{e.detail}</td>
               </tr>
             ))}
           </tbody>
         </table>
         {entries.length === 0 && <p className="muted">No audit log entries yet.</p>}
-        <div className="row" style={{ marginTop: "1rem" }}>
+        <div className="row" style={{ marginTop: '1rem' }}>
           {hasMore && (
             <button type="button" className="secondary" onClick={() => load(filter, false)}>
               Load more
@@ -143,8 +145,8 @@ export default function AuditTab() {
           )}
         </div>
         <p className="muted">
-          Records every mutating admin/API action: users, maps, map permissions and aliases, version uploads, geo objects, API keys, and
-          sync remotes. Most recent first.
+          Records every mutating admin/API action: users, maps, map permissions and aliases, version
+          uploads, geo objects, API keys, and sync remotes. Most recent first.
         </p>
       </div>
     </div>

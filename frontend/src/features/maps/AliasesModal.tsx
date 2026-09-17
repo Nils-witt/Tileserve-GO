@@ -1,15 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch, apiJson } from "../../api/client";
-import type { MapAlias, MapSummary } from "../../api/types";
-import Modal from "../../components/Modal";
-import ErrorBanner from "../../components/ErrorBanner";
-import { fmtDate } from "../../lib/format";
+import { useCallback, useEffect, useState } from 'react';
+import { apiFetch, apiJson } from '../../api/client';
+import type { MapAlias, MapSummary } from '../../api/types';
+import Modal from '../../components/Modal';
+import ErrorBanner from '../../components/ErrorBanner';
+import { fmtDate } from '../../lib/format';
 
-export default function AliasesModal({ map, onClose }: { map: MapSummary | null; onClose: () => void }) {
+export default function AliasesModal({
+  map,
+  onClose,
+}: {
+  map: MapSummary | null;
+  onClose: () => void;
+}) {
   const [aliases, setAliases] = useState<MapAlias[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [name, setName] = useState("");
-  const [version, setVersion] = useState("");
+  const [name, setName] = useState('');
+  const [version, setVersion] = useState('');
 
   const load = useCallback(async () => {
     if (!map) return;
@@ -23,8 +29,8 @@ export default function AliasesModal({ map, onClose }: { map: MapSummary | null;
 
   useEffect(() => {
     if (!map) return;
-    setName("");
-    setVersion("");
+    setName('');
+    setVersion('');
     load();
   }, [map, load]);
 
@@ -33,12 +39,12 @@ export default function AliasesModal({ map, onClose }: { map: MapSummary | null;
     setError(null);
     try {
       await apiFetch(`/maps/${map.uuid}/aliases/${encodeURIComponent(name.trim())}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ version: version.trim() }),
       });
-      setName("");
-      setVersion("");
+      setName('');
+      setVersion('');
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -49,7 +55,9 @@ export default function AliasesModal({ map, onClose }: { map: MapSummary | null;
     if (!map) return;
     setError(null);
     try {
-      await apiFetch(`/maps/${map.uuid}/aliases/${encodeURIComponent(alias)}`, { method: "DELETE" });
+      await apiFetch(`/maps/${map.uuid}/aliases/${encodeURIComponent(alias)}`, {
+        method: 'DELETE',
+      });
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -57,7 +65,7 @@ export default function AliasesModal({ map, onClose }: { map: MapSummary | null;
   };
 
   return (
-    <Modal open={!!map} title={map ? `Aliases — ${map.name}` : "Aliases"} onClose={onClose}>
+    <Modal open={!!map} title={map ? `Aliases — ${map.name}` : 'Aliases'} onClose={onClose}>
       <ErrorBanner message={error} />
       <table>
         <thead>
@@ -90,14 +98,24 @@ export default function AliasesModal({ map, onClose }: { map: MapSummary | null;
         </tbody>
       </table>
       {aliases.length === 0 && <p className="muted">No aliases yet.</p>}
-      <div className="row" style={{ marginTop: "1rem" }}>
+      <div className="row" style={{ marginTop: '1rem' }}>
         <div className="field">
           <label htmlFor="alias-add-name">Alias name</label>
-          <input id="alias-add-name" placeholder="e.g. stable" value={name} onChange={(e) => setName(e.target.value)} />
+          <input
+            id="alias-add-name"
+            placeholder="e.g. stable"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
         </div>
         <div className="field">
           <label htmlFor="alias-add-version">Version</label>
-          <input id="alias-add-version" placeholder="e.g. 7" value={version} onChange={(e) => setVersion(e.target.value)} />
+          <input
+            id="alias-add-version"
+            placeholder="e.g. 7"
+            value={version}
+            onChange={(e) => setVersion(e.target.value)}
+          />
         </div>
         <button type="button" onClick={save}>
           Save
