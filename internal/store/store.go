@@ -290,13 +290,13 @@ func (s *Store) Authenticate(ctx context.Context, username, password string) err
 // they govern geo objects specifically and don't grant (or require) the
 // ability to edit/delete the map itself, its versions, or its aliases.
 type Permissions struct {
-	CanCreate           bool
-	CanEdit             bool
-	CanDelete           bool
-	CanEditGeoObjects   bool
-	CanDeleteGeoObjects bool
-	CanViewAll          bool
-	IsAdmin             bool
+	CanCreate           bool `json:"canCreate"`
+	CanEdit             bool `json:"canEdit"`
+	CanDelete           bool `json:"canDelete"`
+	CanEditGeoObjects   bool `json:"canEditGeoObjects"`
+	CanDeleteGeoObjects bool `json:"canDeleteGeoObjects"`
+	CanViewAll          bool `json:"canViewAll"`
+	IsAdmin             bool `json:"isAdmin"`
 }
 
 // GrantsMapVisibility reports whether p, on its own, is enough to make

@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"nilswitt.dev/tileserve-go/internal/auth"
+	"nilswitt.dev/tileserve-go/internal/httputil"
 	"nilswitt.dev/tileserve-go/internal/store"
 )
 
@@ -51,4 +52,22 @@ func RequirePermission(w http.ResponseWriter, r *http.Request, st *store.Store, 
 // returns true when the caller may continue.
 func RequireAdmin(w http.ResponseWriter, r *http.Request, st *store.Store) bool {
 	return RequirePermission(w, r, st, func(p store.Permissions) bool { return p.IsAdmin })
+}
+
+// CurrentPermissionsHandler serves GET /permissions/me: the authenticated
+// caller's own effective global permissions — their personal grants OR'd
+// together with those of every group they belong to (see
+// Store.GetPermissions). Unlike GET /users, whose isAdmin/canEdit/... fields
+// are each user's own row only, this is the one place a client can read the
+// group-merged value that every server-side authorization check actually
+// uses, without needing to enumerate the caller's group memberships itself.
+func CurrentPermissionsHandler(st *store.Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		perms, ok := GetPermissionsOrFail(w, r, st)
+		if !ok {
+			return
+		}
+
+		httputil.WriteJSON(w, http.StatusOK, perms)
+	}
 }

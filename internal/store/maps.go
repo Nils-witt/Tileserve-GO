@@ -153,7 +153,9 @@ func (f MapFilter) Scope() func(*gorm.DB) *gorm.DB {
 
 // ListMaps returns every map visible to username: maps marked visible to
 // all, maps username owns, maps username holds a per-map view/edit/delete
-// grant on, and (since they can already act on any map regardless of
+// grant on (directly, or via any group username belongs to — see
+// group_map_permissions/group_members, same sources Store.GetMapPermission
+// unions), and (since they can already act on any map regardless of
 // visibility) every map if bypassVisibility is true — meant to be passed as
 // the acting user's is_admin || can_edit || can_delete. filter narrows the
 // result further; its zero value matches everything.
@@ -165,7 +167,12 @@ func (s *Store) ListMaps(ctx context.Context, username string, bypassVisibility 
 			SELECT 1 FROM map_permissions mp
 			WHERE mp.map_uuid = maps.uuid AND mp.username = ?
 			  AND (mp.can_view OR mp.can_edit OR mp.can_delete OR mp.can_edit_geo_objects OR mp.can_delete_geo_objects)
-		))`, bypassVisibility, username, username).
+		) OR EXISTS (
+			SELECT 1 FROM group_map_permissions gmp
+			JOIN group_members gm ON gm.group_id = gmp.group_id
+			WHERE gmp.map_uuid = maps.uuid AND gm.username = ?
+			  AND (gmp.can_view OR gmp.can_edit OR gmp.can_delete OR gmp.can_edit_geo_objects OR gmp.can_delete_geo_objects)
+		))`, bypassVisibility, username, username, username).
 		Scopes(filter.Scope()).
 		Order("maps.created_at DESC").
 		Find(&maps).Error

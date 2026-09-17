@@ -131,29 +131,36 @@
       whoami.textContent = username;
       loadMaps();
 
+      // GET /permissions/me returns the caller's own effective (group-merged)
+      // permissions — the same isAdmin value every admin-only route on the
+      // server actually checks, unlike a user's own /users row, which only
+      // carries their personal isAdmin flag and misses admin rights granted
+      // through a group they belong to.
+      try {
+        const res = await api('/permissions/me');
+        const perms = await res.json();
+        isAdmin = !!perms.isAdmin;
+      } catch (err) {
+        isAdmin = false;
+      }
+
+      tabUsersBtn.classList.toggle('hidden', !isAdmin);
+      tabGroupsBtn.classList.toggle('hidden', !isAdmin);
+      tabSyncBtn.classList.toggle('hidden', !isAdmin);
+      tabAuditBtn.classList.toggle('hidden', !isAdmin);
+
       // GET /users is open to every authenticated user (so a map owner can
       // pick a username when granting a per-map permission or transferring
       // ownership — see the "Permissions" and "Transfer owner" map
-      // actions), so it no longer doubles as an "am I admin" check. Instead,
-      // find the caller's own entry in the list and read isAdmin off of it.
+      // actions); admin-only rendering is still gated on isAdmin above.
       try {
         const res = await api('/users');
         const users = await res.json();
         allUsers = users;
-        isAdmin = users.some(u => u.username === username && u.isAdmin);
-        tabUsersBtn.classList.toggle('hidden', !isAdmin);
-        tabGroupsBtn.classList.toggle('hidden', !isAdmin);
-        tabSyncBtn.classList.toggle('hidden', !isAdmin);
-        tabAuditBtn.classList.toggle('hidden', !isAdmin);
         if (isAdmin) renderUsers(users);
         else showTab('maps');
       } catch (err) {
-        isAdmin = false;
         allUsers = [];
-        tabUsersBtn.classList.add('hidden');
-        tabGroupsBtn.classList.add('hidden');
-        tabSyncBtn.classList.add('hidden');
-        tabAuditBtn.classList.add('hidden');
         showTab('maps');
       }
 

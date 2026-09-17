@@ -398,6 +398,7 @@ func registerRoutes(st *store.Store, config *ApplicationConfig, secret []byte, l
 	mux.Handle("GET /server/public-key", guardAdmin(webserver.ServerPublicKeyHandler(st, config.KeysDir)))
 	mux.Handle("GET /audit-logs", guardAdmin(auditlog.AuditLogsCollectionHandler(st)))
 	mux.Handle("GET /permissions", guardAdmin(webserver.PermissionsCollectionHandler(st)))
+	mux.Handle("GET /permissions/me", guardAuth(webserver.CurrentPermissionsHandler(st)))
 
 	return mux
 }
