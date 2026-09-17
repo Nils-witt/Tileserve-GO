@@ -5,3 +5,5 @@ data
 API.http
 http-client.env.json
 http-client.private.env.json
+frontend/node_modules
+frontend/dist

@@ -8,10 +8,25 @@ The full API is documented in [`openapi.yaml`](cmd/tileserve-go/openapi.yaml) (O
 runtime from `/openapi.yaml` — view it with any Swagger/OpenAPI tool (e.g. paste into
 https://editor.swagger.io, or `npx @redocly/cli preview-docs openapi.yaml`).
 
-A simple browser UI is served at `/ui/` — sign in there directly, it drives the same JSON API described below.
-It covers maps (create/edit/delete, upload versions, view history, preview on an interactive
-[MapLibre GL](https://maplibre.org/) map) and, for admins, user management and per-map permissions. MapLibre is
-loaded from the jsDelivr CDN.
+A browser UI (a Vite + React app, see [`frontend/`](frontend)) is served at `/ui/` — sign in there directly, it
+drives the same JSON API described below. It covers maps (create/edit/delete, upload versions, view history,
+preview on an interactive [MapLibre GL](https://maplibre.org/) map), users, groups, sync remotes, and the audit
+log for admins. `/login` serves the same app's login page, which also works as a standalone way to obtain a raw
+JWT for API use.
+
+## Building from source
+
+The UI is built separately and embedded into the Go binary via `go:embed`, so building from source requires
+Node in addition to Go:
+
+```sh
+npm --prefix frontend ci
+npm --prefix frontend run build
+go build ./cmd/tileserve-go
+```
+
+(`go run`/`go build`/`go vet` will fail with a missing-file embed error until `frontend/dist` has been built at
+least once.)
 
 ## Run
 

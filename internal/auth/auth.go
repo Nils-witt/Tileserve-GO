@@ -6,7 +6,6 @@ package auth
 
 import (
 	"context"
-	_ "embed"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,25 +15,6 @@ import (
 	"nilswitt.dev/tileserve-go/internal/httputil"
 	"nilswitt.dev/tileserve-go/internal/store"
 )
-
-//go:embed ui/login.html
-var loginPage []byte
-
-//go:embed ui/login.js
-var loginScript []byte
-
-// LoginScriptHandler serves the login page's script at /login.js.
-func LoginScriptHandler() http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		_, _ = w.Write(loginScript)
-	}
-}
 
 type loginRequest struct {
 	Username   string `json:"username"`
@@ -47,26 +27,18 @@ type loginResponse struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-// LoginHandler serves GET /login (the static login page) and handles
-// POST /login: it authenticates the given username/password — against st,
-// falling back to ldapAuth (if configured) for an account that isn't a local
-// match, see authenticatePassword — and, on success, issues a signed JWT
-// valid for the requested TTL (capped at maxTokenTTL, defaulting to
-// defaultTokenTTL) alongside a refresh token (valid for refreshTokenTTL)
-// that can later be exchanged at POST /refresh for a new login JWT without
-// re-sending credentials. ldapAuth may be nil, meaning LDAP login isn't
-// configured.
+// LoginHandler serves POST /login: it authenticates the given
+// username/password — against st, falling back to ldapAuth (if configured)
+// for an account that isn't a local match, see authenticatePassword — and,
+// on success, issues a signed JWT valid for the requested TTL (capped at
+// maxTokenTTL, defaulting to defaultTokenTTL) alongside a refresh token
+// (valid for refreshTokenTTL) that can later be exchanged at POST /refresh
+// for a new login JWT without re-sending credentials. ldapAuth may be nil,
+// meaning LDAP login isn't configured. The login page itself is served by
+// the frontend SPA (see internal/webserver/spa) at GET /login.
 func LoginHandler(secret []byte, st *store.Store, ldapAuth *ldap.Authenticator) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			_, _ = w.Write(loginPage)
-
-			return
-		}
-
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		if !httputil.RequireMethod(w, r, http.MethodPost) {
 			return
 		}
 

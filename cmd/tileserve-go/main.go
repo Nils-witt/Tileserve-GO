@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"nilswitt.dev/tileserve-go/frontend"
 	"nilswitt.dev/tileserve-go/internal/auth"
 	"nilswitt.dev/tileserve-go/internal/auth/ldap"
 	"nilswitt.dev/tileserve-go/internal/auth/oidc"
@@ -25,7 +26,7 @@ import (
 	"nilswitt.dev/tileserve-go/internal/tilearchive"
 	"nilswitt.dev/tileserve-go/internal/webserver"
 	"nilswitt.dev/tileserve-go/internal/webserver/auditlog"
-	"nilswitt.dev/tileserve-go/internal/webserver/ui"
+	"nilswitt.dev/tileserve-go/internal/webserver/spa"
 )
 
 type ApplicationConfig struct {
@@ -244,7 +245,12 @@ func run(config *ApplicationConfig) error {
 		return err
 	}
 
-	mux := registerRoutes(st, config, secret, ldapAuth, oidcAuth, syncManager)
+	spaHandler, err := spa.Handler(frontend.DistFS)
+	if err != nil {
+		return fmt.Errorf("build frontend handler: %w", err)
+	}
+
+	mux := registerRoutes(st, config, secret, ldapAuth, oidcAuth, syncManager, spaHandler)
 
 	addr := ":" + config.Port
 	srv := &http.Server{
@@ -274,15 +280,14 @@ func run(config *ApplicationConfig) error {
 
 // registerRoutes builds the mux and wires up the full route table. See the
 // mux.Handle calls below for the route table itself.
-func registerRoutes(st *store.Store, config *ApplicationConfig, secret []byte, ldapAuth *ldap.Authenticator, oidcAuth *oidc.Authenticator, syncManager *sync.Manager) *http.ServeMux {
+func registerRoutes(st *store.Store, config *ApplicationConfig, secret []byte, ldapAuth *ldap.Authenticator, oidcAuth *oidc.Authenticator, syncManager *sync.Manager, spaHandler http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/version", webserver.VersionHandler())
-	mux.HandleFunc("/login", auth.LoginHandler(secret, st, ldapAuth))
-	mux.HandleFunc("/login.js", auth.LoginScriptHandler())
+	mux.Handle("POST /login", auth.LoginHandler(secret, st, ldapAuth))
 	mux.HandleFunc("/refresh", auth.RefreshHandler(secret, st))
 	mux.HandleFunc("/auth/methods", oidc.AuthMethodsHandler(oidcAuth != nil))
 
@@ -313,8 +318,18 @@ func registerRoutes(st *store.Store, config *ApplicationConfig, secret []byte, l
 		}))
 	}
 
-	mux.Handle("GET /ui/", ui.ServeUIHandler())
-	mux.Handle("GET /ui/app.js", ui.ServeUIScriptHandler())
+	// The SPA's own page (index.html, plus its JS/CSS asset chunks) is
+	// public — it must be reachable before a token exists. "/" (no method)
+	// is the least-specific pattern http.ServeMux can match on both path
+	// and method, so it catches "/", "/login", "/ui" and any "/ui/..."
+	// deep link without ever shadowing a more specific API route
+	// registered elsewhere, regardless of registration order. It must stay
+	// unpinned rather than "GET /": since some other routes here (e.g.
+	// /healthz, /refresh) are themselves registered without a method,
+	// pairing "GET /" against them is an ambiguous conflict ServeMux
+	// rejects at startup — more specific in method, less specific in path,
+	// and neither dominates the other.
+	mux.Handle("/", spaHandler)
 
 	mux.Handle("GET /openapi.yaml", webserver.OpenAPIHandler())
 	mux.Handle("GET /maps", guardAuth(webserver.MapsListHandler(st)))

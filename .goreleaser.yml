@@ -1,5 +1,10 @@
 version: 2
 
+before:
+  hooks:
+    - npm ci --prefix frontend
+    - npm run build --prefix frontend
+
 builds:
   - main: ./cmd/tileserve-go
     env:

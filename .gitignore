@@ -3,6 +3,7 @@
 *.exe
 .DS_Store
 /data/
+frontend/dist/
 
 # Created by https://www.toptal.com/developers/gitignore/api/go,intellij,macos,windows,linux,visualstudiocode
 # Edit at https://www.toptal.com/developers/gitignore?templates=go,intellij,macos,windows,linux,visualstudiocode

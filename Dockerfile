@@ -1,5 +1,14 @@
 # syntax=docker/dockerfile:1
 
+FROM node:22-alpine AS frontend-builder
+WORKDIR /src/frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+
+COPY frontend/ ./
+RUN npm run build
+
 FROM golang:1.26-alpine AS builder
 LABEL org.opencontainers.image.source="https://github.com/Nils-witt/Tileserve-GO"
 WORKDIR /src
@@ -12,6 +21,8 @@ RUN go mod download
 
 COPY cmd ./cmd
 COPY internal ./internal
+COPY frontend/embed.go ./frontend/embed.go
+COPY --from=frontend-builder /src/frontend/dist ./frontend/dist
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w -X nilswitt.dev/tileserve-go/internal/version.Version=${VERSION} -X nilswitt.dev/tileserve-go/internal/version.Commit=${COMMIT}" -o /out/tileserve-go ./cmd/tileserve-go
 
 FROM gcr.io/distroless/static-debian13:nonroot
