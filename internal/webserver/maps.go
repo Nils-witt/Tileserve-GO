@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
+	"os"
 	"slices"
 
 	"github.com/google/uuid"
@@ -526,14 +528,14 @@ func UpdateMapHandler(st *store.Store) http.HandlerFunc {
 }
 
 // DeleteMapHandler serves DELETE /maps/{id}: delete the map itself.
-func DeleteMapHandler(st *store.Store) http.HandlerFunc {
+func DeleteMapHandler(st *store.Store, dataRoot string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id, ok := httputil.PathUUID(w, r, "id", "map id")
 		if !ok {
 			return
 		}
 
-		deleteMapItem(w, r, st, id)
+		deleteMapItem(w, r, st, dataRoot, id)
 	}
 }
 
@@ -566,7 +568,7 @@ func updateMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 	httputil.WriteJSON(w, http.StatusOK, m)
 }
 
-func deleteMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id uuid.UUID) {
+func deleteMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, dataRoot string, id uuid.UUID) {
 	if !requireMapPermission(w, r, st, id,
 		func(p store.Permissions) bool { return p.CanDelete },
 		func(mp store.MapPermission) bool { return mp.CanDelete },
@@ -577,6 +579,10 @@ func deleteMapItem(w http.ResponseWriter, r *http.Request, st *store.Store, id u
 	if err := st.DeleteMap(r.Context(), id); err != nil {
 		writeStoreError(w, err, store.ErrMapNotFound, http.StatusNotFound, "map not found", "failed to delete map")
 		return
+	}
+
+	if err := os.RemoveAll(tilearchive.MapDir(dataRoot, id)); err != nil {
+		slog.Error("failed to remove map data directory", "map_id", id, "error", err)
 	}
 
 	auditlog.RecordAudit(r, st, "delete", "map", id.String(), "")

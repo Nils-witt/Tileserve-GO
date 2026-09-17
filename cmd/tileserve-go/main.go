@@ -322,7 +322,7 @@ func registerRoutes(st *store.Store, config *ApplicationConfig, secret []byte, l
 
 	mux.Handle("GET /maps/{id}", guardAuth(webserver.GetMapHandler(st)))
 	mux.Handle("PUT /maps/{id}", guardAuth(webserver.UpdateMapHandler(st)))
-	mux.Handle("DELETE /maps/{id}", guardAuth(webserver.DeleteMapHandler(st)))
+	mux.Handle("DELETE /maps/{id}", guardAuth(webserver.DeleteMapHandler(st, config.DataRoot)))
 
 	mux.Handle("POST /maps/{id}/upload", guardAuth(webserver.UploadMapVersionHandler(st, config.DataRoot)))
 	mux.Handle("GET /maps/{id}/versions", guardAuth(webserver.MapVersionsHandler(st)))
