@@ -62,14 +62,11 @@ export function AdminDataProvider({ children }: { children: ReactNode }) {
     reloadGroups().catch(() => {});
   }, [reloadMaps, reloadUsers, reloadGroups]);
 
-  const mapName = useCallback(
-    (uuid: string) => maps.find((m) => m.uuid === uuid)?.name ?? uuid,
-    [maps],
-  );
-  const groupName = useCallback(
-    (id: string) => groups.find((g) => g.id === id)?.name ?? id,
-    [groups],
-  );
+  const mapsByUuid = useMemo(() => new Map(maps.map((m) => [m.uuid, m])), [maps]);
+  const groupsById = useMemo(() => new Map(groups.map((g) => [g.id, g])), [groups]);
+
+  const mapName = useCallback((uuid: string) => mapsByUuid.get(uuid)?.name ?? uuid, [mapsByUuid]);
+  const groupName = useCallback((id: string) => groupsById.get(id)?.name ?? id, [groupsById]);
 
   const value = useMemo<AdminData>(
     () => ({

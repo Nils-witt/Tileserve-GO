@@ -35,8 +35,10 @@ interface AuthState {
 const AuthContext = createContext<AuthState | null>(null);
 
 function consumeOIDCFragment(): { token: string; username: string } | null {
+  console.log('consumeOIDCFragment', location.hash);
   if (!location.hash) return null;
   const params = new URLSearchParams(location.hash.slice(1));
+  console.log('consumeOIDCFragment params', params);
   const token = params.get('token');
   const username = params.get('username');
   if (!token || !username) return null;
@@ -47,13 +49,16 @@ function consumeOIDCFragment(): { token: string; username: string } | null {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [username, setUsername] = useState<string | null>(() => getStoredUsername());
   const [sessionMessage, setSessionMessage] = useState<string | null>(null);
+  const [ssoComplete, setSsoComplete] = useState<boolean>(false);
 
   useEffect(() => {
     const consumed = consumeOIDCFragment();
     if (consumed) {
       setSession(consumed.token, consumed.username);
       setUsername(consumed.username);
+      window.location.href = '/ui';
     }
+    setSsoComplete(true);
   }, []);
 
   useEffect(() => {
@@ -108,6 +113,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }),
     [username, sessionMessage, login, logout, clearSessionMessage],
   );
+
+  if (!ssoComplete) {
+    return <div>Loading Auth...</div>;
+  }
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import {
   Box,
   Button,
-  Checkbox,
   Paper,
   Stack,
   Table,
@@ -22,6 +21,8 @@ import { fmtDate } from '../lib/format.ts';
 import PreviewModal from '../features/maps/PreviewModal.tsx';
 import MapFormModal from '../features/maps/MapFormModal.tsx';
 import VersionsModal from '../features/maps/VersionsModal.tsx';
+import VisibilityIcon from '@mui/icons-material/Visibility';
+import VpnKeyOffIcon from '@mui/icons-material/VpnKeyOff';
 
 function MapRow({
   m,
@@ -54,21 +55,14 @@ function MapRow({
         <TableCell>
           {m.name}
           <br />
+          {m.visibleToAll && <VisibilityIcon fontSize="small"/>}
+          {m.anonymousAllowed && <VpnKeyOffIcon fontSize="small"/>}
+          <br />
           <Typography variant="caption" color="text.secondary">
             {m.uuid}
           </Typography>
         </TableCell>
         <TableCell>{m.currentVersion || '-'}</TableCell>
-        <TableCell align="center" padding="checkbox">
-          <Checkbox checked={m.visibleToAll} title="Visible to all users" disabled={true} />
-        </TableCell>
-        <TableCell align="center" padding="checkbox">
-          <Checkbox
-            checked={m.anonymousAllowed}
-            title="Allow fetching tile files without signing in"
-            disabled={true}
-          />
-        </TableCell>
         <TableCell>{m.owner}</TableCell>
         <TableCell>
           {fmtDate(m.createdAt)}
@@ -152,8 +146,6 @@ export default function MapsListPage() {
               <TableRow>
                 <TableCell>Name</TableCell>
                 <TableCell>Version</TableCell>
-                <TableCell align="center">Public</TableCell>
-                <TableCell align="center">Anonymous</TableCell>
                 <TableCell>Owner</TableCell>
                 <TableCell>Created</TableCell>
                 <TableCell>Updated</TableCell>

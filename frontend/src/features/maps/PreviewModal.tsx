@@ -1,6 +1,5 @@
 import { useCallback, useRef } from 'react';
-import * as maplibregl from 'maplibre-gl';
-import 'maplibre-gl/dist/maplibre-gl.css';
+import type * as maplibregl from 'maplibre-gl';
 import { Box } from '@mui/material';
 import { apiJson, getToken } from '../../api/client';
 import type { MapBounds, MapSummary } from '../../api/types';
@@ -95,15 +94,22 @@ export default function PreviewModal({
         (async () => {
           let center: [number, number] = [0, 0];
           let zoom = 1;
-          try {
-            const bounds = await apiJson<MapBounds>(
+
+          // maplibre-gl is a large dependency (~500 kB) only needed once a
+          // preview is actually opened, so it's loaded on demand alongside
+          // the bounds fetch rather than bundled into the main chunk.
+          const [maplibregl, bounds] = await Promise.all([
+            import('maplibre-gl').then(async (mod) => {
+              await import('maplibre-gl/dist/maplibre-gl.css');
+              return mod;
+            }),
+            apiJson<MapBounds>(
               '/maps/' + map.uuid + '/version/' + map.currentVersion + '/bounds',
-            );
+            ).catch(() => null),
+          ]);
+          if (bounds) {
             center = [bounds.centerLng, bounds.centerLat];
             zoom = bounds.minZoom;
-            console.log(bounds);
-          } catch {
-            // fall back to the world view above
           }
 
           if (node?.children.length > 0) return;
