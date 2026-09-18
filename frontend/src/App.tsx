@@ -25,7 +25,7 @@ function IndexRedirect() {
  * also refuse them. */
 function AdminOnlyRoute({ children }: { children: ReactNode }) {
   const { isAdmin } = useAdminData();
-  return isAdmin ? <>{children}</> : <Navigate to="/ui/maps" replace />;
+  return isAdmin ? <>{children}</> : <> Not authorized</>;
 }
 
 export default function App() {
@@ -34,7 +34,7 @@ export default function App() {
     () => createAppTheme(prefersDarkMode ? 'dark' : 'light'),
     [prefersDarkMode],
   );
-  if (document.location.hash) {
+  if (document.location.hash.length > 10) {
     setSessionFromHash(document.location.hash);
     window.location.href = '/ui';
     return <></>
@@ -46,7 +46,6 @@ export default function App() {
       <AuthProvider>
         <AdminDataProvider>
           <Routes>
-            <Route path="/" element={<IndexRedirect />} />
             <Route path="/ui/login" element={<LoginPage />} />
             <Route element={<BaseLayout />}>
               <Route path="/ui" element={<ProtectedRoute />}>
@@ -67,9 +66,9 @@ export default function App() {
                   <Route path="sync" element={<SyncTab />} />
                   <Route path="audit" element={<AuditTab />} />
                 </Route>
-                <Route path="*" element={<Navigate to="maps" replace />} />
               </Route>
             </Route>
+            <Route path="/" element={<IndexRedirect />} />
           </Routes>
         </AdminDataProvider>
       </AuthProvider>
