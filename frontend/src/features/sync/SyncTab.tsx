@@ -1,4 +1,20 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import {
+  Box,
+  Button,
+  Checkbox,
+  FormControlLabel,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { apiFetch, apiJson, apiPostJSON } from '../../api/client';
 import type { SyncRemote } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
@@ -17,31 +33,43 @@ function ServerPublicKeyCard() {
   }, []);
 
   return (
-    <div className="card">
-      <h2>This server's public key</h2>
-      <p className="muted" style={{ marginTop: 0, marginBottom: '0.9rem' }}>
+    <Paper sx={{ p: 3, mb: 3 }}>
+      <Typography variant="h6" component="h2" gutterBottom>
+        This server's public key
+      </Typography>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Generated once on first startup and persisted across restarts. Every sync remote below
         authenticates with this same key — register it as an API key for a user on each remote
         tileserve-go instance you want to pull from (via that instance's "API keys" button on its
         Users tab), then paste the key ID that call returns into "Remote API key ID" when
         registering the remote.
-      </p>
-      <textarea
-        readOnly
-        rows={6}
-        style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8em' }}
+      </Typography>
+      <TextField
+        fullWidth
+        multiline
+        minRows={6}
         value={key}
+        slotProps={{
+          input: { readOnly: true, style: { fontFamily: 'monospace', fontSize: '0.8em' } },
+        }}
       />
       <ErrorBanner message={error} />
-    </div>
+    </Paper>
   );
 }
 
 function fmtSyncStatus(r: SyncRemote) {
-  if (!r.lastSyncAt) return <span className="muted">never synced</span>;
+  if (!r.lastSyncAt)
+    return (
+      <Typography variant="body2" color="text.secondary">
+        never synced
+      </Typography>
+    );
   const status =
     r.lastSyncStatus === 'error' ? (
-      <span style={{ color: '#dc2626' }}>error</span>
+      <Typography component="span" color="error.main">
+        error
+      </Typography>
     ) : (
       r.lastSyncStatus || '-'
     );
@@ -49,13 +77,15 @@ function fmtSyncStatus(r: SyncRemote) {
     <>
       {status}
       <br />
-      <span className="muted">{fmtDate(r.lastSyncAt)}</span>
+      <Typography variant="caption" color="text.secondary">
+        {fmtDate(r.lastSyncAt)}
+      </Typography>
       {r.lastSyncError && (
         <>
           <br />
-          <span className="muted" title={r.lastSyncError}>
+          <Typography variant="caption" color="text.secondary" title={r.lastSyncError}>
             {r.lastSyncError.length > 60 ? r.lastSyncError.slice(0, 60) + '…' : r.lastSyncError}
-          </span>
+          </Typography>
         </>
       )}
     </>
@@ -151,49 +181,47 @@ function SyncRemoteRow({
   };
 
   return (
-    <tr>
-      <td>
+    <TableRow>
+      <TableCell>
         {r.name}
         <ErrorBanner message={error} />
-      </td>
-      <td>{r.baseUrl}</td>
-      <td>{r.pollIntervalSec}s</td>
-      <td>{r.syncAllMaps ? 'All maps' : 'Selected maps'}</td>
-      <td className="checkbox-cell">
-        <input
-          type="checkbox"
+      </TableCell>
+      <TableCell>{r.baseUrl}</TableCell>
+      <TableCell>{r.pollIntervalSec}s</TableCell>
+      <TableCell>{r.syncAllMaps ? 'All maps' : 'Selected maps'}</TableCell>
+      <TableCell align="center" padding="checkbox">
+        <Checkbox
           checked={r.enabled}
           onChange={(e) => updatePatch({ enabled: e.target.checked })}
         />
-      </td>
-      <td className="checkbox-cell">
-        <input
-          type="checkbox"
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        <Checkbox
           checked={r.syncGeoObjects}
           onChange={(e) => updatePatch({ syncGeoObjects: e.target.checked })}
         />
-      </td>
-      <td>{fmtSyncStatus(r)}</td>
-      <td>
-        <div className="actions">
-          <button type="button" className="secondary" onClick={edit}>
+      </TableCell>
+      <TableCell>{fmtSyncStatus(r)}</TableCell>
+      <TableCell sx={{ minWidth: 260 }}>
+        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+          <Button size="small" onClick={edit}>
             Edit
-          </button>
-          <button type="button" className="secondary" onClick={onOpenMapsPicker}>
+          </Button>
+          <Button size="small" onClick={onOpenMapsPicker}>
             Select maps
-          </button>
-          <button type="button" className="secondary" onClick={trigger}>
+          </Button>
+          <Button size="small" onClick={trigger}>
             Sync now
-          </button>
-          <button type="button" className="secondary" onClick={onOpenLog}>
+          </Button>
+          <Button size="small" onClick={onOpenLog}>
             Logs
-          </button>
-          <button type="button" className="danger" onClick={remove}>
+          </Button>
+          <Button size="small" color="error" onClick={remove}>
             Delete
-          </button>
-        </div>
-      </td>
-    </tr>
+          </Button>
+        </Stack>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -251,102 +279,111 @@ export default function SyncTab() {
   };
 
   return (
-    <div>
+    <Box>
       <ServerPublicKeyCard />
 
-      <div className="card">
-        <h2>Register sync remote</h2>
-        <p className="muted" style={{ marginTop: 0, marginBottom: '0.9rem' }}>
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" component="h2" gutterBottom>
+          Register sync remote
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Pulls a full mirror of every map visible to a registered API key on another tileserve-go
           instance — versions and aliases included, under the same map UUIDs. This server signs its
           own short-lived JWTs using its persistent key pair shown above; register that public key
           as an API key for a user on the remote instance, then paste the key ID that call returns
           into "Remote API key ID" below.
-        </p>
-        <form className="row" onSubmit={createRemote}>
-          <div className="field">
-            <label htmlFor="sync-name">Name</label>
-            <input id="sync-name" required value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="sync-base-url">Base URL</label>
-            <input
-              id="sync-base-url"
-              placeholder="https://source.example.com"
-              required
-              value={baseUrl}
-              onChange={(e) => setBaseUrl(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="sync-remote-key-id">Remote API key ID</label>
-            <input
-              id="sync-remote-key-id"
-              className="inline"
-              placeholder="uuid returned by the remote"
-              required
-              value={remoteApiKeyId}
-              onChange={(e) => setRemoteApiKeyId(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="sync-interval">Poll interval (s)</label>
-            <input
-              id="sync-interval"
-              type="number"
-              min={1}
-              required
-              value={pollIntervalSec}
-              onChange={(e) => setPollIntervalSec(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label>
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(e) => setEnabled(e.target.checked)}
-              />{' '}
-              Enabled
-            </label>
-          </div>
-          <button type="submit">Register</button>
-        </form>
-      </div>
+        </Typography>
+        <Stack
+          component="form"
+          direction="row"
+          spacing={2}
+          useFlexGap
+          sx={{ flexWrap: 'wrap', alignItems: 'center' }}
+          onSubmit={createRemote}
+        >
+          <TextField
+            label="Name"
+            size="small"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <TextField
+            label="Base URL"
+            size="small"
+            placeholder="https://source.example.com"
+            required
+            sx={{ minWidth: 240 }}
+            value={baseUrl}
+            onChange={(e) => setBaseUrl(e.target.value)}
+          />
+          <TextField
+            label="Remote API key ID"
+            size="small"
+            placeholder="uuid returned by the remote"
+            required
+            sx={{ minWidth: 220 }}
+            value={remoteApiKeyId}
+            onChange={(e) => setRemoteApiKeyId(e.target.value)}
+          />
+          <TextField
+            label="Poll interval (s)"
+            type="number"
+            size="small"
+            required
+            slotProps={{ htmlInput: { min: 1 } }}
+            value={pollIntervalSec}
+            onChange={(e) => setPollIntervalSec(e.target.value)}
+          />
+          <FormControlLabel
+            control={<Checkbox checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />}
+            label="Enabled"
+          />
+          <Button type="submit" variant="contained">
+            Register
+          </Button>
+        </Stack>
+      </Paper>
 
-      <div className="card">
+      <Paper sx={{ p: 3 }}>
         <ErrorBanner message={error} />
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Base URL</th>
-              <th>Interval</th>
-              <th>Maps synced</th>
-              <th className="checkbox-cell">Enabled</th>
-              <th className="checkbox-cell">Geo objects</th>
-              <th>Last sync</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {remotes.map((r) => (
-              <SyncRemoteRow
-                key={r.id}
-                r={r}
-                onReload={reload}
-                onOpenLog={() => setLogRemote(r)}
-                onOpenMapsPicker={() => setMapsPickerRemote(r)}
-              />
-            ))}
-          </tbody>
-        </table>
-        {remotes.length === 0 && <p className="muted">No sync remotes configured yet.</p>}
-        <p className="muted">
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Base URL</TableCell>
+                <TableCell>Interval</TableCell>
+                <TableCell>Maps synced</TableCell>
+                <TableCell align="center">Enabled</TableCell>
+                <TableCell align="center">Geo objects</TableCell>
+                <TableCell>Last sync</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {remotes.map((r) => (
+                <SyncRemoteRow
+                  key={r.id}
+                  r={r}
+                  onReload={reload}
+                  onOpenLog={() => setLogRemote(r)}
+                  onOpenMapsPicker={() => setMapsPickerRemote(r)}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        {remotes.length === 0 && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            No sync remotes configured yet.
+          </Typography>
+        )}
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           Removing a remote stops future syncing; maps already mirrored from it keep their local
           data. Deletions on the remote are never propagated here.
-        </p>
-      </div>
+        </Typography>
+      </Paper>
 
       <SyncLogModal remote={logRemote} onClose={() => setLogRemote(null)} />
       <SyncMapsPickerModal
@@ -354,6 +391,6 @@ export default function SyncTab() {
         onClose={() => setMapsPickerRemote(null)}
         onSaved={reload}
       />
-    </div>
+    </Box>
   );
 }

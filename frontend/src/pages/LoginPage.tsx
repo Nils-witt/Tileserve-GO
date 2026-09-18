@@ -1,18 +1,15 @@
-import { useEffect, useMemo, useState, type SubmitEvent } from 'react';
+import { useEffect, useState, type SubmitEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Alert,
   Box,
   Button,
   Container,
-  createTheme,
   Divider,
   Paper,
   Stack,
   TextField,
-  ThemeProvider,
   Typography,
-  useMediaQuery,
 } from '@mui/material';
 import LoginIcon from '@mui/icons-material/Login';
 import { useAuth } from '../auth/AuthContext';
@@ -32,12 +29,6 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const prefersDarkMode = useMediaQuery('(prefers-color-scheme: dark)');
-  const theme = useMemo(
-    () => createTheme({ palette: { mode: prefersDarkMode ? 'dark' : 'light' } }),
-    [prefersDarkMode],
-  );
 
   useEffect(() => {
     if (auth.sessionMessage) {
@@ -67,58 +58,56 @@ export default function LoginPage() {
   };
 
   return (
-    <ThemeProvider theme={theme}>
-      <Box className="login-page" sx={{ bgcolor: 'background.default', color: 'text.primary' }}>
-        <Container maxWidth="xs" disableGutters>
-          <Paper elevation={3}>
-            <Typography variant="h5" component="h1" gutterBottom>
-              Sign in to get a token
-            </Typography>
-            <Box component="form" onSubmit={handleSubmit} noValidate>
-              <Stack spacing={2}>
-                <TextField
-                  id="username"
-                  label="Username"
-                  autoComplete="username"
-                  required
-                  fullWidth
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                />
-                <TextField
-                  id="password"
-                  label="Password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                  fullWidth
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-                <Button
-                  type="submit"
-                  variant="contained"
-                  fullWidth
-                  disabled={submitting}
-                  startIcon={<LoginIcon />}
-                >
-                  {submitting ? 'Signing in…' : 'Sign in'}
-                </Button>
-              </Stack>
-            </Box>
-            {authMethods.oidc && (
-              <>
-                <Divider>or</Divider>
-                <Button type="button" variant="outlined" fullWidth onClick={handleSSO}>
-                  Sign in with SSO
-                </Button>
-              </>
-            )}
-            {error && <Alert severity="error">{error}</Alert>}
-          </Paper>
-        </Container>
-        <Footer />
-      </Box>
-    </ThemeProvider>
+    <Box className="login-page" sx={{ bgcolor: 'background.default', color: 'text.primary' }}>
+      <Container maxWidth="xs" disableGutters>
+        <Paper elevation={3}>
+          <Typography variant="h5" component="h1" gutterBottom>
+            Sign in to get a token
+          </Typography>
+          <Box component="form" onSubmit={handleSubmit} noValidate>
+            <Stack spacing={2}>
+              <TextField
+                id="username"
+                label="Username"
+                autoComplete="username"
+                required
+                fullWidth
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+              <TextField
+                id="password"
+                label="Password"
+                type="password"
+                autoComplete="current-password"
+                required
+                fullWidth
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <Button
+                type="submit"
+                variant="contained"
+                fullWidth
+                disabled={submitting}
+                startIcon={<LoginIcon />}
+              >
+                {submitting ? 'Signing in…' : 'Sign in'}
+              </Button>
+            </Stack>
+          </Box>
+          {authMethods.oidc && (
+            <>
+              <Divider>or</Divider>
+              <Button type="button" variant="outlined" fullWidth onClick={handleSSO}>
+                Sign in with SSO
+              </Button>
+            </>
+          )}
+          {error && <Alert severity="error">{error}</Alert>}
+        </Paper>
+      </Container>
+      <Footer />
+    </Box>
   );
 }

@@ -1,4 +1,6 @@
-import type { MouseEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { Dialog, DialogContent, DialogTitle, IconButton, Stack } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 
 interface ModalProps {
   open: boolean;
@@ -22,29 +24,29 @@ export default function Modal({
   noPadding,
   children,
 }: ModalProps) {
-  if (!open) return null;
-
-  const onOverlayClick = (e: MouseEvent<HTMLDivElement>) => {
-    if (e.target === e.currentTarget) onClose();
-  };
-
   return (
-    <div className="modal-overlay" onClick={onOverlayClick}>
-      <div
-        className="modal"
-        style={variant === 'auto' ? { height: 'auto', maxHeight: '88vh' } : undefined}
+    <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth fullScreen={variant === 'full'}>
+      <DialogTitle
+        sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}
       >
-        <div className="modal-header">
-          <h2>{title}</h2>
-          <div className="actions">
-            {headerExtra}
-            <button type="button" className="secondary" onClick={onClose}>
-              Close
-            </button>
-          </div>
-        </div>
-        {noPadding ? children : <div style={{ padding: '1rem', overflow: 'auto' }}>{children}</div>}
-      </div>
-    </div>
+        {title}
+        <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          {headerExtra}
+          <IconButton aria-label="Close" onClick={onClose} size="small">
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </Stack>
+      </DialogTitle>
+      <DialogContent
+        dividers
+        sx={
+          noPadding
+            ? { p: 0, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }
+            : undefined
+        }
+      >
+        {children}
+      </DialogContent>
+    </Dialog>
   );
 }

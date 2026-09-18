@@ -1,4 +1,20 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
+import {
+  Box,
+  Button,
+  Checkbox,
+  FormControlLabel,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { apiFetch, apiPostJSON } from '../../api/client';
 import type { Group } from '../../api/types';
 import { useAdminData } from '../AdminDataContext';
@@ -58,52 +74,67 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
   };
 
   const cb = (key: keyof GroupPermState) => (
-    <input
-      type="checkbox"
+    <Checkbox
       checked={perms[key]}
       onChange={(e) => setPerms((p) => ({ ...p, [key]: e.target.checked }))}
     />
   );
 
   return (
-    <tr>
-      <td>
-        <input value={name} onChange={(e) => setName(e.target.value)} />
+    <TableRow>
+      <TableCell>
+        <TextField size="small" value={name} onChange={(e) => setName(e.target.value)} />
         <ErrorBanner message={error} />
-      </td>
-      <td className="checkbox-cell">{cb('canCreate')}</td>
-      <td className="checkbox-cell">{cb('canEdit')}</td>
-      <td className="checkbox-cell">{cb('canDelete')}</td>
-      <td className="checkbox-cell">{cb('canEditGeoObjects')}</td>
-      <td className="checkbox-cell">{cb('canDeleteGeoObjects')}</td>
-      <td className="checkbox-cell">{cb('canViewAll')}</td>
-      <td className="checkbox-cell">{cb('isAdmin')}</td>
-      <td>
-        <input
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canCreate')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canEdit')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canDelete')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canEditGeoObjects')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canDeleteGeoObjects')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canViewAll')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('isAdmin')}
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
           value={ldapGroupDn}
           placeholder="not linked"
           onChange={(e) => setLdapGroupDn(e.target.value)}
         />
-      </td>
-      <td>
-        <input
+      </TableCell>
+      <TableCell>
+        <TextField
+          size="small"
           value={oidcGroupClaim}
           placeholder="not linked"
           onChange={(e) => setOidcGroupClaim(e.target.value)}
         />
-      </td>
-      <td>{fmtDate(g.createdAt)}</td>
-      <td>
-        <div className="actions">
-          <button type="button" className="secondary" onClick={save}>
+      </TableCell>
+      <TableCell>{fmtDate(g.createdAt)}</TableCell>
+      <TableCell sx={{ minWidth: 140 }}>
+        <Stack direction="row" spacing={1}>
+          <Button size="small" onClick={save}>
             Save
-          </button>
-          <button type="button" className="danger" onClick={remove}>
+          </Button>
+          <Button size="small" color="error" onClick={remove}>
             Delete
-          </button>
-        </div>
-      </td>
-    </tr>
+          </Button>
+        </Stack>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -130,53 +161,62 @@ export default function GroupsTab() {
     }
   };
 
-  const cb = (key: keyof GroupPermState, label: string) => (
-    <div className="field">
-      <label>
-        <input
-          type="checkbox"
+  const cb = (key: keyof GroupPermState, label: string): ReactNode => (
+    <FormControlLabel
+      key={key}
+      control={
+        <Checkbox
           checked={perms[key]}
           onChange={(e) => setPerms((p) => ({ ...p, [key]: e.target.checked }))}
-        />{' '}
-        {label}
-      </label>
-    </div>
+        />
+      }
+      label={label}
+    />
   );
 
   return (
-    <div>
-      <div className="card">
-        <h2>Create group</h2>
-        <p className="muted" style={{ marginTop: 0, marginBottom: '0.9rem' }}>
+    <Box>
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" component="h2" gutterBottom>
+          Create group
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
           Membership is never assigned here — it's fully derived from each member's LDAP{' '}
           <code>memberOf</code> or OIDC <code>groups</code> claim on every login. Set "LDAP group
           DN" and/or "OIDC groups claim value" below to link this group to a
           directory/identity-provider group; leave either blank if this group isn't sourced from
           that provider.
-        </p>
-        <form className="row" onSubmit={createGroup}>
-          <div className="field">
-            <label htmlFor="cg-name">Name</label>
-            <input id="cg-name" required value={name} onChange={(e) => setName(e.target.value)} />
-          </div>
-          <div className="field">
-            <label htmlFor="cg-ldap-dn">LDAP group DN (optional)</label>
-            <input
-              id="cg-ldap-dn"
-              placeholder="cn=editors,ou=groups,dc=example,dc=com"
-              value={ldapGroupDn}
-              onChange={(e) => setLdapGroupDn(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="cg-oidc-claim">OIDC groups claim value (optional)</label>
-            <input
-              id="cg-oidc-claim"
-              placeholder="e.g. editors"
-              value={oidcGroupClaim}
-              onChange={(e) => setOidcGroupClaim(e.target.value)}
-            />
-          </div>
+        </Typography>
+        <Stack
+          component="form"
+          direction="row"
+          spacing={2}
+          useFlexGap
+          sx={{ flexWrap: 'wrap', alignItems: 'center' }}
+          onSubmit={createGroup}
+        >
+          <TextField
+            label="Name"
+            size="small"
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <TextField
+            label="LDAP group DN (optional)"
+            size="small"
+            placeholder="cn=editors,ou=groups,dc=example,dc=com"
+            sx={{ minWidth: 280 }}
+            value={ldapGroupDn}
+            onChange={(e) => setLdapGroupDn(e.target.value)}
+          />
+          <TextField
+            label="OIDC groups claim value (optional)"
+            size="small"
+            placeholder="e.g. editors"
+            value={oidcGroupClaim}
+            onChange={(e) => setOidcGroupClaim(e.target.value)}
+          />
           {cb('canCreate', 'Can create')}
           {cb('canEdit', 'Can edit')}
           {cb('canDelete', 'Can delete')}
@@ -184,42 +224,50 @@ export default function GroupsTab() {
           {cb('canDeleteGeoObjects', 'Can delete geo objects')}
           {cb('canViewAll', 'Can view all maps')}
           {cb('isAdmin', 'Admin')}
-          <button type="submit">Create</button>
-        </form>
-      </div>
+          <Button type="submit" variant="contained">
+            Create
+          </Button>
+        </Stack>
+      </Paper>
 
-      <div className="card">
+      <Paper sx={{ p: 3 }}>
         <ErrorBanner message={error} />
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th className="checkbox-cell">Create</th>
-              <th className="checkbox-cell">Edit</th>
-              <th className="checkbox-cell">Delete</th>
-              <th className="checkbox-cell">Geo edit</th>
-              <th className="checkbox-cell">Geo delete</th>
-              <th className="checkbox-cell">View all</th>
-              <th className="checkbox-cell">Admin</th>
-              <th>LDAP group DN</th>
-              <th>OIDC groups claim value</th>
-              <th>Created</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {groups.map((g) => (
-              <GroupRow key={g.id} g={g} onReload={reloadGroups} />
-            ))}
-          </tbody>
-        </table>
-        {groups.length === 0 && <p className="muted">No groups yet.</p>}
-        <p className="muted">
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell align="center">Create</TableCell>
+                <TableCell align="center">Edit</TableCell>
+                <TableCell align="center">Delete</TableCell>
+                <TableCell align="center">Geo edit</TableCell>
+                <TableCell align="center">Geo delete</TableCell>
+                <TableCell align="center">View all</TableCell>
+                <TableCell align="center">Admin</TableCell>
+                <TableCell>LDAP group DN</TableCell>
+                <TableCell>OIDC groups claim value</TableCell>
+                <TableCell>Created</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {groups.map((g) => (
+                <GroupRow key={g.id} g={g} onReload={reloadGroups} />
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        {groups.length === 0 && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
+            No groups yet.
+          </Typography>
+        )}
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           Every member of a group inherits its permission flags (OR'd with their own) and any
           per-map grants made to the group under a map's "Permissions" — see "Group permissions"
           there.
-        </p>
-      </div>
-    </div>
+        </Typography>
+      </Paper>
+    </Box>
   );
 }

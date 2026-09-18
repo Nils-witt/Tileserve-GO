@@ -1,4 +1,17 @@
 import { useEffect, useState } from 'react';
+import {
+  Button,
+  Checkbox,
+  FormControlLabel,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from '@mui/material';
 import { apiFetch, apiJson } from '../../api/client';
 import type { RemoteMap, SyncRemote } from '../../api/types';
 import Modal from '../../components/Modal';
@@ -79,66 +92,66 @@ export default function SyncMapsPickerModal({
       title={remote ? `Select maps — ${remote.name}` : 'Select maps'}
       onClose={onClose}
       headerExtra={
-        <button type="button" onClick={save}>
+        <Button size="small" variant="contained" onClick={save}>
           Save
-        </button>
+        </Button>
       }
     >
       <ErrorBanner message={error} />
-      <div className="row">
-        <div className="field">
-          <label>
-            <input
-              type="checkbox"
-              checked={syncAll}
-              onChange={(e) => setSyncAll(e.target.checked)}
-            />{' '}
-            Sync all maps
-          </label>
-        </div>
-        <div className="field">
-          <label>
-            <input
-              type="checkbox"
+      <Stack direction="row" spacing={2} sx={{ mb: 1 }}>
+        <FormControlLabel
+          control={<Checkbox checked={syncAll} onChange={(e) => setSyncAll(e.target.checked)} />}
+          label="Sync all maps"
+        />
+        <FormControlLabel
+          control={
+            <Checkbox
               checked={syncNew}
               disabled={syncAll}
               onChange={(e) => setSyncNew(e.target.checked)}
-            />{' '}
-            Automatically sync new maps
-          </label>
-        </div>
-      </div>
-      <p className="muted" style={{ marginTop: 0 }}>
+            />
+          }
+          label="Automatically sync new maps"
+        />
+      </Stack>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         With "Sync all maps" off, only the maps checked below are mirrored. "Automatically sync new
         maps" additionally mirrors any map first noticed on the remote from then on, even if it
         isn't checked.
-      </p>
-      <table>
-        <thead>
-          <tr>
-            <th className="checkbox-cell">Sync</th>
-            <th>Name</th>
-            <th>UUID</th>
-          </tr>
-        </thead>
-        <tbody>
-          {remoteMaps.map((m) => (
-            <tr key={m.uuid}>
-              <td className="checkbox-cell">
-                <input
-                  type="checkbox"
-                  checked={selected.has(m.uuid)}
-                  onChange={(e) => toggle(m.uuid, e.target.checked)}
-                />
-              </td>
-              <td>{m.name}</td>
-              <td className="muted">{m.uuid}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      </Typography>
+      <TableContainer>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell align="center">Sync</TableCell>
+              <TableCell>Name</TableCell>
+              <TableCell>UUID</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {remoteMaps.map((m) => (
+              <TableRow key={m.uuid}>
+                <TableCell align="center" padding="checkbox">
+                  <Checkbox
+                    checked={selected.has(m.uuid)}
+                    onChange={(e) => toggle(m.uuid, e.target.checked)}
+                  />
+                </TableCell>
+                <TableCell>{m.name}</TableCell>
+                <TableCell>
+                  <Typography variant="caption" color="text.secondary">
+                    {m.uuid}
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
       {remoteMaps.length === 0 && (
-        <p className="muted">No maps visible to this remote's API key.</p>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          No maps visible to this remote's API key.
+        </Typography>
       )}
     </Modal>
   );

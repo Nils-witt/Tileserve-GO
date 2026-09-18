@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Box, Button, Typography } from '@mui/material';
 import { apiJson } from '../../api/client';
 import type { SyncLogEntry, SyncRemote } from '../../api/types';
 import Modal from '../../components/Modal';
@@ -37,16 +38,16 @@ export default function SyncLogModal({
     .reverse()
     .map((e, i) => {
       const line = `[${fmtDate(e.time)}] ${e.message}`;
-      return e.level === 'error' ? (
-        <span key={i} style={{ color: '#dc2626' }}>
+      return (
+        <Box
+          key={i}
+          component="span"
+          sx={
+            e.level === 'error' ? { color: 'error.main', display: 'block' } : { display: 'block' }
+          }
+        >
           {line}
-          {'\n'}
-        </span>
-      ) : (
-        <span key={i}>
-          {line}
-          {'\n'}
-        </span>
+        </Box>
       );
     });
 
@@ -56,18 +57,23 @@ export default function SyncLogModal({
       title={remote ? `Sync log — ${remote.name}` : 'Sync log'}
       onClose={onClose}
       headerExtra={
-        <button type="button" className="secondary" onClick={load}>
+        <Button size="small" onClick={load}>
           Refresh
-        </button>
+        </Button>
       }
     >
       <ErrorBanner message={error} />
-      <pre
-        style={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.8em', margin: 0 }}
+      <Box
+        component="pre"
+        sx={{ whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '0.8em', m: 0 }}
       >
         {lines}
-      </pre>
-      {entries.length === 0 && <p className="muted">No log entries yet.</p>}
+      </Box>
+      {entries.length === 0 && (
+        <Typography variant="body2" color="text.secondary">
+          No log entries yet.
+        </Typography>
+      )}
     </Modal>
   );
 }

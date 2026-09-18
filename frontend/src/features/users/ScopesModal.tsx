@@ -1,4 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+  Button,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { apiFetch, apiJson } from '../../api/client';
 import type { ApiKey, ApiKeyScope } from '../../api/types';
 import { useAdminData } from '../AdminDataContext';
@@ -117,68 +133,82 @@ export default function ScopesModal({
       onClose={onClose}
     >
       <ErrorBanner message={error} />
-      <table>
-        <thead>
-          <tr>
-            <th>Map</th>
-            <th>Versions</th>
-            <th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {scopes.map((s) => (
-            <tr key={s.mapUuid}>
-              <td>{mapName(s.mapUuid)}</td>
-              <td>{s.versions && s.versions.length ? s.versions.join(', ') : 'all'}</td>
-              <td>
-                <div className="actions">
-                  <button type="button" className="danger" onClick={() => removeScope(s.mapUuid)}>
+      <TableContainer>
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Map</TableCell>
+              <TableCell>Versions</TableCell>
+              <TableCell>Actions</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {scopes.map((s) => (
+              <TableRow key={s.mapUuid}>
+                <TableCell>{mapName(s.mapUuid)}</TableCell>
+                <TableCell>
+                  {s.versions && s.versions.length ? s.versions.join(', ') : 'all'}
+                </TableCell>
+                <TableCell>
+                  <Button size="small" color="error" onClick={() => removeScope(s.mapUuid)}>
                     Remove
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      {scopes.length === 0 && (
-        <p className="muted">No scope restrictions — this key can access every map its user can.</p>
-      )}
-      <div className="row" style={{ marginTop: '1rem' }}>
-        <div className="field">
-          <label htmlFor="scope-add-map">Map</label>
-          <select id="scope-add-map" value={addMap} onChange={(e) => setAddMap(e.target.value)}>
-            <option value="" />
-            {maps.map((m) => (
-              <option key={m.uuid} value={m.uuid}>
-                {m.name}
-              </option>
+                  </Button>
+                </TableCell>
+              </TableRow>
             ))}
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="scope-add-versions">Versions (comma-separated, blank = all)</label>
-          <input
-            id="scope-add-versions"
-            placeholder="e.g. 3,4"
-            value={addVersions}
-            onChange={(e) => setAddVersions(e.target.value)}
-          />
-        </div>
-        <button type="button" disabled={!addMap} onClick={addScope}>
+          </TableBody>
+        </Table>
+      </TableContainer>
+      {scopes.length === 0 && (
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+          No scope restrictions — this key can access every map its user can.
+        </Typography>
+      )}
+      <Stack
+        direction="row"
+        spacing={2}
+        useFlexGap
+        sx={{ flexWrap: 'wrap', alignItems: 'flex-end', mt: 2 }}
+      >
+        <FormControl size="small" sx={{ minWidth: 180 }}>
+          <InputLabel id="scope-add-map-label">Map</InputLabel>
+          <Select
+            labelId="scope-add-map-label"
+            label="Map"
+            value={addMap}
+            onChange={(e) => setAddMap(e.target.value)}
+          >
+            <MenuItem value="">
+              <em>None</em>
+            </MenuItem>
+            {maps.map((m) => (
+              <MenuItem key={m.uuid} value={m.uuid}>
+                {m.name}
+              </MenuItem>
+            ))}
+          </Select>
+        </FormControl>
+        <TextField
+          label="Versions (comma-separated, blank = all)"
+          size="small"
+          placeholder="e.g. 3,4"
+          value={addVersions}
+          onChange={(e) => setAddVersions(e.target.value)}
+        />
+        <Button variant="contained" disabled={!addMap} onClick={addScope}>
           Add
-        </button>
-        <button type="button" className="danger" onClick={clearScope}>
+        </Button>
+        <Button color="error" onClick={clearScope}>
           Clear all (unrestrict)
-        </button>
-      </div>
-      <p className="muted">
+        </Button>
+      </Stack>
+      <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
         Once this key has any scope entry, it can only access the maps listed here — and, where a
         version list is given, only those versions of that map — regardless of what its user could
         otherwise do. Removing entries one at a time only ever narrows access further; a key with an
         entry removed down to zero remains locked out. Use "Clear all" to explicitly restore
         unrestricted access.
-      </p>
+      </Typography>
     </Modal>
   );
 }

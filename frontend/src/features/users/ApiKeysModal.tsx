@@ -1,4 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+  Button,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { apiFetch, apiJson, apiPostJSON } from '../../api/client';
 import type { ApiKey, GeneratedKeyPair } from '../../api/types';
 import Modal from '../../components/Modal';
@@ -91,71 +103,87 @@ export default function ApiKeysModal({
         onClose={onClose}
       >
         <ErrorBanner message={error} />
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Created</th>
-              <th>Last used</th>
-              <th>Scoped</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {keys.map((k) => (
-              <tr key={k.id}>
-                <td>{k.name || '-'}</td>
-                <td>
-                  {fmtDate(k.createdAt)}
-                  <br />
-                  <span className="muted">by {k.createdBy}</span>
-                </td>
-                <td>{k.lastUsedAt ? fmtDate(k.lastUsedAt) : 'never'}</td>
-                <td className={k.scoped ? undefined : 'muted'}>{k.scoped ? 'Yes' : 'No'}</td>
-                <td>
-                  <div className="actions">
-                    <button type="button" className="secondary" onClick={() => setScopesKey(k)}>
-                      Scopes
-                    </button>
-                    <button type="button" className="danger" onClick={() => revokeKey(k.id)}>
-                      Revoke
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {keys.length === 0 && <p className="muted">No API keys yet.</p>}
-        <div className="row" style={{ marginTop: '1rem' }}>
-          <div className="field">
-            <label htmlFor="apikey-add-name">Name</label>
-            <input
-              id="apikey-add-name"
-              placeholder="e.g. edge-server-01 sync"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-          </div>
-          <div className="field" style={{ flexBasis: '100%' }}>
-            <label htmlFor="apikey-add-pubkey">Public key (PEM)</label>
-            <textarea
-              id="apikey-add-pubkey"
-              rows={3}
-              placeholder="-----BEGIN PUBLIC KEY-----..."
-              style={{ width: '100%', fontFamily: 'monospace', fontSize: '0.8em' }}
-              value={pubkey}
-              onChange={(e) => setPubkey(e.target.value)}
-            />
-          </div>
-          <button type="button" className="secondary" onClick={generateKeyPair}>
-            Generate key pair
-          </button>
-          <button type="button" disabled={!name.trim() || !pubkey.trim()} onClick={createKey}>
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Name</TableCell>
+                <TableCell>Created</TableCell>
+                <TableCell>Last used</TableCell>
+                <TableCell>Scoped</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {keys.map((k) => (
+                <TableRow key={k.id}>
+                  <TableCell>{k.name || '-'}</TableCell>
+                  <TableCell>
+                    {fmtDate(k.createdAt)}
+                    <br />
+                    <Typography variant="caption" color="text.secondary">
+                      by {k.createdBy}
+                    </Typography>
+                  </TableCell>
+                  <TableCell>{k.lastUsedAt ? fmtDate(k.lastUsedAt) : 'never'}</TableCell>
+                  <TableCell>
+                    {k.scoped ? (
+                      'Yes'
+                    ) : (
+                      <Typography variant="body2" color="text.secondary" component="span">
+                        No
+                      </Typography>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Stack direction="row" spacing={1}>
+                      <Button size="small" onClick={() => setScopesKey(k)}>
+                        Scopes
+                      </Button>
+                      <Button size="small" color="error" onClick={() => revokeKey(k.id)}>
+                        Revoke
+                      </Button>
+                    </Stack>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+        {keys.length === 0 && (
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+            No API keys yet.
+          </Typography>
+        )}
+        <Stack
+          direction="row"
+          spacing={2}
+          useFlexGap
+          sx={{ flexWrap: 'wrap', alignItems: 'flex-start', mt: 2 }}
+        >
+          <TextField
+            label="Name"
+            size="small"
+            placeholder="e.g. edge-server-01 sync"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <TextField
+            label="Public key (PEM)"
+            multiline
+            minRows={3}
+            placeholder="-----BEGIN PUBLIC KEY-----..."
+            sx={{ flexBasis: '100%', fontFamily: 'monospace' }}
+            slotProps={{ htmlInput: { style: { fontFamily: 'monospace', fontSize: '0.8em' } } }}
+            value={pubkey}
+            onChange={(e) => setPubkey(e.target.value)}
+          />
+          <Button onClick={generateKeyPair}>Generate key pair</Button>
+          <Button variant="contained" disabled={!name.trim() || !pubkey.trim()} onClick={createKey}>
             Create
-          </button>
-        </div>
-        <p className="muted">
+          </Button>
+        </Stack>
+        <Typography variant="body2" color="text.secondary" sx={{ mt: 2 }}>
           The key authenticates as this user (their full permissions apply, narrowed by "Scopes"
           below if any are set). The caller generates its own RSA key pair and signs short-lived
           JWTs with the private half — this server only ever stores the public half. Click "Generate
@@ -163,7 +191,7 @@ export default function ApiKeysModal({
           copy it immediately), or paste a public key generated elsewhere. Use the resulting key's
           ID as the "Remote API key ID" when registering this server as a sync remote on another
           instance.
-        </p>
+        </Typography>
       </Modal>
       <ScopesModal
         username={username}

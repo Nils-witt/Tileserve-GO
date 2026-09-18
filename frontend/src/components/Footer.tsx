@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Box, Link, Typography } from '@mui/material';
 import { fetchBuildInfo } from '../lib/version';
 
 export default function Footer() {
@@ -11,12 +12,19 @@ export default function Footer() {
   }, []);
 
   return (
-    <footer>
-      &copy; 2026 Witt, Nils &middot; Tileserve-GO &middot;{' '}
-      <a href="https://github.com/Nils-witt/Tileserve-GO" target="_blank" rel="noopener noreferrer">
-        GitHub
-      </a>
-      {buildInfo}
-    </footer>
+    <Box component="footer" sx={{ textAlign: 'center', py: 3 }}>
+      <Typography variant="caption" color="text.secondary">
+        &copy; 2026 Witt, Nils &middot; Tileserve-GO &middot;{' '}
+        <Link
+          href="https://github.com/Nils-witt/Tileserve-GO"
+          target="_blank"
+          rel="noopener noreferrer"
+          color="inherit"
+        >
+          GitHub
+        </Link>
+        {buildInfo}
+      </Typography>
+    </Box>
   );
 }

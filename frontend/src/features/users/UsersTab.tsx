@@ -1,4 +1,20 @@
-import { useState, type FormEvent } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
+import {
+  Box,
+  Button,
+  Checkbox,
+  FormControlLabel,
+  Paper,
+  Stack,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography,
+} from '@mui/material';
 import { apiFetch, apiPostJSON } from '../../api/client';
 import type { User } from '../../api/types';
 import { useAdminData } from '../AdminDataContext';
@@ -68,57 +84,71 @@ function UserRow({
   };
 
   const cb = (key: keyof UserPermState) => (
-    <input
-      type="checkbox"
+    <Checkbox
       checked={perms[key]}
       onChange={(e) => setPerms((p) => ({ ...p, [key]: e.target.checked }))}
     />
   );
 
   return (
-    <tr>
-      <td>
+    <TableRow>
+      <TableCell>
         {u.username}
         {self ? ' (you)' : ''}
         <ErrorBanner message={error} />
-      </td>
-      <td className="checkbox-cell">{cb('canCreate')}</td>
-      <td className="checkbox-cell">{cb('canEdit')}</td>
-      <td className="checkbox-cell">{cb('canDelete')}</td>
-      <td className="checkbox-cell">{cb('canEditGeoObjects')}</td>
-      <td className="checkbox-cell">{cb('canDeleteGeoObjects')}</td>
-      <td className="checkbox-cell">{cb('canViewAll')}</td>
-      <td className="checkbox-cell">{cb('isAdmin')}</td>
-      <td>
-        <input
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canCreate')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canEdit')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canDelete')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canEditGeoObjects')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canDeleteGeoObjects')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('canViewAll')}
+      </TableCell>
+      <TableCell align="center" padding="checkbox">
+        {cb('isAdmin')}
+      </TableCell>
+      <TableCell>
+        <TextField
           type="password"
-          className="inline"
+          size="small"
+          sx={{ width: '10rem' }}
           placeholder="leave blank to keep"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
         />
-      </td>
-      <td>{fmtDate(u.createdAt)}</td>
-      <td>
-        <div className="actions">
-          <button type="button" className="secondary" onClick={save}>
+      </TableCell>
+      <TableCell>{fmtDate(u.createdAt)}</TableCell>
+      <TableCell sx={{ minWidth: 220 }}>
+        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+          <Button size="small" onClick={save}>
             Save
-          </button>
-          <button type="button" className="secondary" onClick={onOpenApiKeys}>
+          </Button>
+          <Button size="small" onClick={onOpenApiKeys}>
             API keys
-          </button>
-          <button
-            type="button"
-            className="danger"
+          </Button>
+          <Button
+            size="small"
+            color="error"
             disabled={self}
             title={self ? "You can't delete your own account" : undefined}
             onClick={remove}
           >
             Delete
-          </button>
-        </div>
-      </td>
-    </tr>
+          </Button>
+        </Stack>
+      </TableCell>
+    </TableRow>
   );
 }
 
@@ -145,43 +175,48 @@ export default function UsersTab() {
     }
   };
 
-  const cb = (key: keyof UserPermState, label: string) => (
-    <div className="field">
-      <label>
-        <input
-          type="checkbox"
+  const cb = (key: keyof UserPermState, label: string): ReactNode => (
+    <FormControlLabel
+      key={key}
+      control={
+        <Checkbox
           checked={createPerms[key]}
           onChange={(e) => setCreatePerms((p) => ({ ...p, [key]: e.target.checked }))}
-        />{' '}
-        {label}
-      </label>
-    </div>
+        />
+      }
+      label={label}
+    />
   );
 
   return (
-    <div>
-      <div className="card">
-        <h2>Create user</h2>
-        <form className="row" onSubmit={createUser}>
-          <div className="field">
-            <label htmlFor="cu-username">Username</label>
-            <input
-              id="cu-username"
-              required
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="cu-password">Password</label>
-            <input
-              id="cu-password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
+    <Box>
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" component="h2" gutterBottom>
+          Create user
+        </Typography>
+        <Stack
+          component="form"
+          direction="row"
+          spacing={2}
+          useFlexGap
+          sx={{ flexWrap: 'wrap', alignItems: 'center' }}
+          onSubmit={createUser}
+        >
+          <TextField
+            label="Username"
+            size="small"
+            required
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+          />
+          <TextField
+            label="Password"
+            type="password"
+            size="small"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
           {cb('canCreate', 'Can create')}
           {cb('canEdit', 'Can edit')}
           {cb('canDelete', 'Can delete')}
@@ -189,43 +224,47 @@ export default function UsersTab() {
           {cb('canDeleteGeoObjects', 'Can delete geo objects')}
           {cb('canViewAll', 'Can view all maps')}
           {cb('isAdmin', 'Admin')}
-          <button type="submit">Create</button>
-        </form>
-      </div>
+          <Button type="submit" variant="contained">
+            Create
+          </Button>
+        </Stack>
+      </Paper>
 
-      <div className="card">
+      <Paper sx={{ p: 3 }}>
         <ErrorBanner message={error} />
-        <table>
-          <thead>
-            <tr>
-              <th>Username</th>
-              <th className="checkbox-cell">Create</th>
-              <th className="checkbox-cell">Edit</th>
-              <th className="checkbox-cell">Delete</th>
-              <th className="checkbox-cell">Geo edit</th>
-              <th className="checkbox-cell">Geo delete</th>
-              <th className="checkbox-cell">View all</th>
-              <th className="checkbox-cell">Admin</th>
-              <th>New password</th>
-              <th>Created</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {users.map((u) => (
-              <UserRow
-                key={u.username}
-                u={u}
-                self={u.username === currentUsername}
-                onReload={reloadUsers}
-                onOpenApiKeys={() => setApiKeysUser(u.username)}
-              />
-            ))}
-          </tbody>
-        </table>
-      </div>
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Username</TableCell>
+                <TableCell align="center">Create</TableCell>
+                <TableCell align="center">Edit</TableCell>
+                <TableCell align="center">Delete</TableCell>
+                <TableCell align="center">Geo edit</TableCell>
+                <TableCell align="center">Geo delete</TableCell>
+                <TableCell align="center">View all</TableCell>
+                <TableCell align="center">Admin</TableCell>
+                <TableCell>New password</TableCell>
+                <TableCell>Created</TableCell>
+                <TableCell>Actions</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {users.map((u) => (
+                <UserRow
+                  key={u.username}
+                  u={u}
+                  self={u.username === currentUsername}
+                  onReload={reloadUsers}
+                  onOpenApiKeys={() => setApiKeysUser(u.username)}
+                />
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
 
       <ApiKeysModal username={apiKeysUser} onClose={() => setApiKeysUser(null)} />
-    </div>
+    </Box>
   );
 }
