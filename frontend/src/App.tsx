@@ -13,6 +13,7 @@ import UsersTab from './features/users/UsersTab.tsx';
 import GroupsTab from './features/groups/GroupsTab.tsx';
 import SyncTab from './features/sync/SyncTab.tsx';
 import AuditTab from './features/audit/AuditTab.tsx';
+import {setSessionFromHash} from "./api/client.ts";
 
 function IndexRedirect() {
   const { isAuthenticated } = useAuth();
@@ -33,6 +34,11 @@ export default function App() {
     () => createAppTheme(prefersDarkMode ? 'dark' : 'light'),
     [prefersDarkMode],
   );
+  if (document.location.hash) {
+    setSessionFromHash(document.location.hash);
+    window.location.href = '/ui';
+    return <></>
+  }
 
   return (
     <ThemeProvider theme={theme}>

@@ -19,7 +19,15 @@ export function setSession(token: string, username: string): void {
   sessionStorage.setItem(TOKEN_KEY, token);
   sessionStorage.setItem(USER_KEY, username);
 }
-
+export function setSessionFromHash(hash: string): void {
+  const params = new URLSearchParams(hash.startsWith('#') ? hash.slice(1) : hash);
+  console.log('setSessionFromHash', params);
+  const token = params.get('token');
+  const username = params.get('username');
+  if (token && username) {
+    setSession(token, username);
+  }
+}
 export function clearSession(): void {
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(USER_KEY);
