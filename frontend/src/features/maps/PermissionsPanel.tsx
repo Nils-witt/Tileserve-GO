@@ -17,7 +17,7 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { apiFetch } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { MapGroupPermission, MapPermission, MapSummary } from '../../api/types';
 import { useUsers } from '../users/UsersContext';
 import { useGroups } from '../groups/GroupsContext';
@@ -215,11 +215,7 @@ function PermissionsPanelContent({ map }: { map: MapSummary }) {
   const grantUser = async (username: string, grant: GrantFormState) => {
     setError(null);
     try {
-      await apiFetch(`/maps/${map.uuid}/permissions/${encodeURIComponent(username)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(grant),
-      });
+      await api.setMapPermission(map.uuid, username, grant);
       await reloadPermissions();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -229,9 +225,7 @@ function PermissionsPanelContent({ map }: { map: MapSummary }) {
   const revokeUser = async (username: string) => {
     setError(null);
     try {
-      await apiFetch(`/maps/${map.uuid}/permissions/${encodeURIComponent(username)}`, {
-        method: 'DELETE',
-      });
+      await api.deleteMapPermission(map.uuid, username);
       await reloadPermissions();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -241,11 +235,7 @@ function PermissionsPanelContent({ map }: { map: MapSummary }) {
   const grantGroup = async (groupId: string, grant: GrantFormState) => {
     setGroupError(null);
     try {
-      await apiFetch(`/maps/${map.uuid}/group-permissions/${encodeURIComponent(groupId)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(grant),
-      });
+      await api.setMapGroupPermission(map.uuid, groupId, grant);
       await reloadGroupPermissions();
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : String(err));
@@ -255,9 +245,7 @@ function PermissionsPanelContent({ map }: { map: MapSummary }) {
   const revokeGroup = async (groupId: string) => {
     setGroupError(null);
     try {
-      await apiFetch(`/maps/${map.uuid}/group-permissions/${encodeURIComponent(groupId)}`, {
-        method: 'DELETE',
-      });
+      await api.deleteMapGroupPermission(map.uuid, groupId);
       await reloadGroupPermissions();
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : String(err));

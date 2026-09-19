@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 
 interface ServerPublicKeyData {
   publicKeyPem: string;
@@ -13,7 +13,8 @@ export function ServerPublicKeyProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    apiJson<{ publicKeyPem: string }>('/server/public-key')
+    api
+      .getServerPublicKey()
       .then((data) => setPublicKeyPem(data.publicKeyPem))
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);

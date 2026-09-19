@@ -162,3 +162,59 @@ export interface LoginResponse {
   token: string;
   refresh_token: string;
 }
+
+// ---- request payloads ------------------------------------------------------
+
+export interface MapInput {
+  name: string;
+  currentVersion: string;
+  visibleToAll: boolean;
+  anonymousAllowed: boolean;
+}
+
+/** Per-map access flags granted to a user or a group. */
+export interface MapGrant {
+  canView: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  canEditGeoObjects: boolean;
+  canDeleteGeoObjects: boolean;
+}
+
+/** Global permission flags carried by a user or a group. */
+export interface AccountPermissions {
+  canCreate: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
+  canEditGeoObjects: boolean;
+  canDeleteGeoObjects: boolean;
+  canViewAll: boolean;
+  isAdmin: boolean;
+}
+
+export interface GroupInput extends AccountPermissions {
+  name: string;
+  ldapGroupDn: string;
+  oidcGroupClaim: string;
+}
+
+export interface SyncRemoteInput {
+  name: string;
+  baseUrl: string;
+  remoteApiKeyId: string;
+  pollIntervalSec: number;
+  enabled: boolean;
+  syncAllMaps: boolean;
+  syncNewMaps: boolean;
+  syncGeoObjects: boolean;
+  selectedMapUuids?: string[];
+}
+
+export interface AuditLogQuery {
+  actor?: string;
+  action?: string;
+  entityType?: string;
+  entityId?: string;
+  limit: number;
+  offset: number;
+}

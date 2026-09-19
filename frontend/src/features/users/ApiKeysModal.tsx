@@ -11,8 +11,8 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiPostJSON } from '../../api/client';
-import type { ApiKey, GeneratedKeyPair } from '../../api/types';
+import { api } from '../../api/ApiClient';
+import type { ApiKey } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
@@ -41,7 +41,7 @@ function ApiKeysModalContent({
   const generateKeyPair = async () => {
     setError(null);
     try {
-      const kp = await apiPostJSON<GeneratedKeyPair>('/keys/generate', {});
+      const kp = await api.generateKeyPair();
       // The private key is only ever available here, once — a blocking
       // prompt (pre-filled, selectable) is the simplest way to give the
       // admin a chance to copy it before it's gone for good.
@@ -56,7 +56,7 @@ function ApiKeysModalContent({
     if (!username || !name.trim() || !pubkey.trim()) return;
     setError(null);
     try {
-      const created = await apiPostJSON<ApiKey>(`/users/${encodeURIComponent(username)}/api-keys`, {
+      const created = await api.createApiKey(username, {
         name: name.trim(),
         publicKeyPem: pubkey.trim(),
       });
@@ -78,7 +78,7 @@ function ApiKeysModalContent({
       return;
     setError(null);
     try {
-      await apiFetch(`/users/${encodeURIComponent(username)}/api-keys/${id}`, { method: 'DELETE' });
+      await api.deleteApiKey(username, id);
       await reloadKeys();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

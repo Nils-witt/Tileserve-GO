@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { User } from '../../api/types';
 
 interface UsersData {
@@ -23,7 +23,7 @@ export function UsersProvider({ children }: { children: ReactNode }) {
   const [users, setUsers] = useState<User[]>([]);
 
   const reloadUsers = useCallback(async () => {
-    setUsers(await apiJson<User[]>('/users'));
+    setUsers(await api.listUsers());
   }, []);
 
   useEffect(() => {

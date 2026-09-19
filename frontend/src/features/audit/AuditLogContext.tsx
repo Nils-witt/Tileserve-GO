@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { AuditLogEntry } from '../../api/types';
 
 const PAGE_SIZE = 100;
@@ -35,17 +35,6 @@ interface AuditLogData {
 
 const AuditLogContext = createContext<AuditLogData | null>(null);
 
-function buildParams(f: AuditLogFilter, offset: number) {
-  const params = new URLSearchParams();
-  if (f.actor.trim()) params.set('actor', f.actor.trim());
-  if (f.action.trim()) params.set('action', f.action.trim());
-  if (f.entityType.trim()) params.set('entityType', f.entityType.trim());
-  if (f.entityId.trim()) params.set('entityId', f.entityId.trim());
-  params.set('limit', String(PAGE_SIZE));
-  params.set('offset', String(offset));
-  return params;
-}
-
 export function AuditLogProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<AuditLogEntry[]>([]);
   const [hasMore, setHasMore] = useState(false);
@@ -56,9 +45,7 @@ export function AuditLogProvider({ children }: { children: ReactNode }) {
     setError(null);
     const nextOffset = reset ? 0 : offsetRef.current;
     try {
-      const page = await apiJson<AuditLogEntry[]>(
-        '/audit-logs?' + buildParams(f, nextOffset).toString(),
-      );
+      const page = await api.listAuditLogs({ ...f, limit: PAGE_SIZE, offset: nextOffset });
       setEntries((prev) => (reset ? page : [...prev, ...page]));
       offsetRef.current = nextOffset + page.length;
       setHasMore(page.length === PAGE_SIZE);

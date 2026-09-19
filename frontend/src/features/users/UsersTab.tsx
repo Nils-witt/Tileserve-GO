@@ -15,7 +15,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiPostJSON } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { User } from '../../api/types';
 import { useUsers } from './UsersContext';
 import { useAuth } from '../../auth/AuthContext';
@@ -61,11 +61,7 @@ function UserRow({
   const save = async () => {
     setError(null);
     try {
-      await apiFetch(`/users/${encodeURIComponent(u.username)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...perms, password }),
-      });
+      await api.updateUser(u.username, { ...perms, password });
       await onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -76,7 +72,7 @@ function UserRow({
     if (!confirm(`Delete user "${u.username}"?`)) return;
     setError(null);
     try {
-      await apiFetch(`/users/${encodeURIComponent(u.username)}`, { method: 'DELETE' });
+      await api.deleteUser(u.username);
       await onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -165,7 +161,7 @@ export default function UsersTab() {
     e.preventDefault();
     setError(null);
     try {
-      await apiPostJSON('/users', { username, password, ...createPerms });
+      await api.createUser({ username, password, ...createPerms });
       setUsername('');
       setPassword('');
       setCreatePerms(defaultCreatePerms);

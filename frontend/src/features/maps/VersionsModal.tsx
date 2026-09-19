@@ -11,12 +11,11 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { apiFetch } from '../../api/client';
-import { formatBytes, uploadMapVersion } from '../../api/upload';
+import { api } from '../../api/ApiClient';
 import type { MapSummary } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
-import { fmtDate } from '../../lib/format';
+import { fmtDate, formatBytes } from '../../lib/format';
 import { MapVersionsProvider, useMapVersions } from './MapVersionsContext';
 
 function VersionsModalContent({
@@ -40,7 +39,7 @@ function VersionsModalContent({
     setError(null);
     setUploading(true);
     setProgress({ loaded: 0, total: 0 });
-    const result = await uploadMapVersion(map.uuid, file, setProgress);
+    const result = await api.uploadMapVersion(map.uuid, file, setProgress);
     setUploading(false);
     setProgress(null);
     if (!result.ok) {
@@ -55,10 +54,7 @@ function VersionsModalContent({
   const download = async (version: string) => {
     if (!map) return;
     try {
-      const res = await apiFetch(
-        `/maps/${map.uuid}/version/${encodeURIComponent(version)}/download`,
-      );
-      const blob = await res.blob();
+      const blob = await api.downloadMapVersion(map.uuid, version);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

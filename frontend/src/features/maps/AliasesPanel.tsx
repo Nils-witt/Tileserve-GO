@@ -11,7 +11,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { MapSummary } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
@@ -27,11 +27,7 @@ function AliasesPanelContent({ map }: { map: MapSummary }) {
     if (!name.trim() || !version.trim()) return;
     setError(null);
     try {
-      await apiFetch(`/maps/${map.uuid}/aliases/${encodeURIComponent(name.trim())}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ version: version.trim() }),
-      });
+      await api.setMapAlias(map.uuid, name.trim(), version.trim());
       setName('');
       setVersion('');
       await reloadAliases();
@@ -43,9 +39,7 @@ function AliasesPanelContent({ map }: { map: MapSummary }) {
   const remove = async (alias: string) => {
     setError(null);
     try {
-      await apiFetch(`/maps/${map.uuid}/aliases/${encodeURIComponent(alias)}`, {
-        method: 'DELETE',
-      });
+      await api.deleteMapAlias(map.uuid, alias);
       await reloadAliases();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

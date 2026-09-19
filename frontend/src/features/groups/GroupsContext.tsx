@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { Group } from '../../api/types';
 
 interface GroupsData {
@@ -24,7 +24,7 @@ export function GroupsProvider({ children }: { children: ReactNode }) {
   const [groups, setGroups] = useState<Group[]>([]);
 
   const reloadGroups = useCallback(async () => {
-    setGroups(await apiJson<Group[]>('/groups'));
+    setGroups(await api.listGroups());
   }, []);
 
   useEffect(() => {

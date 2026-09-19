@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type * as maplibregl from 'maplibre-gl';
 import { Box, Button, Stack, Typography } from '@mui/material';
-import { apiJson, getToken } from '../../api/client';
-import type { MapBounds, MapSummary } from '../../api/types';
+import { api } from '../../api/ApiClient';
+import type { MapSummary } from '../../api/types';
 import Modal from '../../components/Modal';
 
 export default function PreviewModal({
@@ -112,14 +112,7 @@ export default function PreviewModal({
     (node: HTMLElement | null) => {
       if (node && map) {
         const tilesetVersion = version ?? map.currentVersion;
-        const tileUrl =
-          window.location.origin +
-          '/maps/' +
-          map.uuid +
-          '/version/' +
-          encodeURIComponent(tilesetVersion) +
-          '/{z}/{x}/{y}.png?token=' +
-          encodeURIComponent(getToken() ?? '');
+        const tileUrl = api.mapTileUrl(map.uuid, tilesetVersion);
         if (node?.children.length > 0) return;
 
         (async () => {
@@ -134,9 +127,7 @@ export default function PreviewModal({
               await import('maplibre-gl/dist/maplibre-gl.css');
               return mod;
             }),
-            apiJson<MapBounds>(
-              '/maps/' + map.uuid + '/version/' + encodeURIComponent(tilesetVersion) + '/bounds',
-            ).catch(() => null),
+            api.getMapBounds(map.uuid, tilesetVersion).catch(() => null),
           ]);
           if (bounds) {
             center = [bounds.centerLng, bounds.centerLat];

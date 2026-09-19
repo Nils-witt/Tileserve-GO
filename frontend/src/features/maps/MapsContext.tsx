@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { MapSummary } from '../../api/types';
 
 interface MapsData {
@@ -22,7 +22,7 @@ export function MapsProvider({ children }: { children: ReactNode }) {
   const [maps, setMaps] = useState<MapSummary[]>([]);
 
   const reloadMaps = useCallback(async () => {
-    setMaps(await apiJson<MapSummary[]>('/maps'));
+    setMaps(await api.listMaps());
   }, []);
 
   useEffect(() => {

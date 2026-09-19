@@ -15,7 +15,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiPostJSON } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { Group } from '../../api/types';
 import { useGroups } from './GroupsContext';
 import ErrorBanner from '../../components/ErrorBanner';
@@ -51,11 +51,7 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
   const save = async () => {
     setError(null);
     try {
-      await apiFetch(`/groups/${encodeURIComponent(g.id)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, ldapGroupDn, oidcGroupClaim, ...perms }),
-      });
+      await api.updateGroup(g.id, { name, ldapGroupDn, oidcGroupClaim, ...perms });
       await onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -66,7 +62,7 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
     if (!confirm(`Delete group "${g.name}"?`)) return;
     setError(null);
     try {
-      await apiFetch(`/groups/${encodeURIComponent(g.id)}`, { method: 'DELETE' });
+      await api.deleteGroup(g.id);
       await onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -150,7 +146,7 @@ export default function GroupsTab() {
     e.preventDefault();
     setError(null);
     try {
-      await apiPostJSON('/groups', { name, ldapGroupDn, oidcGroupClaim, ...perms });
+      await api.createGroup({ name, ldapGroupDn, oidcGroupClaim, ...perms });
       setName('');
       setLdapGroupDn('');
       setOidcGroupClaim('');

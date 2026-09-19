@@ -12,7 +12,7 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { apiFetch } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { SyncRemote } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
@@ -57,20 +57,16 @@ function SyncMapsPickerModalContent({
     if (!remote) return;
     setError(null);
     try {
-      await apiFetch(`/sync/remotes/${remote.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: remote.name,
-          baseUrl: remote.baseUrl,
-          remoteApiKeyId: remote.remoteApiKeyId,
-          pollIntervalSec: remote.pollIntervalSec,
-          enabled: remote.enabled,
-          syncAllMaps: syncAll,
-          syncNewMaps: syncNew,
-          syncGeoObjects: remote.syncGeoObjects,
-          selectedMapUuids: Array.from(selected),
-        }),
+      await api.updateSyncRemote(remote.id, {
+        name: remote.name,
+        baseUrl: remote.baseUrl,
+        remoteApiKeyId: remote.remoteApiKeyId,
+        pollIntervalSec: remote.pollIntervalSec,
+        enabled: remote.enabled,
+        syncAllMaps: syncAll,
+        syncNewMaps: syncNew,
+        syncGeoObjects: remote.syncGeoObjects,
+        selectedMapUuids: Array.from(selected),
       });
       onSaved();
       onClose();

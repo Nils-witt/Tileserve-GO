@@ -13,7 +13,7 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { apiFetch } from '../api/client.ts';
+import { api } from '../api/ApiClient.ts';
 import type { MapSummary } from '../api/types.ts';
 import { useMaps } from '../features/maps/MapsContext.tsx';
 import { useCurrentPermissions } from '../auth/CurrentPermissionsContext.tsx';
@@ -43,7 +43,7 @@ function MapRow({
     if (!confirm('Delete this map and all its versions?')) return;
     setError(null);
     try {
-      await apiFetch(`/maps/${m.uuid}`, { method: 'DELETE' });
+      await api.deleteMap(m.uuid);
       onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

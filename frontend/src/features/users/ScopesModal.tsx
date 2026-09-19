@@ -15,7 +15,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { ApiKey } from '../../api/types';
 import { useMaps } from '../maps/MapsContext';
 import Modal from '../../components/Modal';
@@ -55,14 +55,7 @@ function ScopesModalContent({
             .map((v) => v.trim())
             .filter(Boolean)
         : null;
-      await apiFetch(
-        `/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes/${addMap}`,
-        {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ versions }),
-        },
-      );
+      await api.setApiKeyScope(username, apiKey.id, addMap, versions);
       setAddVersions('');
       await reloadScopes();
       onScopesChanged();
@@ -81,10 +74,7 @@ function ScopesModalContent({
     if (!username || !apiKey) return;
     setError(null);
     try {
-      await apiFetch(
-        `/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes/${mapId}`,
-        { method: 'DELETE' },
-      );
+      await api.deleteApiKeyScope(username, apiKey.id, mapId);
       await reloadScopes();
       onScopesChanged();
     } catch (err) {
@@ -102,9 +92,7 @@ function ScopesModalContent({
     if (!username || !apiKey) return;
     setError(null);
     try {
-      await apiFetch(`/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes`, {
-        method: 'DELETE',
-      });
+      await api.deleteAllApiKeyScopes(username, apiKey.id);
       await reloadScopes();
       onScopesChanged();
     } catch (err) {

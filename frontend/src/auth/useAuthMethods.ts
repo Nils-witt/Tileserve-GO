@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { api } from '../api/ApiClient';
 import type { AuthMethods } from '../api/types';
 
 /** useAuthMethods drives the "Sign in with SSO" button on the login page,
@@ -7,9 +8,9 @@ export function useAuthMethods(): AuthMethods {
   const [methods, setMethods] = useState<AuthMethods>({ oidc: false });
 
   useEffect(() => {
-    fetch('/auth/methods')
-      .then((res) => res.json())
-      .then((info: AuthMethods) => setMethods(info))
+    api
+      .getAuthMethods()
+      .then(setMethods)
       .catch(() => {});
   }, []);
 

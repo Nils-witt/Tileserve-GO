@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Stack, TextField } from '@mui/material';
-import { apiFetch } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { MapSummary } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
 
@@ -25,11 +25,7 @@ export default function TransferOwnerPanel({
     setError(null);
     setSaving(true);
     try {
-      await apiFetch(`/maps/${map.uuid}/owner`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ owner: owner.trim() }),
-      });
+      await api.transferMapOwner(map.uuid, owner.trim());
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

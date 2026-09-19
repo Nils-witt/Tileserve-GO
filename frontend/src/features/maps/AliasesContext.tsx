@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { MapAlias, MapSummary } from '../../api/types';
 
 interface AliasesData {
@@ -25,7 +25,7 @@ export function AliasesProvider({ map, children }: { map: MapSummary; children: 
   const reloadAliases = useCallback(async () => {
     setError(null);
     try {
-      setAliases(await apiJson<MapAlias[]>(`/maps/${map.uuid}/aliases`));
+      setAliases(await api.listMapAliases(map.uuid));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

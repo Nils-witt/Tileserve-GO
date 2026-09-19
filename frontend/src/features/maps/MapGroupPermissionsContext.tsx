@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { MapGroupPermission, MapSummary } from '../../api/types';
 
 interface MapGroupPermissionsData {
@@ -31,7 +31,7 @@ export function MapGroupPermissionsProvider({
   const reloadGroupPermissions = useCallback(async () => {
     setError(null);
     try {
-      setGroupGrants(await apiJson<MapGroupPermission[]>(`/maps/${map.uuid}/group-permissions`));
+      setGroupGrants(await api.listMapGroupPermissions(map.uuid));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

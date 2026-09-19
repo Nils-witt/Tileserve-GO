@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { MapSummary, MapVersion } from '../../api/types';
 
 interface MapVersionsData {
@@ -32,7 +32,7 @@ export function MapVersionsProvider({
     if (!map) return;
     setError(null);
     try {
-      setVersions(await apiJson<MapVersion[]>(`/maps/${map.uuid}/versions`));
+      setVersions(await api.listMapVersions(map.uuid));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { MapPermission, MapSummary } from '../../api/types';
 
 interface MapPermissionsData {
@@ -31,7 +31,7 @@ export function MapPermissionsProvider({
   const reloadPermissions = useCallback(async () => {
     setError(null);
     try {
-      setGrants(await apiJson<MapPermission[]>(`/maps/${map.uuid}/permissions`));
+      setGrants(await api.listMapPermissions(map.uuid));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

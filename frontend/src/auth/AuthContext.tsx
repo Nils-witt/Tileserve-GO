@@ -7,14 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import {
-  clearSession,
-  getStoredUsername,
-  getToken,
-  setSession,
-  setUnauthorizedHandler,
-} from '../api/client';
-import type { LoginResponse } from '../api/types';
+import { api } from '../api/ApiClient';
 
 interface AuthState {
   username: string | null;
@@ -48,15 +41,15 @@ function consumeOIDCFragment(): { token: string; username: string } | null {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [username, setUsername] = useState<string | null>(() => getStoredUsername());
+  const [username, setUsername] = useState<string | null>(() => api.getStoredUsername());
   const [sessionMessage, setSessionMessage] = useState<string | null>(null);
   const [ssoComplete, setSsoComplete] = useState<boolean>(false);
-  const [token, setToken] = useState<string | null>(() => getToken());
+  const [token, setToken] = useState<string | null>(() => api.getToken());
 
   useEffect(() => {
     const consumed = consumeOIDCFragment();
     if (consumed) {
-      setSession(consumed.token, consumed.username);
+      api.setSession(consumed.token, consumed.username);
       setUsername(consumed.username);
       setToken(consumed.token);
       window.location.href = '/ui';
@@ -65,7 +58,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    setUnauthorizedHandler(() => {
+    api.setUnauthorizedHandler(() => {
       setUsername(null);
       setSessionMessage('Session expired, please sign in again.');
     });
@@ -73,33 +66,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (loginUsername: string, password: string, ttlSeconds?: number) => {
-      let res: Response;
-      try {
-        res = await fetch('/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username: loginUsername,
-            password,
-            ...(ttlSeconds ? { ttl_seconds: ttlSeconds } : {}),
-          }),
-        });
-      } catch {
-        throw new Error('Login failed');
-      }
-      if (!res.ok) {
-        throw new Error(res.status === 401 ? 'Invalid credentials' : 'Login failed');
-      }
-      const data = (await res.json()) as LoginResponse;
-      setSession(data.token, loginUsername);
+      const issuedToken = await api.login(loginUsername, password, ttlSeconds);
       setUsername(loginUsername);
-      return data.token;
+      return issuedToken;
     },
     [],
   );
 
   const logout = useCallback(() => {
-    clearSession();
+    api.clearSession();
     setUsername(null);
   }, []);
 
@@ -108,7 +83,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthState>(
     () => ({
       username,
-      isAuthenticated: !!username && !!getToken(),
+      isAuthenticated: !!username && !!api.getToken(),
       sessionMessage,
       login,
       logout,

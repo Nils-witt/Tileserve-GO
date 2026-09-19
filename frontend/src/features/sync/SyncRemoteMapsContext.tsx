@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { RemoteMap, SyncRemote } from '../../api/types';
 
 interface SyncRemoteMapsData {
@@ -27,8 +27,8 @@ export function SyncRemoteMapsProvider({
     (async () => {
       try {
         const [maps, selectedIds] = await Promise.all([
-          apiJson<RemoteMap[]>(`/sync/remotes/${remote.id}/remote-maps`),
-          apiJson<string[]>(`/sync/remotes/${remote.id}/selected-maps`),
+          api.listRemoteMaps(remote.id),
+          api.listSelectedRemoteMaps(remote.id),
         ]);
         setRemoteMaps(maps);
         setSelectedMapUuids(selectedIds);

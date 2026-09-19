@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { apiJson } from '../api/client';
-import type { CurrentPermissions } from '../api/types';
+import { api } from '../api/ApiClient';
 
 interface CurrentPermissionsData {
   isAdmin: boolean;
@@ -18,7 +17,8 @@ export function CurrentPermissionsProvider({ children }: { children: ReactNode }
     // server actually checks, unlike a user's own /users row, which only
     // carries their personal isAdmin flag and misses admin rights granted
     // through a group they belong to.
-    apiJson<CurrentPermissions>('/permissions/me')
+    api
+      .getCurrentPermissions()
       .then((perms) => setIsAdmin(!!perms.isAdmin))
       .catch(() => setIsAdmin(false));
   }, []);

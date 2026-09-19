@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Checkbox, FormControlLabel, Stack, Tab, Tabs, TextField } from '@mui/material';
-import { apiFetch } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { MapSummary } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
@@ -45,11 +45,9 @@ export default function MapFormModal({
     setError(null);
     setSaving(true);
     try {
-      await apiFetch(map ? `/maps/${map.uuid}` : '/maps', {
-        method: map ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, currentVersion, visibleToAll, anonymousAllowed }),
-      });
+      const input = { name, currentVersion, visibleToAll, anonymousAllowed };
+      if (map) await api.updateMap(map.uuid, input);
+      else await api.createMap(input);
       await onSaved();
       onClose();
     } catch (err) {

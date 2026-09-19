@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { ApiKey } from '../../api/types';
 
 interface ApiKeysData {
@@ -32,7 +32,7 @@ export function ApiKeysProvider({
     if (!username) return;
     setError(null);
     try {
-      setKeys(await apiJson<ApiKey[]>(`/users/${encodeURIComponent(username)}/api-keys`));
+      setKeys(await api.listApiKeys(username));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

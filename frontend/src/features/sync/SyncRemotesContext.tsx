@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { SyncRemote } from '../../api/types';
 
 interface SyncRemotesData {
@@ -25,7 +25,7 @@ export function SyncRemotesProvider({ children }: { children: ReactNode }) {
   const reloadRemotes = useCallback(async () => {
     setError(null);
     try {
-      setRemotes(await apiJson<SyncRemote[]>('/sync/remotes'));
+      setRemotes(await api.listSyncRemotes());
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

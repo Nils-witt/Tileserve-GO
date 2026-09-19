@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiFetch, apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { GeoObject, MapSummary } from '../../api/types';
 import { useMapVersions } from './MapVersionsContext';
 
@@ -52,22 +52,16 @@ export function GeoObjectsProvider({ map, children }: { map: MapSummary; childre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map]);
 
-  const path = useCallback(
-    (suffix: string) =>
-      `/maps/${map.uuid}/version/${encodeURIComponent(version)}/geo-objects${suffix}`,
-    [map, version],
-  );
-
   const loadObjects = useCallback(async () => {
     if (!version) return;
     setObjectsError(null);
     try {
-      setObjects(await apiJson<GeoObject[]>(path('')));
+      setObjects(await api.listGeoObjects(map.uuid, version));
       setSelected(new Set());
     } catch (err) {
       setObjectsError(err instanceof Error ? err.message : String(err));
     }
-  }, [version, path]);
+  }, [map, version]);
 
   useEffect(() => {
     loadObjects();
@@ -89,20 +83,12 @@ export function GeoObjectsProvider({ map, children }: { map: MapSummary; childre
   // Left to throw: callers with a form dialog display the error inline and
   // keep the dialog open on failure instead of surfacing it on the page.
   const saveObject = async (id: string, payload: Partial<GeoObject>) => {
-    await apiFetch(path('/' + id), {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    await api.updateGeoObject(map.uuid, version, id, payload);
     await loadObjects();
   };
 
   const createObject = async (payload: Partial<GeoObject>) => {
-    await apiFetch(path(''), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
+    await api.createGeoObject(map.uuid, version, payload);
     await loadObjects();
   };
 
@@ -110,7 +96,7 @@ export function GeoObjectsProvider({ map, children }: { map: MapSummary; childre
     if (!confirm('Delete this geo object?')) return;
     setObjectsError(null);
     try {
-      await apiFetch(path('/' + id), { method: 'DELETE' });
+      await api.deleteGeoObject(map.uuid, version, id);
       await loadObjects();
     } catch (err) {
       setObjectsError(err instanceof Error ? err.message : String(err));
@@ -124,7 +110,7 @@ export function GeoObjectsProvider({ map, children }: { map: MapSummary; childre
     setObjectsError(null);
     try {
       for (const id of ids) {
-        await apiFetch(path('/' + id), { method: 'DELETE' });
+        await api.deleteGeoObject(map.uuid, version, id);
       }
     } catch (err) {
       setObjectsError(err instanceof Error ? err.message : String(err));
@@ -134,7 +120,7 @@ export function GeoObjectsProvider({ map, children }: { map: MapSummary; childre
   };
 
   // Not memoized: several of these closures (saveObject, deleteObject, ...)
-  // capture `version`/`path` and must stay fresh on every render rather
+  // capture `version` and must stay fresh on every render rather
   // than risk going stale behind an incomplete dependency list.
   const value: GeoObjectsData = {
     versions,

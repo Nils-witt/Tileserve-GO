@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { apiJson } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { ApiKey, ApiKeyScope } from '../../api/types';
 
 interface ApiKeyScopesData {
@@ -34,11 +34,7 @@ export function ApiKeyScopesProvider({
     if (!username || !apiKey) return;
     setError(null);
     try {
-      setScopes(
-        await apiJson<ApiKeyScope[]>(
-          `/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes`,
-        ),
-      );
+      setScopes(await api.listApiKeyScopes(username, apiKey.id));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }

@@ -15,7 +15,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiPostJSON } from '../../api/client';
+import { api } from '../../api/ApiClient';
 import type { SyncRemote } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
@@ -103,20 +103,16 @@ function SyncRemoteRow({
   const updatePatch = async (patch: Partial<SyncRemote>) => {
     setError(null);
     try {
-      await apiFetch(`/sync/remotes/${r.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: r.name,
-          baseUrl: r.baseUrl,
-          remoteApiKeyId: r.remoteApiKeyId,
-          pollIntervalSec: r.pollIntervalSec,
-          enabled: r.enabled,
-          syncAllMaps: r.syncAllMaps,
-          syncNewMaps: r.syncNewMaps,
-          syncGeoObjects: r.syncGeoObjects,
-          ...patch,
-        }),
+      await api.updateSyncRemote(r.id, {
+        name: r.name,
+        baseUrl: r.baseUrl,
+        remoteApiKeyId: r.remoteApiKeyId,
+        pollIntervalSec: r.pollIntervalSec,
+        enabled: r.enabled,
+        syncAllMaps: r.syncAllMaps,
+        syncNewMaps: r.syncNewMaps,
+        syncGeoObjects: r.syncGeoObjects,
+        ...patch,
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -135,19 +131,15 @@ function SyncRemoteRow({
     if (pollIntervalSecStr === null) return;
     setError(null);
     try {
-      await apiFetch(`/sync/remotes/${r.id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name,
-          baseUrl,
-          remoteApiKeyId,
-          pollIntervalSec: parseInt(pollIntervalSecStr, 10),
-          enabled: r.enabled,
-          syncAllMaps: r.syncAllMaps,
-          syncNewMaps: r.syncNewMaps,
-          syncGeoObjects: r.syncGeoObjects,
-        }),
+      await api.updateSyncRemote(r.id, {
+        name,
+        baseUrl,
+        remoteApiKeyId,
+        pollIntervalSec: parseInt(pollIntervalSecStr, 10),
+        enabled: r.enabled,
+        syncAllMaps: r.syncAllMaps,
+        syncNewMaps: r.syncNewMaps,
+        syncGeoObjects: r.syncGeoObjects,
       });
       onReload();
     } catch (err) {
@@ -158,7 +150,7 @@ function SyncRemoteRow({
   const trigger = async () => {
     setError(null);
     try {
-      await apiFetch(`/sync/remotes/${r.id}/trigger`, { method: 'POST' });
+      await api.triggerSyncRemote(r.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -168,7 +160,7 @@ function SyncRemoteRow({
     if (!confirm('Remove this sync remote? Already-mirrored maps keep their local data.')) return;
     setError(null);
     try {
-      await apiFetch(`/sync/remotes/${r.id}`, { method: 'DELETE' });
+      await api.deleteSyncRemote(r.id);
       onReload();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -236,7 +228,7 @@ function SyncTabContent() {
     e.preventDefault();
     setError(null);
     try {
-      await apiPostJSON('/sync/remotes', {
+      await api.createSyncRemote({
         name,
         baseUrl,
         remoteApiKeyId,
