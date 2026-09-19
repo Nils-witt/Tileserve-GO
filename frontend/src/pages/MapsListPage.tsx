@@ -15,7 +15,8 @@ import {
 } from '@mui/material';
 import { apiFetch } from '../api/client.ts';
 import type { MapSummary } from '../api/types.ts';
-import { useAdminData } from '../features/AdminDataContext.tsx';
+import { useMaps } from '../features/maps/MapsContext.tsx';
+import { useCurrentPermissions } from '../auth/CurrentPermissionsContext.tsx';
 import ErrorBanner from '../components/ErrorBanner.tsx';
 import { fmtDate } from '../lib/format.ts';
 import PreviewModal from '../features/maps/PreviewModal.tsx';
@@ -55,8 +56,8 @@ function MapRow({
         <TableCell>
           {m.name}
           <br />
-          {m.visibleToAll && <VisibilityIcon fontSize="small"/>}
-          {m.anonymousAllowed && <VpnKeyOffIcon fontSize="small"/>}
+          {m.visibleToAll && <VisibilityIcon fontSize="small" />}
+          {m.anonymousAllowed && <VpnKeyOffIcon fontSize="small" />}
           <br />
           <Typography variant="caption" color="text.secondary">
             {m.uuid}
@@ -123,7 +124,8 @@ function MapRow({
 }
 
 export default function MapsListPage() {
-  const { maps, isAdmin, reloadMaps } = useAdminData();
+  const { maps, reloadMaps } = useMaps();
+  const { isAdmin } = useCurrentPermissions();
   const [createOpen, setCreateOpen] = useState(false);
 
   return (

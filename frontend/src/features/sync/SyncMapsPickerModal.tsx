@@ -12,12 +12,13 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiJson } from '../../api/client';
-import type { RemoteMap, SyncRemote } from '../../api/types';
+import { apiFetch } from '../../api/client';
+import type { SyncRemote } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
+import { SyncRemoteMapsProvider, useSyncRemoteMaps } from './SyncRemoteMapsContext';
 
-export default function SyncMapsPickerModal({
+function SyncMapsPickerModalContent({
   remote,
   onClose,
   onSaved,
@@ -26,7 +27,7 @@ export default function SyncMapsPickerModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [remoteMaps, setRemoteMaps] = useState<RemoteMap[]>([]);
+  const { remoteMaps, selectedMapUuids, error: loadError } = useSyncRemoteMaps();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [syncAll, setSyncAll] = useState(false);
   const [syncNew, setSyncNew] = useState(false);
@@ -37,19 +38,11 @@ export default function SyncMapsPickerModal({
     setSyncAll(remote.syncAllMaps);
     setSyncNew(remote.syncNewMaps);
     setError(null);
-    (async () => {
-      try {
-        const [maps, selectedIds] = await Promise.all([
-          apiJson<RemoteMap[]>(`/sync/remotes/${remote.id}/remote-maps`),
-          apiJson<string[]>(`/sync/remotes/${remote.id}/selected-maps`),
-        ]);
-        setRemoteMaps(maps);
-        setSelected(new Set(selectedIds));
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    })();
   }, [remote]);
+
+  useEffect(() => {
+    setSelected(new Set(selectedMapUuids));
+  }, [selectedMapUuids]);
 
   const toggle = (uuid: string, checked: boolean) => {
     setSelected((prev) => {
@@ -97,7 +90,7 @@ export default function SyncMapsPickerModal({
         </Button>
       }
     >
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error ?? loadError} />
       <Stack direction="row" spacing={2} sx={{ mb: 1 }}>
         <FormControlLabel
           control={<Checkbox checked={syncAll} onChange={(e) => setSyncAll(e.target.checked)} />}
@@ -154,5 +147,21 @@ export default function SyncMapsPickerModal({
         </Typography>
       )}
     </Modal>
+  );
+}
+
+export default function SyncMapsPickerModal({
+  remote,
+  onClose,
+  onSaved,
+}: {
+  remote: SyncRemote | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  return (
+    <SyncRemoteMapsProvider remote={remote}>
+      <SyncMapsPickerModalContent remote={remote} onClose={onClose} onSaved={onSaved} />
+    </SyncRemoteMapsProvider>
   );
 }

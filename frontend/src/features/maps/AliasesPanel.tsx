@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Button,
   Stack,
@@ -11,31 +11,17 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiJson } from '../../api/client';
-import type { MapAlias, MapSummary } from '../../api/types';
+import { apiFetch } from '../../api/client';
+import type { MapSummary } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
+import { AliasesProvider, useAliases } from './AliasesContext';
 
-export default function AliasesPanel({ map }: { map: MapSummary }) {
-  const [aliases, setAliases] = useState<MapAlias[]>([]);
+function AliasesPanelContent({ map }: { map: MapSummary }) {
+  const { aliases, error: loadError, reloadAliases } = useAliases();
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [version, setVersion] = useState('');
-
-  const load = useCallback(async () => {
-    setError(null);
-    try {
-      setAliases(await apiJson<MapAlias[]>(`/maps/${map.uuid}/aliases`));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [map]);
-
-  useEffect(() => {
-    setName('');
-    setVersion('');
-    load();
-  }, [map, load]);
 
   const save = async () => {
     if (!name.trim() || !version.trim()) return;
@@ -48,7 +34,7 @@ export default function AliasesPanel({ map }: { map: MapSummary }) {
       });
       setName('');
       setVersion('');
-      await load();
+      await reloadAliases();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -60,7 +46,7 @@ export default function AliasesPanel({ map }: { map: MapSummary }) {
       await apiFetch(`/maps/${map.uuid}/aliases/${encodeURIComponent(alias)}`, {
         method: 'DELETE',
       });
-      await load();
+      await reloadAliases();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -68,7 +54,7 @@ export default function AliasesPanel({ map }: { map: MapSummary }) {
 
   return (
     <>
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error ?? loadError} />
       <TableContainer>
         <Table size="small">
           <TableHead>
@@ -131,5 +117,13 @@ export default function AliasesPanel({ map }: { map: MapSummary }) {
         </Button>
       </Stack>
     </>
+  );
+}
+
+export default function AliasesPanel({ map }: { map: MapSummary }) {
+  return (
+    <AliasesProvider map={map}>
+      <AliasesPanelContent map={map} />
+    </AliasesProvider>
   );
 }

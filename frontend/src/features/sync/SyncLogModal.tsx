@@ -1,34 +1,18 @@
-import { useCallback, useEffect, useState } from 'react';
 import { Box, Button, Typography } from '@mui/material';
-import { apiJson } from '../../api/client';
-import type { SyncLogEntry, SyncRemote } from '../../api/types';
+import type { SyncRemote } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
+import { SyncLogProvider, useSyncLog } from './SyncLogContext';
 
-export default function SyncLogModal({
+function SyncLogModalContent({
   remote,
   onClose,
 }: {
   remote: SyncRemote | null;
   onClose: () => void;
 }) {
-  const [entries, setEntries] = useState<SyncLogEntry[]>([]);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    if (!remote) return;
-    setError(null);
-    try {
-      setEntries(await apiJson<SyncLogEntry[]>(`/sync/remotes/${remote.id}/logs`));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [remote]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  const { entries, error, reloadLog } = useSyncLog();
 
   // Newest entry first, since that's the one an admin checking on a sync is
   // almost always looking for. Error-level entries are highlighted so a
@@ -57,7 +41,7 @@ export default function SyncLogModal({
       title={remote ? `Sync log — ${remote.name}` : 'Sync log'}
       onClose={onClose}
       headerExtra={
-        <Button size="small" onClick={load}>
+        <Button size="small" onClick={reloadLog}>
           Refresh
         </Button>
       }
@@ -75,5 +59,19 @@ export default function SyncLogModal({
         </Typography>
       )}
     </Modal>
+  );
+}
+
+export default function SyncLogModal({
+  remote,
+  onClose,
+}: {
+  remote: SyncRemote | null;
+  onClose: () => void;
+}) {
+  return (
+    <SyncLogProvider remote={remote}>
+      <SyncLogModalContent remote={remote} onClose={onClose} />
+    </SyncLogProvider>
   );
 }

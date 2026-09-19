@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Button,
   Stack,
@@ -11,42 +11,32 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiJson, apiPostJSON } from '../../api/client';
+import { apiFetch, apiPostJSON } from '../../api/client';
 import type { ApiKey, GeneratedKeyPair } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
+import { ApiKeysProvider, useApiKeys } from './ApiKeysContext';
 import ScopesModal from './ScopesModal';
 
-export default function ApiKeysModal({
+function ApiKeysModalContent({
   username,
   onClose,
 }: {
   username: string | null;
   onClose: () => void;
 }) {
-  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const { keys, error: loadError, reloadKeys } = useApiKeys();
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [pubkey, setPubkey] = useState('');
   const [scopesKey, setScopesKey] = useState<ApiKey | null>(null);
 
-  const load = useCallback(async () => {
-    if (!username) return;
-    setError(null);
-    try {
-      setKeys(await apiJson<ApiKey[]>(`/users/${encodeURIComponent(username)}/api-keys`));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [username]);
-
   useEffect(() => {
     if (!username) return;
     setName('');
     setPubkey('');
-    load();
-  }, [username, load]);
+  }, [username]);
 
   const generateKeyPair = async () => {
     setError(null);
@@ -72,7 +62,7 @@ export default function ApiKeysModal({
       });
       setName('');
       setPubkey('');
-      await load();
+      await reloadKeys();
       // Nothing secret comes back here — the server never sees a private
       // key — but the caller still needs to know which id to use as the
       // JWT `kid` when signing tokens for this key.
@@ -89,7 +79,7 @@ export default function ApiKeysModal({
     setError(null);
     try {
       await apiFetch(`/users/${encodeURIComponent(username)}/api-keys/${id}`, { method: 'DELETE' });
-      await load();
+      await reloadKeys();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -102,7 +92,7 @@ export default function ApiKeysModal({
         title={username ? `API keys — ${username}` : 'API keys'}
         onClose={onClose}
       >
-        <ErrorBanner message={error} />
+        <ErrorBanner message={error ?? loadError} />
         <TableContainer>
           <Table size="small">
             <TableHead>
@@ -197,8 +187,22 @@ export default function ApiKeysModal({
         username={username}
         apiKey={scopesKey}
         onClose={() => setScopesKey(null)}
-        onScopesChanged={load}
+        onScopesChanged={reloadKeys}
       />
     </>
+  );
+}
+
+export default function ApiKeysModal({
+  username,
+  onClose,
+}: {
+  username: string | null;
+  onClose: () => void;
+}) {
+  return (
+    <ApiKeysProvider username={username}>
+      <ApiKeysModalContent username={username} onClose={onClose} />
+    </ApiKeysProvider>
   );
 }

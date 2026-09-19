@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Box,
   Button,
@@ -17,10 +17,13 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiJson } from '../../api/client';
+import { apiFetch } from '../../api/client';
 import type { MapGroupPermission, MapPermission, MapSummary } from '../../api/types';
-import { useAdminData } from '../AdminDataContext';
+import { useUsers } from '../users/UsersContext';
+import { useGroups } from '../groups/GroupsContext';
 import ErrorBanner from '../../components/ErrorBanner';
+import { MapPermissionsProvider, useMapPermissions } from './MapPermissionsContext';
+import { MapGroupPermissionsProvider, useMapGroupPermissions } from './MapGroupPermissionsContext';
 
 interface GrantFormState {
   canView: boolean;
@@ -197,43 +200,17 @@ function GrantCheckboxFields({
   );
 }
 
-export default function PermissionsPanel({ map }: { map: MapSummary }) {
-  const { users, groups, groupName } = useAdminData();
-  const [grants, setGrants] = useState<MapPermission[]>([]);
-  const [groupGrants, setGroupGrants] = useState<MapGroupPermission[]>([]);
+function PermissionsPanelContent({ map }: { map: MapSummary }) {
+  const { users } = useUsers();
+  const { groups, groupName } = useGroups();
+  const { grants, error: loadError, reloadPermissions } = useMapPermissions();
+  const { groupGrants, error: loadGroupError, reloadGroupPermissions } = useMapGroupPermissions();
   const [error, setError] = useState<string | null>(null);
   const [groupError, setGroupError] = useState<string | null>(null);
   const [addUser, setAddUser] = useState('');
   const [addGrant, setAddGrant] = useState<GrantFormState>(defaultGrant);
   const [addGroup, setAddGroup] = useState('');
   const [addGroupGrant, setAddGroupGrant] = useState<GrantFormState>(defaultGrant);
-
-  const loadPermissions = useCallback(async () => {
-    setError(null);
-    try {
-      setGrants(await apiJson<MapPermission[]>(`/maps/${map.uuid}/permissions`));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [map]);
-
-  const loadGroupPermissions = useCallback(async () => {
-    setGroupError(null);
-    try {
-      setGroupGrants(await apiJson<MapGroupPermission[]>(`/maps/${map.uuid}/group-permissions`));
-    } catch (err) {
-      setGroupError(err instanceof Error ? err.message : String(err));
-    }
-  }, [map]);
-
-  useEffect(() => {
-    setAddUser('');
-    setAddGroup('');
-    setAddGrant(defaultGrant);
-    setAddGroupGrant(defaultGrant);
-    loadPermissions();
-    loadGroupPermissions();
-  }, [map, loadPermissions, loadGroupPermissions]);
 
   const grantUser = async (username: string, grant: GrantFormState) => {
     setError(null);
@@ -243,7 +220,7 @@ export default function PermissionsPanel({ map }: { map: MapSummary }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(grant),
       });
-      await loadPermissions();
+      await reloadPermissions();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -255,7 +232,7 @@ export default function PermissionsPanel({ map }: { map: MapSummary }) {
       await apiFetch(`/maps/${map.uuid}/permissions/${encodeURIComponent(username)}`, {
         method: 'DELETE',
       });
-      await loadPermissions();
+      await reloadPermissions();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -269,7 +246,7 @@ export default function PermissionsPanel({ map }: { map: MapSummary }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(grant),
       });
-      await loadGroupPermissions();
+      await reloadGroupPermissions();
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : String(err));
     }
@@ -281,7 +258,7 @@ export default function PermissionsPanel({ map }: { map: MapSummary }) {
       await apiFetch(`/maps/${map.uuid}/group-permissions/${encodeURIComponent(groupId)}`, {
         method: 'DELETE',
       });
-      await loadGroupPermissions();
+      await reloadGroupPermissions();
     } catch (err) {
       setGroupError(err instanceof Error ? err.message : String(err));
     }
@@ -289,7 +266,7 @@ export default function PermissionsPanel({ map }: { map: MapSummary }) {
 
   return (
     <>
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error ?? loadError} />
       <TableContainer>
         <Table size="small">
           <TableHead>
@@ -360,7 +337,7 @@ export default function PermissionsPanel({ map }: { map: MapSummary }) {
       <Typography variant="h6" component="h2" sx={{ mt: 3, mb: 1 }}>
         Group permissions
       </Typography>
-      <ErrorBanner message={groupError} />
+      <ErrorBanner message={groupError ?? loadGroupError} />
       <TableContainer>
         <Table size="small">
           <TableHead>
@@ -430,5 +407,15 @@ export default function PermissionsPanel({ map }: { map: MapSummary }) {
       </Stack>
       <Box sx={{ height: 4 }} />
     </>
+  );
+}
+
+export default function PermissionsPanel({ map }: { map: MapSummary }) {
+  return (
+    <MapPermissionsProvider map={map}>
+      <MapGroupPermissionsProvider map={map}>
+        <PermissionsPanelContent map={map} />
+      </MapGroupPermissionsProvider>
+    </MapPermissionsProvider>
   );
 }

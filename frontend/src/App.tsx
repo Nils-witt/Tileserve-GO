@@ -2,10 +2,16 @@ import { lazy, type ReactNode, Suspense, useMemo } from 'react';
 import { Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import { Box, CircularProgress, CssBaseline, ThemeProvider, useMediaQuery } from '@mui/material';
 import { AuthProvider, useAuth } from './auth/AuthContext';
+import {
+  CurrentPermissionsProvider,
+  useCurrentPermissions,
+} from './auth/CurrentPermissionsContext';
 import ProtectedRoute from './auth/ProtectedRoute';
 import LoginPage from './pages/LoginPage';
 import { createAppTheme } from './theme';
-import { AdminDataProvider, useAdminData } from './features/AdminDataContext.tsx';
+import { MapsProvider } from './features/maps/MapsContext.tsx';
+import { UsersProvider } from './features/users/UsersContext.tsx';
+import { GroupsProvider } from './features/groups/GroupsContext.tsx';
 import BaseLayout from './components/BaseLayout.tsx';
 
 // Route-level components are code-split so a user only downloads the tabs
@@ -35,7 +41,7 @@ function IndexRedirect() {
  * their tab is already hidden from non-admins, but the route itself must
  * also refuse them. */
 function AdminOnlyRoute({ children }: { children: ReactNode }) {
-  const { isAdmin } = useAdminData();
+  const { isAdmin } = useCurrentPermissions();
   return isAdmin ? <>{children}</> : <> Not authorized</>;
 }
 
@@ -50,36 +56,42 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <AdminDataProvider>
-          <Suspense fallback={<RouteFallback />}>
-            <Routes>
-              <Route index element={<IndexRedirect />} />
-              <Route path="/ui/login" element={<LoginPage />} />
-              <Route element={<BaseLayout />}>
-                <Route path="ui" element={<ProtectedRoute />}>
-                  <Route index element={<Navigate to={'/ui/maps'} replace />} />
-                  <Route path="maps">
-                    <Route index element={<MapsListPage />} />
-                    <Route path=":uuid/geo-objects" element={<GeoObjectsPage />} />
-                  </Route>
-                  <Route
-                    element={
-                      <AdminOnlyRoute>
-                        <Outlet />
-                      </AdminOnlyRoute>
-                    }
-                  >
-                    <Route path="users" element={<UsersTab />} />
-                    <Route path="groups" element={<GroupsTab />} />
-                    <Route path="sync" element={<SyncTab />} />
-                    <Route path="audit" element={<AuditTab />} />
-                  </Route>
-                </Route>
-              </Route>
-              <Route path="*" element={<IndexRedirect />} />
-            </Routes>
-          </Suspense>
-        </AdminDataProvider>
+        <CurrentPermissionsProvider>
+          <MapsProvider>
+            <UsersProvider>
+              <GroupsProvider>
+                <Suspense fallback={<RouteFallback />}>
+                  <Routes>
+                    <Route index element={<IndexRedirect />} />
+                    <Route path="/ui/login" element={<LoginPage />} />
+                    <Route element={<BaseLayout />}>
+                      <Route path="ui" element={<ProtectedRoute />}>
+                        <Route index element={<Navigate to={'/ui/maps'} replace />} />
+                        <Route path="maps">
+                          <Route index element={<MapsListPage />} />
+                          <Route path=":uuid/geo-objects" element={<GeoObjectsPage />} />
+                        </Route>
+                        <Route
+                          element={
+                            <AdminOnlyRoute>
+                              <Outlet />
+                            </AdminOnlyRoute>
+                          }
+                        >
+                          <Route path="users" element={<UsersTab />} />
+                          <Route path="groups" element={<GroupsTab />} />
+                          <Route path="sync" element={<SyncTab />} />
+                          <Route path="audit" element={<AuditTab />} />
+                        </Route>
+                      </Route>
+                    </Route>
+                    <Route path="*" element={<IndexRedirect />} />
+                  </Routes>
+                </Suspense>
+              </GroupsProvider>
+            </UsersProvider>
+          </MapsProvider>
+        </CurrentPermissionsProvider>
       </AuthProvider>
     </ThemeProvider>
   );

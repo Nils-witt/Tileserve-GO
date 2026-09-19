@@ -17,7 +17,7 @@ import {
 } from '@mui/material';
 import { apiFetch, apiPostJSON } from '../../api/client';
 import type { Group } from '../../api/types';
-import { useAdminData } from '../AdminDataContext';
+import { useGroups } from './GroupsContext';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
 
@@ -139,7 +139,7 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
 }
 
 export default function GroupsTab() {
-  const { groups, reloadGroups } = useAdminData();
+  const { groups, reloadGroups } = useGroups();
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [ldapGroupDn, setLdapGroupDn] = useState('');

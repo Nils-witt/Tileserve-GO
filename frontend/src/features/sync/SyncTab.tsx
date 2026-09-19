@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import {
   Box,
   Button,
@@ -15,22 +15,17 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiJson, apiPostJSON } from '../../api/client';
+import { apiFetch, apiPostJSON } from '../../api/client';
 import type { SyncRemote } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
+import { ServerPublicKeyProvider, useServerPublicKey } from './ServerPublicKeyContext';
+import { SyncRemotesProvider, useSyncRemotes } from './SyncRemotesContext';
 import SyncLogModal from './SyncLogModal';
 import SyncMapsPickerModal from './SyncMapsPickerModal';
 
 function ServerPublicKeyCard() {
-  const [key, setKey] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    apiJson<{ publicKeyPem: string }>('/server/public-key')
-      .then((data) => setKey(data.publicKeyPem))
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+  const { publicKeyPem, error } = useServerPublicKey();
 
   return (
     <Paper sx={{ p: 3, mb: 3 }}>
@@ -48,7 +43,7 @@ function ServerPublicKeyCard() {
         fullWidth
         multiline
         minRows={6}
-        value={key}
+        value={publicKeyPem}
         slotProps={{
           input: { readOnly: true, style: { fontFamily: 'monospace', fontSize: '0.8em' } },
         }}
@@ -225,8 +220,8 @@ function SyncRemoteRow({
   );
 }
 
-export default function SyncTab() {
-  const [remotes, setRemotes] = useState<SyncRemote[]>([]);
+function SyncTabContent() {
+  const { remotes, error: loadError, reloadRemotes } = useSyncRemotes();
   const [error, setError] = useState<string | null>(null);
   const [logRemote, setLogRemote] = useState<SyncRemote | null>(null);
   const [mapsPickerRemote, setMapsPickerRemote] = useState<SyncRemote | null>(null);
@@ -236,19 +231,6 @@ export default function SyncTab() {
   const [remoteApiKeyId, setRemoteApiKeyId] = useState('');
   const [pollIntervalSec, setPollIntervalSec] = useState('300');
   const [enabled, setEnabled] = useState(true);
-
-  const reload = async () => {
-    setError(null);
-    try {
-      setRemotes(await apiJson<SyncRemote[]>('/sync/remotes'));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  useEffect(() => {
-    reload();
-  }, []);
 
   const createRemote = async (e: FormEvent) => {
     e.preventDefault();
@@ -272,7 +254,7 @@ export default function SyncTab() {
       setRemoteApiKeyId('');
       setPollIntervalSec('300');
       setEnabled(true);
-      await reload();
+      await reloadRemotes();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -346,7 +328,7 @@ export default function SyncTab() {
       </Paper>
 
       <Paper sx={{ p: 3 }}>
-        <ErrorBanner message={error} />
+        <ErrorBanner message={error ?? loadError} />
         <TableContainer>
           <Table size="small">
             <TableHead>
@@ -366,7 +348,7 @@ export default function SyncTab() {
                 <SyncRemoteRow
                   key={r.id}
                   r={r}
-                  onReload={reload}
+                  onReload={reloadRemotes}
                   onOpenLog={() => setLogRemote(r)}
                   onOpenMapsPicker={() => setMapsPickerRemote(r)}
                 />
@@ -389,8 +371,18 @@ export default function SyncTab() {
       <SyncMapsPickerModal
         remote={mapsPickerRemote}
         onClose={() => setMapsPickerRemote(null)}
-        onSaved={reload}
+        onSaved={reloadRemotes}
       />
     </Box>
+  );
+}
+
+export default function SyncTab() {
+  return (
+    <ServerPublicKeyProvider>
+      <SyncRemotesProvider>
+        <SyncTabContent />
+      </SyncRemotesProvider>
+    </ServerPublicKeyProvider>
   );
 }

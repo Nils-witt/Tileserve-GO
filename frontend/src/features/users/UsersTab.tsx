@@ -17,7 +17,7 @@ import {
 } from '@mui/material';
 import { apiFetch, apiPostJSON } from '../../api/client';
 import type { User } from '../../api/types';
-import { useAdminData } from '../AdminDataContext';
+import { useUsers } from './UsersContext';
 import { useAuth } from '../../auth/AuthContext';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
@@ -153,7 +153,7 @@ function UserRow({
 }
 
 export default function UsersTab() {
-  const { users, reloadUsers } = useAdminData();
+  const { users, reloadUsers } = useUsers();
   const { username: currentUsername } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [apiKeysUser, setApiKeysUser] = useState<string | null>(null);

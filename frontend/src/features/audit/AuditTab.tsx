@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import {
   Box,
   Button,
@@ -13,60 +13,18 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiJson } from '../../api/client';
-import type { AuditLogEntry } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
+import {
+  AuditLogProvider,
+  emptyAuditLogFilter,
+  useAuditLog,
+  type AuditLogFilter,
+} from './AuditLogContext';
 
-const PAGE_SIZE = 100;
-
-interface Filter {
-  actor: string;
-  action: string;
-  entityType: string;
-  entityId: string;
-}
-
-const emptyFilter: Filter = { actor: '', action: '', entityType: '', entityId: '' };
-
-export default function AuditTab() {
-  const [filter, setFilter] = useState<Filter>(emptyFilter);
-  const [entries, setEntries] = useState<AuditLogEntry[]>([]);
-  const [offset, setOffset] = useState(0);
-  const [hasMore, setHasMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const buildParams = (f: Filter, nextOffset: number) => {
-    const params = new URLSearchParams();
-    if (f.actor.trim()) params.set('actor', f.actor.trim());
-    if (f.action.trim()) params.set('action', f.action.trim());
-    if (f.entityType.trim()) params.set('entityType', f.entityType.trim());
-    if (f.entityId.trim()) params.set('entityId', f.entityId.trim());
-    params.set('limit', String(PAGE_SIZE));
-    params.set('offset', String(nextOffset));
-    return params;
-  };
-
-  const load = async (f: Filter, reset: boolean) => {
-    setError(null);
-    const nextOffset = reset ? 0 : offset;
-    try {
-      const page = await apiJson<AuditLogEntry[]>(
-        '/audit-logs?' + buildParams(f, nextOffset).toString(),
-      );
-      setEntries((prev) => (reset ? page : [...prev, ...page]));
-      setOffset(nextOffset + page.length);
-      setHasMore(page.length === PAGE_SIZE);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  useEffect(() => {
-    load(emptyFilter, true);
-    // Only load once, on mount — subsequent loads are user-triggered.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+function AuditTabContent() {
+  const { entries, hasMore, error, load } = useAuditLog();
+  const [filter, setFilter] = useState<AuditLogFilter>(emptyAuditLogFilter);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -74,8 +32,8 @@ export default function AuditTab() {
   };
 
   const handleClear = () => {
-    setFilter(emptyFilter);
-    load(emptyFilter, true);
+    setFilter(emptyAuditLogFilter);
+    load(emptyAuditLogFilter, true);
   };
 
   return (
@@ -169,5 +127,13 @@ export default function AuditTab() {
         </Typography>
       </Paper>
     </Box>
+  );
+}
+
+export default function AuditTab() {
+  return (
+    <AuditLogProvider>
+      <AuditTabContent />
+    </AuditLogProvider>
   );
 }

@@ -30,6 +30,7 @@ interface AuthState {
    * admin app, the username) back via location.hash rather than a query
    * parameter, so it never reaches a server log or Referer header. */
   clearSessionMessage: () => void;
+  token: string | null;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -50,12 +51,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [username, setUsername] = useState<string | null>(() => getStoredUsername());
   const [sessionMessage, setSessionMessage] = useState<string | null>(null);
   const [ssoComplete, setSsoComplete] = useState<boolean>(false);
+  const [token, setToken] = useState<string | null>(() => getToken());
 
   useEffect(() => {
     const consumed = consumeOIDCFragment();
     if (consumed) {
       setSession(consumed.token, consumed.username);
       setUsername(consumed.username);
+      setToken(consumed.token);
       window.location.href = '/ui';
     }
     setSsoComplete(true);
@@ -110,8 +113,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       logout,
       clearSessionMessage,
+      token,
     }),
-    [username, sessionMessage, login, logout, clearSessionMessage],
+    [username, sessionMessage, login, logout, clearSessionMessage, token],
   );
 
   if (!ssoComplete) {

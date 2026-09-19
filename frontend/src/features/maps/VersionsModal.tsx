@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Button,
   LinearProgress,
@@ -11,14 +11,15 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiJson } from '../../api/client';
+import { apiFetch } from '../../api/client';
 import { formatBytes, uploadMapVersion } from '../../api/upload';
-import type { MapSummary, MapVersion } from '../../api/types';
+import type { MapSummary } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
+import { MapVersionsProvider, useMapVersions } from './MapVersionsContext';
 
-export default function VersionsModal({
+function VersionsModalContent({
   map,
   isAdmin,
   onClose,
@@ -29,25 +30,10 @@ export default function VersionsModal({
   onClose: () => void;
   onUploaded: () => void;
 }) {
-  const [versions, setVersions] = useState<MapVersion[]>([]);
+  const { versions, error: loadError, reloadVersions } = useMapVersions();
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<{ loaded: number; total: number } | null>(null);
-
-  const load = useCallback(async () => {
-    if (!map) return;
-    setError(null);
-    try {
-      setVersions(await apiJson<MapVersion[]>(`/maps/${map.uuid}/versions`));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [map]);
-
-  useEffect(() => {
-    if (!map) return;
-    load();
-  }, [map, load]);
 
   const handleUpload = async (file: File | undefined) => {
     if (!file || !map) return;
@@ -61,7 +47,7 @@ export default function VersionsModal({
       if (!result.unauthorized)
         setError(result.errorText || `request failed with status ${result.status}`);
     } else {
-      load();
+      reloadVersions();
       onUploaded();
     }
   };
@@ -113,7 +99,7 @@ export default function VersionsModal({
         </>
       }
     >
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error ?? loadError} />
       {progress && (
         <Stack direction="row" spacing={1} sx={{ mb: 2, alignItems: 'center' }}>
           <LinearProgress
@@ -166,5 +152,23 @@ export default function VersionsModal({
         </Typography>
       )}
     </Modal>
+  );
+}
+
+export default function VersionsModal({
+  map,
+  isAdmin,
+  onClose,
+  onUploaded,
+}: {
+  map: MapSummary | null;
+  isAdmin: boolean;
+  onClose: () => void;
+  onUploaded: () => void;
+}) {
+  return (
+    <MapVersionsProvider map={map}>
+      <VersionsModalContent map={map} isAdmin={isAdmin} onClose={onClose} onUploaded={onUploaded} />
+    </MapVersionsProvider>
   );
 }

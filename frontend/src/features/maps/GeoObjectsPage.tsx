@@ -18,9 +18,10 @@ import {
   Typography,
 } from '@mui/material';
 import type { GeoObject, MapSummary } from '../../api/types';
-import { useAdminData } from '../AdminDataContext';
+import { useMaps } from './MapsContext';
 import ErrorBanner from '../../components/ErrorBanner';
-import { useGeoObjects } from './useGeoObjects';
+import { MapVersionsProvider } from './MapVersionsContext';
+import { GeoObjectsProvider, useGeoObjects } from './GeoObjectsContext';
 import GeoObjectRow from './GeoObjectRow';
 import GeoObjectDialog from './GeoObjectDialog';
 
@@ -38,7 +39,7 @@ function GeoObjectsPageContent({ map }: { map: MapSummary }) {
     createObject,
     deleteObject,
     deleteSelected,
-  } = useGeoObjects(map);
+  } = useGeoObjects();
 
   const [editing, setEditing] = useState<GeoObject | 'new' | null>(null);
 
@@ -143,7 +144,7 @@ function GeoObjectsPageContent({ map }: { map: MapSummary }) {
 
 export default function GeoObjectsPage() {
   const { uuid } = useParams<{ uuid: string }>();
-  const { maps } = useAdminData();
+  const { maps } = useMaps();
   const map = maps.find((m) => m.uuid === uuid);
 
   if (!map) {
@@ -159,5 +160,11 @@ export default function GeoObjectsPage() {
     );
   }
 
-  return <GeoObjectsPageContent key={map.uuid} map={map} />;
+  return (
+    <MapVersionsProvider map={map} key={map.uuid}>
+      <GeoObjectsProvider map={map}>
+        <GeoObjectsPageContent map={map} />
+      </GeoObjectsProvider>
+    </MapVersionsProvider>
+  );
 }

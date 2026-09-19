@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Button,
   FormControl,
@@ -15,13 +15,14 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { apiFetch, apiJson } from '../../api/client';
-import type { ApiKey, ApiKeyScope } from '../../api/types';
-import { useAdminData } from '../AdminDataContext';
+import { apiFetch } from '../../api/client';
+import type { ApiKey } from '../../api/types';
+import { useMaps } from '../maps/MapsContext';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
+import { ApiKeyScopesProvider, useApiKeyScopes } from './ApiKeyScopesContext';
 
-export default function ScopesModal({
+function ScopesModalContent({
   username,
   apiKey,
   onClose,
@@ -32,32 +33,17 @@ export default function ScopesModal({
   onClose: () => void;
   onScopesChanged: () => void;
 }) {
-  const { maps, mapName } = useAdminData();
-  const [scopes, setScopes] = useState<ApiKeyScope[]>([]);
+  const { maps, mapName } = useMaps();
+  const { scopes, error: loadError, reloadScopes } = useApiKeyScopes();
   const [error, setError] = useState<string | null>(null);
   const [addMap, setAddMap] = useState('');
   const [addVersions, setAddVersions] = useState('');
-
-  const load = useCallback(async () => {
-    if (!username || !apiKey) return;
-    setError(null);
-    try {
-      setScopes(
-        await apiJson<ApiKeyScope[]>(
-          `/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes`,
-        ),
-      );
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }, [username, apiKey]);
 
   useEffect(() => {
     if (!apiKey) return;
     setAddMap('');
     setAddVersions('');
-    load();
-  }, [apiKey, load]);
+  }, [apiKey]);
 
   const addScope = async () => {
     if (!username || !apiKey || !addMap) return;
@@ -78,7 +64,7 @@ export default function ScopesModal({
         },
       );
       setAddVersions('');
-      await load();
+      await reloadScopes();
       onScopesChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -99,7 +85,7 @@ export default function ScopesModal({
         `/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes/${mapId}`,
         { method: 'DELETE' },
       );
-      await load();
+      await reloadScopes();
       onScopesChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -119,7 +105,7 @@ export default function ScopesModal({
       await apiFetch(`/users/${encodeURIComponent(username)}/api-keys/${apiKey.id}/scopes`, {
         method: 'DELETE',
       });
-      await load();
+      await reloadScopes();
       onScopesChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -132,7 +118,7 @@ export default function ScopesModal({
       title={apiKey ? `Scopes — ${apiKey.name || apiKey.id}` : 'Scopes'}
       onClose={onClose}
     >
-      <ErrorBanner message={error} />
+      <ErrorBanner message={error ?? loadError} />
       <TableContainer>
         <Table size="small">
           <TableHead>
@@ -210,5 +196,28 @@ export default function ScopesModal({
         unrestricted access.
       </Typography>
     </Modal>
+  );
+}
+
+export default function ScopesModal({
+  username,
+  apiKey,
+  onClose,
+  onScopesChanged,
+}: {
+  username: string | null;
+  apiKey: ApiKey | null;
+  onClose: () => void;
+  onScopesChanged: () => void;
+}) {
+  return (
+    <ApiKeyScopesProvider username={username} apiKey={apiKey}>
+      <ScopesModalContent
+        username={username}
+        apiKey={apiKey}
+        onClose={onClose}
+        onScopesChanged={onScopesChanged}
+      />
+    </ApiKeyScopesProvider>
   );
 }

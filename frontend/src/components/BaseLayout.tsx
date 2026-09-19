@@ -13,7 +13,7 @@ import {
 } from '@mui/material';
 import Footer from './Footer.tsx';
 import { useAuth } from '../auth/AuthContext.tsx';
-import { useAdminData } from '../features/AdminDataContext.tsx';
+import { useCurrentPermissions } from '../auth/CurrentPermissionsContext.tsx';
 import { type MouseEvent, useState } from 'react';
 import MenuIcon from '@mui/icons-material/Menu';
 
@@ -25,7 +25,7 @@ type ActionDef = {
 export default function BaseLayout() {
   const navigate = useNavigate();
   const { username, logout } = useAuth();
-  const { isAdmin } = useAdminData();
+  const { isAdmin } = useCurrentPermissions();
   const [anchorElNav, setAnchorElNav] = useState<null | HTMLElement>(null);
   const [anchorElUser, setAnchorElUser] = useState<null | HTMLElement>(null);
 
