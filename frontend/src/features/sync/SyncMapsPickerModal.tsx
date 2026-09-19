@@ -12,7 +12,7 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { SyncRemote } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
@@ -27,6 +27,7 @@ function SyncMapsPickerModalContent({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const api = useApi();
   const { remoteMaps, selectedMapUuids, error: loadError } = useSyncRemoteMaps();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [syncAll, setSyncAll] = useState(false);

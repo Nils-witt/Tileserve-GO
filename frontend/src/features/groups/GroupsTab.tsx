@@ -15,7 +15,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { Group } from '../../api/types';
 import { useGroups } from './GroupsContext';
 import ErrorBanner from '../../components/ErrorBanner';
@@ -42,6 +42,7 @@ const defaultPerms: GroupPermState = {
 };
 
 function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
+  const api = useApi();
   const [name, setName] = useState(g.name);
   const [ldapGroupDn, setLdapGroupDn] = useState(g.ldapGroupDn ?? '');
   const [oidcGroupClaim, setOidcGroupClaim] = useState(g.oidcGroupClaim ?? '');
@@ -135,6 +136,7 @@ function GroupRow({ g, onReload }: { g: Group; onReload: () => void }) {
 }
 
 export default function GroupsTab() {
+  const api = useApi();
   const { groups, reloadGroups } = useGroups();
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');

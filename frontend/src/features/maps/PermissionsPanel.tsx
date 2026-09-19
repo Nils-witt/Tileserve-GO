@@ -17,7 +17,7 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapGroupPermission, MapPermission, MapSummary } from '../../api/types';
 import { useUsers } from '../users/UsersContext';
 import { useGroups } from '../groups/GroupsContext';
@@ -201,6 +201,7 @@ function GrantCheckboxFields({
 }
 
 function PermissionsPanelContent({ map }: { map: MapSummary }) {
+  const api = useApi();
   const { users } = useUsers();
   const { groups, groupName } = useGroups();
   const { grants, error: loadError, reloadPermissions } = useMapPermissions();

@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { ApiKey } from '../../api/types';
 
 interface ApiKeysData {
@@ -25,6 +25,7 @@ export function ApiKeysProvider({
   username: string | null;
   children: ReactNode;
 }) {
+  const api = useApi();
   const [keys, setKeys] = useState<ApiKey[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +37,7 @@ export function ApiKeysProvider({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [username]);
+  }, [api, username]);
 
   useEffect(() => {
     reloadKeys();

@@ -160,7 +160,9 @@ export default function GeoObjectDialog({
         map={pickerOpen ? map : null}
         version={version}
         pickable
-        initialLatitude={Number.isFinite(parseFloat(form.latitude)) ? parseFloat(form.latitude) : undefined}
+        initialLatitude={
+          Number.isFinite(parseFloat(form.latitude)) ? parseFloat(form.latitude) : undefined
+        }
         initialLongitude={
           Number.isFinite(parseFloat(form.longitude)) ? parseFloat(form.longitude) : undefined
         }

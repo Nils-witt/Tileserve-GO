@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api } from '../api/ApiClient';
+import { useApi } from '../api/ApiContext';
 
 interface CurrentPermissionsData {
   isAdmin: boolean;
@@ -8,7 +8,7 @@ interface CurrentPermissionsData {
 const CurrentPermissionsContext = createContext<CurrentPermissionsData | null>(null);
 
 export function CurrentPermissionsProvider({ children }: { children: ReactNode }) {
-
+  const api = useApi();
   const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
@@ -21,7 +21,7 @@ export function CurrentPermissionsProvider({ children }: { children: ReactNode }
       .getCurrentPermissions()
       .then((perms) => setIsAdmin(!!perms.isAdmin))
       .catch(() => setIsAdmin(false));
-  }, []);
+  }, [api]);
 
   const value = useMemo<CurrentPermissionsData>(() => ({ isAdmin }), [isAdmin]);
 

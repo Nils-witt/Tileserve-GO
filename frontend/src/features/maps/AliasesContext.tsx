@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapAlias, MapSummary } from '../../api/types';
 
 interface AliasesData {
@@ -19,6 +19,7 @@ interface AliasesData {
 const AliasesContext = createContext<AliasesData | null>(null);
 
 export function AliasesProvider({ map, children }: { map: MapSummary; children: ReactNode }) {
+  const api = useApi();
   const [aliases, setAliases] = useState<MapAlias[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +30,7 @@ export function AliasesProvider({ map, children }: { map: MapSummary; children: 
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [map]);
+  }, [api, map]);
 
   useEffect(() => {
     reloadAliases();

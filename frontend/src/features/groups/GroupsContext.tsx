@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { Group } from '../../api/types';
 
 interface GroupsData {
@@ -21,11 +21,12 @@ const GroupsContext = createContext<GroupsData | null>(null);
 // GET /groups is open to every authenticated user (so a map owner can pick a
 // group when granting a per-map permission), not just admins.
 export function GroupsProvider({ children }: { children: ReactNode }) {
+  const api = useApi();
   const [groups, setGroups] = useState<Group[]>([]);
 
   const reloadGroups = useCallback(async () => {
     setGroups(await api.listGroups());
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     reloadGroups().catch(() => {});

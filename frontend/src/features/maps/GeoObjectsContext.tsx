@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { GeoObject, MapSummary } from '../../api/types';
 import { useMapVersions } from './MapVersionsContext';
 
@@ -31,6 +31,7 @@ const GeoObjectsContext = createContext<GeoObjectsData | null>(null);
 /** Must be mounted inside a MapVersionsProvider for the same map — it reuses
  * that context's /maps/{uuid}/versions fetch instead of re-fetching it. */
 export function GeoObjectsProvider({ map, children }: { map: MapSummary; children: ReactNode }) {
+  const api = useApi();
   const { versions: mapVersions, error: versionsError } = useMapVersions();
   const [version, setVersion] = useState(map.currentVersion);
   const [objects, setObjects] = useState<GeoObject[]>([]);
@@ -61,7 +62,7 @@ export function GeoObjectsProvider({ map, children }: { map: MapSummary; childre
     } catch (err) {
       setObjectsError(err instanceof Error ? err.message : String(err));
     }
-  }, [map, version]);
+  }, [api, map, version]);
 
   useEffect(() => {
     loadObjects();

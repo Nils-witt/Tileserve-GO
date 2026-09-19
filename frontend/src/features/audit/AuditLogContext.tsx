@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { AuditLogEntry } from '../../api/types';
 
 const PAGE_SIZE = 100;
@@ -36,6 +36,7 @@ interface AuditLogData {
 const AuditLogContext = createContext<AuditLogData | null>(null);
 
 export function AuditLogProvider({ children }: { children: ReactNode }) {
+  const api = useApi();
   const [entries, setEntries] = useState<AuditLogEntry[]>([]);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);

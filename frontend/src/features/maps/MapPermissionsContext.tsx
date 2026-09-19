@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapPermission, MapSummary } from '../../api/types';
 
 interface MapPermissionsData {
@@ -25,6 +25,7 @@ export function MapPermissionsProvider({
   map: MapSummary;
   children: ReactNode;
 }) {
+  const api = useApi();
   const [grants, setGrants] = useState<MapPermission[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,7 +36,7 @@ export function MapPermissionsProvider({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [map]);
+  }, [api, map]);
 
   useEffect(() => {
     reloadPermissions();

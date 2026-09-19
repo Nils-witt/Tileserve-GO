@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Button, Checkbox, FormControlLabel, Stack, Tab, Tabs, TextField } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapSummary } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
@@ -22,6 +22,7 @@ export default function MapFormModal({
   onClose: () => void;
   onSaved: () => void | Promise<void>;
 }) {
+  const api = useApi();
   const [tab, setTab] = useState<TabKey>('details');
   const [name, setName] = useState('');
   const [currentVersion, setCurrentVersion] = useState('');

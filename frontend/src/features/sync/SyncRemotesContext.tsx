@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { SyncRemote } from '../../api/types';
 
 interface SyncRemotesData {
@@ -19,6 +19,7 @@ interface SyncRemotesData {
 const SyncRemotesContext = createContext<SyncRemotesData | null>(null);
 
 export function SyncRemotesProvider({ children }: { children: ReactNode }) {
+  const api = useApi();
   const [remotes, setRemotes] = useState<SyncRemote[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -29,7 +30,7 @@ export function SyncRemotesProvider({ children }: { children: ReactNode }) {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     reloadRemotes();

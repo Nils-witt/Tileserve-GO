@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapSummary, MapVersion } from '../../api/types';
 
 interface MapVersionsData {
@@ -25,6 +25,7 @@ export function MapVersionsProvider({
   map: MapSummary | null;
   children: ReactNode;
 }) {
+  const api = useApi();
   const [versions, setVersions] = useState<MapVersion[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -36,7 +37,7 @@ export function MapVersionsProvider({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [map]);
+  }, [api, map]);
 
   useEffect(() => {
     reloadVersions();

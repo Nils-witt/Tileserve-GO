@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react';
 import { Box, Link, Typography } from '@mui/material';
+import { useApi } from '../api/ApiContext';
 import { fetchBuildInfo } from '../lib/version';
 
 export default function Footer() {
+  const api = useApi();
   const [buildInfo, setBuildInfo] = useState('');
 
   useEffect(() => {
-    fetchBuildInfo()
+    fetchBuildInfo(api)
       .then(setBuildInfo)
       .catch(() => {});
-  }, []);
+  }, [api]);
 
   return (
     <Box component="footer" sx={{ textAlign: 'center', py: 3 }}>

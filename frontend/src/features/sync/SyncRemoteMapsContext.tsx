@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { RemoteMap, SyncRemote } from '../../api/types';
 
 interface SyncRemoteMapsData {
@@ -17,6 +17,7 @@ export function SyncRemoteMapsProvider({
   remote: SyncRemote | null;
   children: ReactNode;
 }) {
+  const api = useApi();
   const [remoteMaps, setRemoteMaps] = useState<RemoteMap[]>([]);
   const [selectedMapUuids, setSelectedMapUuids] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -36,7 +37,7 @@ export function SyncRemoteMapsProvider({
         setError(err instanceof Error ? err.message : String(err));
       }
     })();
-  }, [remote]);
+  }, [api, remote]);
 
   const value = useMemo<SyncRemoteMapsData>(
     () => ({ remoteMaps, selectedMapUuids, error }),

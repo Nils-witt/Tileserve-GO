@@ -36,9 +36,6 @@ import type {
   VersionInfo,
 } from './types';
 
-const TOKEN_KEY = 'tileserve_token';
-const USER_KEY = 'tileserve_username';
-
 export class ApiError extends Error {}
 
 export interface UploadProgress {
@@ -53,42 +50,29 @@ export interface UploadResult {
   errorText?: string;
 }
 
+export interface ApiClientOptions {
+  token: string | null;
+  onClearSession?: () => void;
+}
+
 const enc = encodeURIComponent;
 
 export class ApiClient {
   private onUnauthorized: (() => void) | null = null;
-  private readonly storage: Storage;
+  private options: ApiClientOptions;
 
-  constructor(storage: Storage = sessionStorage) {
-    this.storage = storage;
+  constructor(options: ApiClientOptions) {
+    this.options = options;
   }
 
   // ---- session -----------------------------------------------------------
-
-  getToken(): string | null {
-    return this.storage.getItem(TOKEN_KEY);
-  }
-
-  getStoredUsername(): string | null {
-    return this.storage.getItem(USER_KEY);
-  }
-
-  setSession(token: string, username: string): void {
-    this.storage.setItem(TOKEN_KEY, token);
-    this.storage.setItem(USER_KEY, username);
-  }
-
-  clearSession(): void {
-    this.storage.removeItem(TOKEN_KEY);
-    this.storage.removeItem(USER_KEY);
-  }
 
   setUnauthorizedHandler(handler: () => void): void {
     this.onUnauthorized = handler;
   }
 
   private handleUnauthorized(): void {
-    this.clearSession();
+    this.options.onClearSession?.();
     this.onUnauthorized?.();
   }
 
@@ -98,7 +82,7 @@ export class ApiClient {
    * throws an ApiError carrying the response text on any other non-OK. */
   private async request(path: string, options: RequestInit = {}): Promise<Response> {
     const headers = new Headers(options.headers);
-    headers.set('Authorization', 'Bearer ' + (this.getToken() ?? ''));
+    headers.set('Authorization', 'Bearer ' + (this.options.token ?? ''));
 
     const res = await fetch(path, { ...options, headers });
 
@@ -140,7 +124,11 @@ export class ApiClient {
   // ---- unauthenticated ---------------------------------------------------
 
   /** POST /login. On success stores the session and returns the issued token. */
-  async login(username: string, password: string, ttlSeconds?: number): Promise<string> {
+  async login(
+    username: string,
+    password: string,
+    ttlSeconds?: number,
+  ): Promise<{ username: string; token: string }> {
     let res: Response;
     try {
       res = await fetch('/login', {
@@ -159,8 +147,7 @@ export class ApiClient {
       throw new Error(res.status === 401 ? 'Invalid credentials' : 'Login failed');
     }
     const data = (await res.json()) as LoginResponse;
-    this.setSession(data.token, username);
-    return data.token;
+    return { username, token: data.token };
   }
 
   async getAuthMethods(): Promise<AuthMethods> {
@@ -230,7 +217,7 @@ export class ApiClient {
     return (
       window.location.origin +
       `/maps/${mapUuid}/version/${enc(version)}/{z}/{x}/{y}.png?token=` +
-      enc(this.getToken() ?? '')
+      enc(this.options.token ?? '')
     );
   }
 
@@ -244,7 +231,7 @@ export class ApiClient {
     return new Promise((resolve) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `/maps/${mapUuid}/upload`);
-      xhr.setRequestHeader('Authorization', 'Bearer ' + (this.getToken() ?? ''));
+      xhr.setRequestHeader('Authorization', 'Bearer ' + (this.options.token ?? ''));
       xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
 
       xhr.upload.onprogress = (e) => {
@@ -473,6 +460,3 @@ export class ApiClient {
     return this.getJson('/audit-logs?' + params.toString());
   }
 }
-
-/** Shared instance used across the app. */
-export const api = new ApiClient();

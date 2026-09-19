@@ -11,13 +11,14 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapSummary } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
 import { AliasesProvider, useAliases } from './AliasesContext';
 
 function AliasesPanelContent({ map }: { map: MapSummary }) {
+  const api = useApi();
   const { aliases, error: loadError, reloadAliases } = useAliases();
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');

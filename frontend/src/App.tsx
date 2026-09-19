@@ -13,6 +13,7 @@ import { MapsProvider } from './features/maps/MapsContext.tsx';
 import { UsersProvider } from './features/users/UsersContext.tsx';
 import { GroupsProvider } from './features/groups/GroupsContext.tsx';
 import BaseLayout from './components/BaseLayout.tsx';
+import { ApiProvider } from './api/ApiContext.tsx';
 
 // Route-level components are code-split so a user only downloads the tabs
 // they actually visit (admin-only tabs, the geo-objects editor) instead of
@@ -56,43 +57,50 @@ export default function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <CurrentPermissionsProvider>
-          <MapsProvider>
-            <UsersProvider>
-              <GroupsProvider>
-                <Suspense fallback={<RouteFallback />}>
-                  <Routes>
-                    <Route index element={<IndexRedirect />} />
-                    <Route path="/ui/login" element={<LoginPage />} />
-                    <Route element={<BaseLayout />}>
-                      <Route path="ui" element={<ProtectedRoute />}>
-                        <Route index element={<Navigate to={'/ui/maps'} replace />} />
-                        <Route path="maps">
-                          <Route index element={<MapsListPage />} />
-                          <Route path=":uuid/geo-objects" element={<GeoObjectsPage />} />
-                        </Route>
-                        <Route
-                          element={
-                            <AdminOnlyRoute>
-                              <Outlet />
-                            </AdminOnlyRoute>
-                          }
-                        >
-                          <Route path="users" element={<UsersTab />} />
-                          <Route path="groups" element={<GroupsTab />} />
-                          <Route path="sync" element={<SyncTab />} />
-                          <Route path="audit" element={<AuditTab />} />
+        <ApiProvider>
+          <CurrentPermissionsProvider>
+            <MapsProvider>
+              <UsersProvider>
+                <GroupsProvider>
+                  <Suspense fallback={<RouteFallback />}>
+                    <Routes>
+                      <Route index element={<IndexRedirect />} />
+                      <Route path="/ui/login" element={<LoginPage />} />
+                      <Route element={<BaseLayout />}>
+                        <Route path="ui" element={<ProtectedRoute />}>
+                          <Route index element={<Navigate to={'/ui/maps'} replace />} />
+                          <Route path="maps">
+                            <Route index element={<MapsListPage />} />
+                            <Route path=":uuid/geo-objects" element={<GeoObjectsPage />} />
+                          </Route>
+                          <Route
+                            element={
+                              <AdminOnlyRoute>
+                                <Outlet />
+                              </AdminOnlyRoute>
+                            }
+                          >
+                            <Route path="users" element={<UsersTab />} />
+                            <Route path="groups" element={<GroupsTab />} />
+                            <Route path="sync" element={<SyncTab />} />
+                            <Route path="audit" element={<AuditTab />} />
+                          </Route>
                         </Route>
                       </Route>
-                    </Route>
-                    <Route path="*" element={<IndexRedirect />} />
-                  </Routes>
-                </Suspense>
-              </GroupsProvider>
-            </UsersProvider>
-          </MapsProvider>
-        </CurrentPermissionsProvider>
+                      <Route path="*" element={<IndexRedirect />} />
+                    </Routes>
+                  </Suspense>
+                </GroupsProvider>
+              </UsersProvider>
+            </MapsProvider>
+          </CurrentPermissionsProvider>
+        </ApiProvider>
       </AuthProvider>
     </ThemeProvider>
   );
 }
+/*
+
+
+
+ */

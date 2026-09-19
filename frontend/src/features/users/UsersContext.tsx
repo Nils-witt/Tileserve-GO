@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { User } from '../../api/types';
 
 interface UsersData {
@@ -20,11 +20,12 @@ const UsersContext = createContext<UsersData | null>(null);
 // GET /users is open to every authenticated user (so a map owner can pick a
 // username when granting a per-map permission), not just admins.
 export function UsersProvider({ children }: { children: ReactNode }) {
+  const api = useApi();
   const [users, setUsers] = useState<User[]>([]);
 
   const reloadUsers = useCallback(async () => {
     setUsers(await api.listUsers());
-  }, []);
+  }, [api]);
 
   useEffect(() => {
     reloadUsers().catch(() => {});

@@ -15,7 +15,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { User } from '../../api/types';
 import { useUsers } from './UsersContext';
 import { useAuth } from '../../auth/AuthContext';
@@ -54,6 +54,7 @@ function UserRow({
   onReload: () => void;
   onOpenApiKeys: () => void;
 }) {
+  const api = useApi();
   const [perms, setPerms] = useState<UserPermState>(u);
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -149,6 +150,7 @@ function UserRow({
 }
 
 export default function UsersTab() {
+  const api = useApi();
   const { users, reloadUsers } = useUsers();
   const { username: currentUsername } = useAuth();
   const [error, setError] = useState<string | null>(null);

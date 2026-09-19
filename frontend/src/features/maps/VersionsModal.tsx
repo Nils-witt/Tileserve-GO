@@ -11,7 +11,7 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapSummary } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
@@ -29,6 +29,7 @@ function VersionsModalContent({
   onClose: () => void;
   onUploaded: () => void;
 }) {
+  const api = useApi();
   const { versions, error: loadError, reloadVersions } = useMapVersions();
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);

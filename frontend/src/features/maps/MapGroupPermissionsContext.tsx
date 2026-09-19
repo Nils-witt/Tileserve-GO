@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapGroupPermission, MapSummary } from '../../api/types';
 
 interface MapGroupPermissionsData {
@@ -25,6 +25,7 @@ export function MapGroupPermissionsProvider({
   map: MapSummary;
   children: ReactNode;
 }) {
+  const api = useApi();
   const [groupGrants, setGroupGrants] = useState<MapGroupPermission[]>([]);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,7 +36,7 @@ export function MapGroupPermissionsProvider({
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
-  }, [map]);
+  }, [api, map]);
 
   useEffect(() => {
     reloadGroupPermissions();

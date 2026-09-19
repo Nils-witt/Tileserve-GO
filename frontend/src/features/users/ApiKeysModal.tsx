@@ -11,7 +11,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { ApiKey } from '../../api/types';
 import Modal from '../../components/Modal';
 import ErrorBanner from '../../components/ErrorBanner';
@@ -26,6 +26,7 @@ function ApiKeysModalContent({
   username: string | null;
   onClose: () => void;
 }) {
+  const api = useApi();
   const { keys, error: loadError, reloadKeys } = useApiKeys();
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState('');

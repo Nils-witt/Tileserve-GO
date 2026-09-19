@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Stack, TextField } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapSummary } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
 
@@ -11,6 +11,7 @@ export default function TransferOwnerPanel({
   map: MapSummary;
   onSaved: () => void;
 }) {
+  const api = useApi();
   const [owner, setOwner] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);

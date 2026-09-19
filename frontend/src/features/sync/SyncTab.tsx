@@ -15,7 +15,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { SyncRemote } from '../../api/types';
 import ErrorBanner from '../../components/ErrorBanner';
 import { fmtDate } from '../../lib/format';
@@ -98,6 +98,7 @@ function SyncRemoteRow({
   onOpenLog: () => void;
   onOpenMapsPicker: () => void;
 }) {
+  const api = useApi();
   const [error, setError] = useState<string | null>(null);
 
   const updatePatch = async (patch: Partial<SyncRemote>) => {
@@ -213,6 +214,7 @@ function SyncRemoteRow({
 }
 
 function SyncTabContent() {
+  const api = useApi();
   const { remotes, error: loadError, reloadRemotes } = useSyncRemotes();
   const [error, setError] = useState<string | null>(null);
   const [logRemote, setLogRemote] = useState<SyncRemote | null>(null);

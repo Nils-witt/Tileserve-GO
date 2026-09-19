@@ -13,7 +13,7 @@ import {
   TableRow,
   Typography,
 } from '@mui/material';
-import { api } from '../api/ApiClient.ts';
+import { useApi } from '../api/ApiContext.tsx';
 import type { MapSummary } from '../api/types.ts';
 import { useMaps } from '../features/maps/MapsContext.tsx';
 import { useCurrentPermissions } from '../auth/CurrentPermissionsContext.tsx';
@@ -34,6 +34,7 @@ function MapRow({
   isAdmin: boolean;
   onReload: () => void;
 }) {
+  const api = useApi();
   const [error, setError] = useState<string | null>(null);
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);

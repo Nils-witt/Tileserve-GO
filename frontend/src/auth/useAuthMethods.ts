@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api/ApiClient';
+import { useApi } from '../api/ApiContext';
 import type { AuthMethods } from '../api/types';
 
 /** useAuthMethods drives the "Sign in with SSO" button on the login page,
  * matching both previous pages' `fetch('/auth/methods')` check. */
 export function useAuthMethods(): AuthMethods {
+  const api = useApi();
   const [methods, setMethods] = useState<AuthMethods>({ oidc: false });
 
   useEffect(() => {
@@ -12,7 +13,7 @@ export function useAuthMethods(): AuthMethods {
       .getAuthMethods()
       .then(setMethods)
       .catch(() => {});
-  }, []);
+  }, [api]);
 
   return methods;
 }

@@ -15,7 +15,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { ApiKey } from '../../api/types';
 import { useMaps } from '../maps/MapsContext';
 import Modal from '../../components/Modal';
@@ -33,6 +33,7 @@ function ScopesModalContent({
   onClose: () => void;
   onScopesChanged: () => void;
 }) {
+  const api = useApi();
   const { maps, mapName } = useMaps();
   const { scopes, error: loadError, reloadScopes } = useApiKeyScopes();
   const [error, setError] = useState<string | null>(null);

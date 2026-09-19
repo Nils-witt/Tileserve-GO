@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type * as maplibregl from 'maplibre-gl';
 import { Box, Button, Stack, Typography } from '@mui/material';
-import { api } from '../../api/ApiClient';
+import { useApi } from '../../api/ApiContext';
 import type { MapSummary } from '../../api/types';
 import Modal from '../../components/Modal';
 
@@ -25,6 +25,7 @@ export default function PreviewModal({
   initialLongitude?: number;
   onPick?: (latitude: number, longitude: number) => void;
 }) {
+  const api = useApi();
   // const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker | null>(null);
@@ -174,7 +175,7 @@ export default function PreviewModal({
         })();
       }
     },
-    [map, version, pickable, initialLatitude, initialLongitude, position],
+    [api, map, version, pickable, initialLatitude, initialLongitude, position],
   );
 
   const handleConfirm = () => {
