@@ -1,19 +1,50 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type * as maplibregl from 'maplibre-gl';
-import { Box } from '@mui/material';
+import { Box, Button, Stack, Typography } from '@mui/material';
 import { apiJson, getToken } from '../../api/client';
 import type { MapBounds, MapSummary } from '../../api/types';
 import Modal from '../../components/Modal';
 
 export default function PreviewModal({
   map,
+  version,
   onClose,
+  pickable = false,
+  initialLatitude,
+  initialLongitude,
+  onPick,
 }: {
   map: MapSummary | null;
+  /** Tileset version to preview; defaults to `map.currentVersion`. */
+  version?: string;
   onClose: () => void;
+  /** When true, clicking/dragging on the preview drops a marker and shows
+   * a "Use this location" action instead of a plain read-only preview. */
+  pickable?: boolean;
+  initialLatitude?: number;
+  initialLongitude?: number;
+  onPick?: (latitude: number, longitude: number) => void;
 }) {
   // const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
+  const markerRef = useRef<maplibregl.Marker | null>(null);
+  const [position, setPosition] = useState<{ lat: number; lng: number } | null>(
+    pickable && initialLatitude != null && initialLongitude != null
+      ? { lat: initialLatitude, lng: initialLongitude }
+      : null,
+  );
+
+  useEffect(() => {
+    if (map && pickable) {
+      setPosition(
+        initialLatitude != null && initialLongitude != null
+          ? { lat: initialLatitude, lng: initialLongitude }
+          : null,
+      );
+    }
+    // Only re-sync when the modal opens, not on every keystroke in the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [map, pickable]);
   /*
   useEffect(() => {
     console.log("Container ref:", containerRef.current);
@@ -80,15 +111,15 @@ export default function PreviewModal({
   const containerRef = useCallback(
     (node: HTMLElement | null) => {
       if (node && map) {
+        const tilesetVersion = version ?? map.currentVersion;
         const tileUrl =
           window.location.origin +
           '/maps/' +
           map.uuid +
           '/version/' +
-          map.currentVersion +
+          encodeURIComponent(tilesetVersion) +
           '/{z}/{x}/{y}.png?token=' +
           encodeURIComponent(getToken() ?? '');
-        console.log('Preview tile URL:', tileUrl);
         if (node?.children.length > 0) return;
 
         (async () => {
@@ -104,12 +135,15 @@ export default function PreviewModal({
               return mod;
             }),
             apiJson<MapBounds>(
-              '/maps/' + map.uuid + '/version/' + map.currentVersion + '/bounds',
+              '/maps/' + map.uuid + '/version/' + encodeURIComponent(tilesetVersion) + '/bounds',
             ).catch(() => null),
           ]);
           if (bounds) {
             center = [bounds.centerLng, bounds.centerLat];
             zoom = bounds.minZoom;
+          }
+          if (pickable && initialLatitude != null && initialLongitude != null) {
+            center = [initialLongitude, initialLatitude];
           }
 
           if (node?.children.length > 0) return;
@@ -131,19 +165,59 @@ export default function PreviewModal({
           });
           instance.addControl(new maplibregl.NavigationControl());
           mapRef.current = instance;
+
+          if (pickable) {
+            const marker = new maplibregl.Marker({ draggable: true }).setLngLat(center);
+            if (position) marker.addTo(instance);
+            marker.on('dragend', () => {
+              const { lat, lng } = marker.getLngLat();
+              setPosition({ lat, lng });
+            });
+            markerRef.current = marker;
+
+            instance.on('click', (e) => {
+              marker.setLngLat(e.lngLat).addTo(instance);
+              setPosition({ lat: e.lngLat.lat, lng: e.lngLat.lng });
+            });
+          }
         })();
       }
     },
-    [map],
+    [map, version, pickable, initialLatitude, initialLongitude, position],
   );
+
+  const handleConfirm = () => {
+    if (position) onPick?.(position.lat, position.lng);
+    onClose();
+  };
 
   return (
     <Modal
       open={!!map}
-      title={map ? `${map.name} — v${map.currentVersion}` : 'Preview'}
+      title={
+        map
+          ? pickable
+            ? `Pick location — ${map.name}`
+            : `${map.name} — v${map.currentVersion}`
+          : 'Preview'
+      }
       onClose={onClose}
       variant="full"
       noPadding
+      headerExtra={
+        pickable ? (
+          <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
+            <Typography variant="body2" color="text.secondary">
+              {position
+                ? `${position.lat.toFixed(6)}, ${position.lng.toFixed(6)}`
+                : 'Click the map to place a marker'}
+            </Typography>
+            <Button size="small" variant="contained" disabled={!position} onClick={handleConfirm}>
+              Use this location
+            </Button>
+          </Stack>
+        ) : undefined
+      }
     >
       <Box ref={containerRef} sx={{ flex: 1, minHeight: 0 }}></Box>
     </Modal>

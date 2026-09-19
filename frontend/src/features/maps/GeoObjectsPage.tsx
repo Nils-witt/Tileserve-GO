@@ -131,6 +131,8 @@ function GeoObjectsPageContent({ map }: { map: MapSummary }) {
 
       <GeoObjectDialog
         open={editing !== null}
+        map={map}
+        version={version}
         geoObject={editing && editing !== 'new' ? editing : undefined}
         onClose={() => setEditing(null)}
         onSubmit={submitDialog}
